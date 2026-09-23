@@ -1,0 +1,249 @@
+# Every push to main is a release: CI, a Neon snapshot of `main`, migrations,
+# a GitHub release (which the home worker follows), and a TestFlight build when
+# the app changed. Nothing is published unless the database is ready for it.
+# See README "Releases".
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_ios:
+        description: Build and upload the iOS app even if apps/mobile is unchanged
+        type: boolean
+        default: false
+
+# Releases and rollbacks (rollback.yml) run one at a time, in order.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NEON_PROJECT_ID: example-project
+  NEONCTL_VERSION: 4.17.4
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  changes:
+    # Every other job depends on this one, so nothing releases from another branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.release.outputs.release }}
+      already_released: ${{ steps.release.outputs.already_released }}
+      ios: ${{ steps.ios.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # history and tags, to compare with the last TestFlight upload
+      - id: release
+        name: Release tag for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Never go backwards: re-running an old run must not publish an older
+          # commit as latest (the worker would follow it) or upload an older app.
+          if ! latest=$(gh release view --json tagName --jq .tagName 2> "$RUNNER_TEMP/gh-error"); then
+            grep -qx "release not found" "$RUNNER_TEMP/gh-error" || { cat "$RUNNER_TEMP/gh-error" >&2; exit 1; }
+            latest="" # first release
+          fi
+          if [ -n "$latest" ] && ! git merge-base --is-ancestor "$latest" HEAD; then
+            echo "::error::$GITHUB_SHA does not contain the latest release $latest. Release a newer commit instead of re-running an old run."
+            exit 1
+          fi
+          existing=$(git tag --points-at HEAD --list 'r[0-9]*' | head -n 1)
+          if [ -n "$existing" ]; then
+            echo "release=$existing" >> "$GITHUB_OUTPUT"
+            echo "already_released=true" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_SHA is already released as $existing"
+          else
+            echo "release=r$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "already_released=false" >> "$GITHUB_OUTPUT"
+          fi
+      - id: ios
+        name: Did the app change since the last TestFlight upload?
+        env:
+          FORCE_IOS: ${{ inputs.force_ios || false }}
+          # Only whether each is set; TestFlight is on once all five are copied from SSM.
+          APPLE_SECRETS: >-
+            ${{ secrets.APP_STORE_CONNECT_KEY_ID != '' && secrets.APP_STORE_CONNECT_ISSUER_ID != ''
+            && secrets.APP_STORE_CONNECT_API_KEY_BASE64 != '' && secrets.MATCH_PASSWORD != ''
+            && secrets.MATCH_GIT_BASIC_AUTHORIZATION != '' }}
+        run: |
+          if [ "$APPLE_SECRETS" != "true" ]; then
+            echo "::warning::iOS build skipped: TestFlight secrets are not all set (README \"TestFlight\")."
+            echo "ios=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          last=$(git tag --list 'ios-r[0-9]*' | sed 's/^ios-r//' | sort -n | tail -n 1)
+          if [ "$FORCE_IOS" = "true" ]; then
+            reason="forced"; ios=true
+          elif [ -z "$last" ]; then
+            reason="no previous upload"; ios=true
+          elif ! git diff --quiet "ios-r$last" HEAD -- apps/mobile; then
+            reason="apps/mobile changed since ios-r$last"; ios=true
+          else
+            reason="apps/mobile unchanged since ios-r$last"; ios=false
+          fi
+          echo "iOS build: $ios ($reason)"
+          echo "ios=$ios" >> "$GITHUB_OUTPUT"
+
+  migrate:
+    needs: [ci, changes]
+    if: needs.changes.outputs.already_released == 'false'
+    runs-on: ubuntu-latest
+    outputs:
+      from: ${{ steps.before.outputs.revision }}
+      to: ${{ steps.after.outputs.revision }}
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      RELEASE: ${{ needs.changes.outputs.release }}
+      # Direct (non-pooled) owner connection to Neon `main`; Alembic reads DATABASE_URL.
+      DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0  # publishes no major-version tag
+      - run: uv sync --locked
+      - run: npm install --global "neonctl@$NEONCTL_VERSION"
+      - name: Restore point (Neon snapshot of main, kept 14 days)
+        run: |
+          snapshot="pre-$RELEASE"
+          if neonctl snapshots get "$snapshot" --project-id "$NEON_PROJECT_ID" > /dev/null 2>&1; then
+            echo "Snapshot $snapshot already exists (re-run)"
+          else
+            neonctl snapshots create --project-id "$NEON_PROJECT_ID" --branch main \
+              --name "$snapshot" --expires-at "$(date -u -d '+14 days' +%Y-%m-%dT%H:%M:%SZ)"
+          fi
+      - id: before
+        run: echo "revision=$(uv run alembic current | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - run: uv run alembic upgrade head
+      - name: Refresh the Data API schema cache
+        run: neonctl data-api refresh-schema --project-id "$NEON_PROJECT_ID" --branch main --database neondb
+      - id: after
+        name: Check main is at this release's migrations and matches the models
+        run: |
+          current=$(uv run alembic current | cut -d ' ' -f 1)
+          heads=$(uv run alembic heads | cut -d ' ' -f 1)
+          if [ "$current" != "$heads" ]; then
+            echo "::error::main is at migration '$current', expected '$heads'"
+            exit 1
+          fi
+          uv run alembic check
+          echo "revision=$current" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: [changes, migrate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE: ${{ needs.changes.outputs.release }}
+      FROM: ${{ needs.migrate.outputs.from }}
+      TO: ${{ needs.migrate.outputs.to }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # The home worker follows the latest release: it must be created with
+      # GITHUB_TOKEN (author github-actions[bot]) and point at this commit.
+      - run: |
+          if gh release view "$RELEASE" > /dev/null 2>&1; then
+            echo "Release $RELEASE already exists (re-run)"
+            exit 0
+          fi
+          previous=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+          migrations="unchanged ($TO)"
+          [ "$FROM" != "$TO" ] && migrations="${FROM:-none} → $TO"
+          changes="first release"
+          [ -n "$previous" ] && changes="https://github.com/$GH_REPO/compare/$previous...$RELEASE"
+          gh release create "$RELEASE" --target "$GITHUB_SHA" --title "$RELEASE" --latest --notes "$(cat <<EOF
+          Commit: $GITHUB_SHA
+          Migrations on Neon main: $migrations
+          Restore point: Neon snapshot pre-$RELEASE (kept 14 days)
+          Changes: $changes
+          EOF
+          )"
+
+  ios:
+    needs: [changes, publish]
+    # Also runs when publish was skipped because this commit is already released (force_ios).
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.ios == 'true' }}
+    runs-on: macos-latest
+    outputs:
+      build_number: ${{ steps.upload.outputs.build_number }}
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/mobile/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: apps/mobile/.nvmrc
+          cache: pnpm
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+      - uses: ruby/setup-ruby@v1
+        with:
+          working-directory: apps/mobile
+          bundler-cache: true
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+        env:
+          CASTLE_CHEF_RELEASE: ${{ needs.changes.outputs.release }}
+      - run: pnpm exec cap sync ios
+      - id: upload
+        name: Build and upload to TestFlight
+        run: bundle exec fastlane beta
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+
+  # Waiting for Apple's processing on Linux costs ~1/10 of waiting on macOS.
+  testflight-processed:
+    needs: [changes, ios]
+    if: ${{ !cancelled() && !failure() && needs.ios.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      RELEASE: ${{ needs.changes.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          working-directory: apps/mobile
+          bundler-cache: true
+      - name: Wait for App Store Connect processing
+        run: bundle exec fastlane processed build_number:${{ needs.ios.outputs.build_number }}
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      # Marks the upload so later releases only build when apps/mobile changes.
+      # Without it (upload or processing failed), the next release builds again.
+      - name: Tag the uploaded commit
+        run: |
+          tag="ios-$RELEASE"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag already exists"
+          else
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi

@@ -20,7 +20,7 @@ def use_fake_agent(
 ) -> None:
     monkeypatch.setenv(
         "CASTLE_CHEF_AGENT_COMMAND",
-        f"{sys.executable} {FAKE_AGENT} {meals} {stop_reason} {exit_code}",
+        f"{sys.executable} {FAKE_AGENT} {meals} {stop_reason} {exit_code} 0",
     )
 
 

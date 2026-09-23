@@ -30,7 +30,9 @@ export function AccountPage() {
         {sendLogs.isError && <p className="error">{sendLogs.error.message}</p>}
       </div>
 
-      <p className="muted version">Castle Chef {__APP_VERSION__}</p>
+      <p className="muted version">
+        Castle Chef {__APP_VERSION__} ({__APP_RELEASE__})
+      </p>
     </>
   )
 }

@@ -1,17 +1,24 @@
-# systemd user unit for the Castle Chef job worker.
-# Install: see README.md ("Run the worker as a service").
+# systemd user unit for the Castle Chef job worker, run as the `castle-chef`
+# user from its deployment clone (~/app), which castle-chef-update keeps on the
+# latest release. Setup: README "Worker deployment". Installed and updated by
+# castle-chef-update.
 [Unit]
 Description=Castle Chef job worker
-Wants=network-online.target
-After=network-online.target
 
 [Service]
-WorkingDirectory=%h/git-repos/nicholasjconn/castle-chef/backend
+WorkingDirectory=%h/app/backend
 # `al` and `grok` live in ~/.local/bin; the agent's shell inherits this PATH.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/uv run --frozen castle-chef worker run
+# The venv's executable, not `uv run`, so the worker itself receives SIGTERM.
+ExecStart=%h/app/backend/.venv/bin/castle-chef worker run
+# On stop, SIGTERM goes to the worker only; it finishes the running job (up to
+# the 15-minute agent timeout) and exits. The agent is not signalled.
+KillMode=mixed
+TimeoutStopSec=20min
 Restart=on-failure
 RestartSec=60
+# The database is behind this code: fail once, loudly, instead of retrying.
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=default.target

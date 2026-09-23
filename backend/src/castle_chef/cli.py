@@ -78,8 +78,13 @@ def worker_run(
         bool, typer.Option(help="Process all pending jobs now, then exit (manual trigger).")
     ] = False,
 ) -> None:
-    """Poll the job queue and run the agent for each job."""
-    worker.run(once=once)
+    """Poll the job queue and run the agent for each job. SIGTERM lets a running job finish."""
+    try:
+        worker.run(once=once)
+    except worker.SchemaBehindError as error:
+        log.error("schema.behind", extra={"error": str(error)})
+        typer.echo(str(error), err=True)
+        raise typer.Exit(worker.SCHEMA_BEHIND_EXIT_CODE) from error
 
 
 @family_app.command("invite")

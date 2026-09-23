@@ -1,0 +1,90 @@
+# Restore Neon `main` to the snapshot taken before a release (README "Rollback").
+# Discards everything written since that snapshot, including sign-ins.
+# Before running: stop the home worker and its updater (README "Rollback"), so
+# no new code runs on the older schema. Afterwards:
+# `git revert` the release's migration and push, or the next release re-applies it.
+# Don't push while this runs: a new release run would cancel this one if it is
+# still waiting (one pending run per concurrency group).
+name: Rollback database
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Release whose restore point to go back to (e.g. r12)
+        required: true
+      confirm:
+        description: Type "restore main to pre-<release>" to confirm
+        required: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NEON_PROJECT_ID: example-project
+  NEONCTL_VERSION: 4.17.4
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE: ${{ inputs.release }}
+      CONFIRM: ${{ inputs.confirm }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: npm install --global "neonctl@$NEONCTL_VERSION"
+      - name: Check the preconditions
+        run: |
+          if [ "$CONFIRM" != "restore main to pre-$RELEASE" ]; then
+            echo "::error::Confirmation must be exactly: restore main to pre-$RELEASE"
+            exit 1
+          fi
+          latest=$(gh release view --json tagName --jq .tagName)
+          if [ "$latest" = "$RELEASE" ]; then
+            echo "::error::$RELEASE is still the latest release. Make the previous release latest first (README \"Rollback\"), or the worker returns to it after the restore."
+            exit 1
+          fi
+          if ! neonctl snapshots get "pre-$RELEASE" --project-id "$NEON_PROJECT_ID" > /dev/null; then
+            echo "::error::Snapshot pre-$RELEASE not found; restore points are kept 14 days."
+            exit 1
+          fi
+      - id: before
+        name: Record main's branch id and Data API URL
+        run: |
+          echo "branch=$(neonctl branches get main --project-id "$NEON_PROJECT_ID" -o json | jq -r .id)" >> "$GITHUB_OUTPUT"
+          echo "data_api=$(neonctl data-api get --project-id "$NEON_PROJECT_ID" --branch main --database neondb -o json | jq -r .url)" >> "$GITHUB_OUTPUT"
+      - name: Snapshot main as it is now (so nothing is lost for good)
+        run: |
+          neonctl snapshots create --project-id "$NEON_PROJECT_ID" --branch main \
+            --name "before-rollback-$RELEASE-$(date -u +%Y%m%dT%H%M%SZ)" \
+            --expires-at "$(date -u -d '+14 days' +%Y-%m-%dT%H:%M:%SZ)"
+      - name: Restore main from pre-${{ inputs.release }}
+        run: neonctl snapshots restore "pre-$RELEASE" --project-id "$NEON_PROJECT_ID" --target-branch main --finalize
+      - name: Refresh the Data API schema cache
+        run: neonctl data-api refresh-schema --project-id "$NEON_PROJECT_ID" --branch main --database neondb
+      - name: Check the Data API URL is unchanged
+        env:
+          BRANCH_BEFORE: ${{ steps.before.outputs.branch }}
+          DATA_API_BEFORE: ${{ steps.before.outputs.data_api }}
+        run: |
+          branch=$(neonctl branches get main --project-id "$NEON_PROJECT_ID" -o json | jq -r .id)
+          data_api=$(neonctl data-api get --project-id "$NEON_PROJECT_ID" --branch main --database neondb -o json | jq -r .url)
+          {
+            echo "Restored main from pre-$RELEASE. Next steps (README \"Rollback\"):"
+            echo "- git revert $RELEASE's migration commit and push."
+            echo "- Sign in on the app to check Neon Auth."
+            if [ "$branch" != "$BRANCH_BEFORE" ]; then
+              # Expected: the restored branch takes over the name; the old one is kept.
+              echo "- main's branch id changed ($BRANCH_BEFORE -> $branch): set CASTLE_CHEF_NEON_BRANCH_ID=$branch in the worker's backend/.env. The pre-restore branch is kept; delete it when no longer needed."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$data_api" != "$DATA_API_BEFORE" ]; then
+            echo "::error::The Data API URL changed ($DATA_API_BEFORE -> $data_api). Update apps/mobile/.env.production and release a new app build."
+            exit 1
+          fi

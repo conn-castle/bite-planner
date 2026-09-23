@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -11,10 +12,14 @@ from datetime import timedelta
 from pathlib import Path
 from string import Template
 
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from alembic.util.exc import CommandError
 from pydantic import ValidationError
 
 from castle_chef.client_logs import save_client_logs
-from castle_chef.db import get_session
+from castle_chef.db import get_engine, get_session
 from castle_chef.jobs import (
     GENERATE_MEALS,
     GenerateMealsParams,
@@ -52,29 +57,109 @@ read_only = [$read_only]
 """)
 
 
+# Exit status when the database is behind this code. The systemd unit does not
+# restart on it (RestartPreventExitStatus), so the refusal is logged once.
+SCHEMA_BEHIND_EXIT_CODE = 78
+
+
 class AgentRunError(Exception):
     pass
 
 
+class SchemaBehindError(Exception):
+    pass
+
+
+_stop_requested = False
+
+
+def _request_stop(_signum: int, _frame: object) -> None:
+    global _stop_requested
+    _stop_requested = True
+
+
 def run(once: bool) -> None:
+    """Poll the queue until done (`once`) or SIGTERM, which lets a running job finish."""
+    global _stop_requested
     settings = get_settings()
-    while True:
-        with get_session() as session:
-            # Grace period beyond the agent timeout before a run counts as lost.
-            stale = fail_stale_jobs(
-                session, timedelta(seconds=settings.agent_timeout_seconds + 300)
+    check_schema()
+    log.info("worker.started", extra=current_release())
+    _stop_requested = False
+    previous_handler = signal.signal(signal.SIGTERM, _request_stop)
+    try:
+        while not _stop_requested:
+            with get_session() as session:
+                # Grace period beyond the agent timeout before a run counts as lost.
+                stale = fail_stale_jobs(
+                    session, timedelta(seconds=settings.agent_timeout_seconds + 300)
+                )
+                if stale:
+                    log.error("jobs.stale_failed", extra={"count": stale})
+            processed = 0
+            while not _stop_requested and process_next_job():
+                processed += 1
+            with get_session() as session:
+                saved = save_client_logs(session, settings.logs_dir)
+            log.info(
+                "queue.checked", extra={"jobs_processed": processed, "client_logs_saved": saved}
             )
-            if stale:
-                log.error("jobs.stale_failed", extra={"count": stale})
-        processed = 0
-        while process_next_job():
-            processed += 1
-        with get_session() as session:
-            saved = save_client_logs(session, settings.logs_dir)
-        log.info("queue.checked", extra={"jobs_processed": processed, "client_logs_saved": saved})
-        if once:
-            return
-        time.sleep(settings.poll_interval_seconds)
+            if once:
+                return
+            _sleep_unless_stopped(settings.poll_interval_seconds)
+        log.info("worker.stopped")
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+
+
+def _sleep_unless_stopped(seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while not _stop_requested and (remaining := deadline - time.monotonic()) > 0:
+        time.sleep(min(remaining, 1))
+
+
+def check_schema() -> None:
+    """Refuse to run against a database whose migrations are older than this code.
+
+    A database with revisions this code does not know is newer (the worker was
+    rolled back to an older release), which expand/contract migrations allow.
+    """
+    script = ScriptDirectory.from_config(Config(REPO_ROOT / "backend" / "alembic.ini"))
+    with get_engine().connect() as connection:
+        current = set(MigrationContext.configure(connection).get_current_heads())
+    heads = set(script.get_heads())
+    if current == heads:
+        return
+    fields = {"database": sorted(current), "code": sorted(heads)}
+    if any(not _is_known_revision(script, revision) for revision in current):
+        log.warning("schema.ahead", extra=fields)
+        return
+    raise SchemaBehindError(
+        f"The database is at migration {sorted(current) or 'none'}, behind this code's "
+        f"{sorted(heads)}. Its migration has not run: releases migrate Neon `main` "
+        "before publishing; on a dev branch, run `alembic upgrade head`."
+    )
+
+
+def _is_known_revision(script: ScriptDirectory, revision: str) -> bool:
+    try:
+        script.get_revision(revision)
+    except CommandError:
+        return False
+    return True
+
+
+def current_release() -> dict[str, str]:
+    """The checked-out commit and its release tag (`r<N>`), or `dev-<sha>` if untagged."""
+
+    def git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=check
+        )
+
+    commit = git("rev-parse", "HEAD").stdout.strip()
+    tag = git("describe", "--exact-match", "--tags", "--match", "r[0-9]*", "HEAD", check=False)
+    release = tag.stdout.strip() if tag.returncode == 0 else f"dev-{commit[:7]}"
+    return {"release": release, "commit": commit}
 
 
 def process_next_job() -> bool:

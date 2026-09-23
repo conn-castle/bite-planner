@@ -1,14 +1,19 @@
 default_platform(:ios)
 
+def connect_api_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("APP_STORE_CONNECT_KEY_ID"),
+    issuer_id: ENV.fetch("APP_STORE_CONNECT_ISSUER_ID"),
+    key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"),
+    is_key_content_base64: true
+  )
+end
+
 platform :ios do
-  desc "Build the Capacitor iOS app and upload it to TestFlight"
+  # In GitHub Actions, writes the uploaded build number to the step output `build_number`.
+  desc "Build the Capacitor iOS app and upload it to TestFlight (without waiting for processing)"
   lane :beta do
-    api_key = app_store_connect_api_key(
-      key_id: ENV.fetch("APP_STORE_CONNECT_KEY_ID"),
-      issuer_id: ENV.fetch("APP_STORE_CONNECT_ISSUER_ID"),
-      key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"),
-      is_key_content_base64: true
-    )
+    api_key = connect_api_key
 
     setup_ci
     match(type: "appstore", readonly: true, api_key: api_key)
@@ -21,7 +26,7 @@ platform :ios do
       code_sign_identity: "Apple Distribution",
       profile_name: ENV.fetch("sigh_com.conncastle.castlechef_appstore_profile-name")
     )
-    increment_build_number(
+    build_number = increment_build_number(
       xcodeproj: project,
       # initial_build_number applies before the first upload exists.
       build_number: latest_testflight_build_number(api_key: api_key, initial_build_number: 0) + 1
@@ -34,6 +39,30 @@ platform :ios do
       export_method: "app-store",
       output_directory: "build"
     )
+    # Processing is awaited by the `processed` lane on a cheaper Linux runner.
     upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: true)
+    File.write(ENV["GITHUB_OUTPUT"], "build_number=#{build_number}\n", mode: "a") if ENV["GITHUB_OUTPUT"]
+  end
+
+  desc "Wait until App Store Connect has processed build `build_number`; fail unless it is valid"
+  lane :processed do |options|
+    build_number = options.fetch(:build_number).to_s
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier))
+    UI.user_error!("App not found in App Store Connect") if app.nil?
+    build = FastlaneCore::BuildWatcher.wait_for_build_processing_to_be_complete(
+      app_id: app.id,
+      platform: :ios,
+      build_version: build_number,
+      select_latest: true,
+      poll_interval: 60,
+      timeout_duration: 3600,
+      return_spaceship_testflight_build: false
+    )
+    state = build.processing_state
+    unless state == Spaceship::ConnectAPI::Build::ProcessingState::VALID
+      UI.user_error!("Build #{build_number} finished processing as #{state}; see App Store Connect and your email")
+    end
+    UI.success("Build #{build_number} is processed and valid")
   end
 end

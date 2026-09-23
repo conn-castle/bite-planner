@@ -22,7 +22,7 @@ def log_events(logs_dir: Path) -> list[dict]:
 def test_worker_writes_structured_job_events_to_the_log_file(
     session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 1 end_turn 0")
+    monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 1 end_turn 0 0")
     job = create_job(session, GENERATE_MEALS, {"count": 1})
 
     assert runner.invoke(app, ["worker", "run", "--once"]).exit_code == 0

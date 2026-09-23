@@ -141,6 +141,7 @@ export function useSendLogs() {
         os: `${info.operatingSystem} ${info.osVersion}`,
         webView: info.webViewVersion,
         appVersion: __APP_VERSION__,
+        appRelease: __APP_RELEASE__,
         userAgent: navigator.userAgent,
       }
       const entries = await getLogEntries()

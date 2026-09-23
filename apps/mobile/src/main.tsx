@@ -7,7 +7,11 @@ import './index.css'
 import { logger, logUncaughtErrors } from './log'
 
 logUncaughtErrors()
-logger.info('app.start', { version: __APP_VERSION__, platform: Capacitor.getPlatform() })
+logger.info('app.start', {
+  version: __APP_VERSION__,
+  release: __APP_RELEASE__,
+  platform: Capacitor.getPlatform(),
+})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

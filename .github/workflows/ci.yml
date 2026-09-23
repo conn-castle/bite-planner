@@ -1,9 +1,12 @@
 name: CI
 
+# Runs on pull requests, and inside every release (release.yml) for pushes to main.
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   backend:
@@ -54,3 +57,9 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
+
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: shellcheck deploy/castle-chef-update
