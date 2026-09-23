@@ -1,0 +1,17 @@
+# systemd user unit for the Castle Chef job worker.
+# Install: see README.md ("Run the worker as a service").
+[Unit]
+Description=Castle Chef job worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/git-repos/nicholasjconn/castle-chef/backend
+# `al` and `grok` live in ~/.local/bin; the agent's shell inherits this PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/uv run --frozen castle-chef worker run
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=default.target

@@ -41,3 +41,6 @@
 # Optional: keep uncommented to ignore VS Code settings.
 /.vscode/settings.json
 # <<< agent-layer
+
+# Grok CLI state created in the working directory
+/grove/

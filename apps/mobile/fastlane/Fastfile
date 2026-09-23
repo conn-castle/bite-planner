@@ -1,0 +1,39 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Build the Capacitor iOS app and upload it to TestFlight"
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("APP_STORE_CONNECT_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_ISSUER_ID"),
+      key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"),
+      is_key_content_base64: true
+    )
+
+    setup_ci
+    match(type: "appstore", readonly: true, api_key: api_key)
+
+    project = "ios/App/App.xcodeproj"
+    update_code_signing_settings(
+      path: project,
+      use_automatic_signing: false,
+      team_id: CredentialsManager::AppfileConfig.try_fetch_value(:team_id),
+      code_sign_identity: "Apple Distribution",
+      profile_name: ENV.fetch("sigh_com.conncastle.castlechef_appstore_profile-name")
+    )
+    increment_build_number(
+      xcodeproj: project,
+      # initial_build_number applies before the first upload exists.
+      build_number: latest_testflight_build_number(api_key: api_key, initial_build_number: 0) + 1
+    )
+
+    build_app(
+      project: project,
+      scheme: "App",
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: "build"
+    )
+    upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: true)
+  end
+end
