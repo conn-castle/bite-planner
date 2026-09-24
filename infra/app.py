@@ -31,7 +31,7 @@ repositories = RepositoriesStack(
     app,
     "CastleChefRepositories",
     env=environment,
-    github_repo=app.node.get_context("githubRepo"),
+    github_subject=app.node.get_context("githubSubject"),
 )
 if app.node.try_get_context("repositoriesOnly") != "true":
     runtime = RuntimeStack(

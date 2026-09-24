@@ -17,7 +17,7 @@ from castle_chef_infra.runtime import RuntimeConfig, RuntimeStack
 API_DIGEST = "sha256:" + "a" * 64
 WORKER_DIGEST = "sha256:" + "b" * 64
 OIDC = "token.actions.githubusercontent.com"
-MAIN_BRANCH = "repo:owner/castle-chef:ref:refs/heads/main"
+MAIN_BRANCH = "repo:owner@1/castle-chef@2:ref:refs/heads/main"
 
 
 @pytest.fixture(scope="module")
@@ -45,7 +45,7 @@ def repositories() -> Template:
         app,
         "Repositories",
         env=cdk.Environment(account="123456789012", region="us-east-1"),
-        github_repo="owner/castle-chef",
+        github_subject="repo:owner@1/castle-chef@2",
     )
     return Template.from_stack(stack)
 

@@ -10,7 +10,9 @@ GITHUB_OIDC_HOST = "token.actions.githubusercontent.com"
 
 
 class RepositoriesStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, *, github_repo: str, **kwargs) -> None:
+    def __init__(
+        self, scope: Construct, construct_id: str, *, github_subject: str, **kwargs
+    ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         self.repositories = {
@@ -37,7 +39,9 @@ class RepositoriesStack(Stack):
         }
 
         # The release and rollback workflows assume this role (GitHub OIDC; the
-        # account's provider already exists). Only this repository's main branch.
+        # account's provider already exists). Only this repository's main branch;
+        # the repository uses GitHub's immutable subject claims (owner and
+        # repository ids), so a renamed or re-created repository can't match.
         provider = iam.OpenIdConnectProvider.from_open_id_connect_provider_arn(
             self,
             "GitHubOidc",
@@ -53,7 +57,7 @@ class RepositoriesStack(Stack):
                 conditions={
                     "StringEquals": {
                         f"{GITHUB_OIDC_HOST}:aud": "sts.amazonaws.com",
-                        f"{GITHUB_OIDC_HOST}:sub": f"repo:{github_repo}:ref:refs/heads/main",
+                        f"{GITHUB_OIDC_HOST}:sub": f"{github_subject}:ref:refs/heads/main",
                     }
                 },
             ),
