@@ -304,7 +304,7 @@ Security model:
 - The API enforces the request rules: counts from 1 to 14, at most 3 pending or running per person, and client-generated job ids that can't be reused by someone else or with different parameters.
 - The API and worker use the owner role through Neon's pooled endpoint; the agent has no database access. Local tools use the direct endpoint.
 - Trusted auth origin: `https://app.example.test`, presented by the iOS app and the dev server's auth proxy. Keep this domain under your control. Localhost is not trusted.
-- The app doesn't use the Neon Data API. The `remove Data API access` migration removed its grants, row-level security, policies, and `client_log_batch`, so its roles (`authenticated`, `anonymous`, which Neon keeps while Neon Auth is on) can't read or write any table (`tests/test_data_api_access.py`), and the Data API itself is deleted per branch with `neonctl data-api delete --project-id example-project --branch <branch> --database neondb` (done on `dev`).
+- The app doesn't use the Neon Data API. The `remove Data API access` migration removed its grants, row-level security, policies, and `client_log_batch`, so its roles (`authenticated`, `anonymous`, which Neon keeps while Neon Auth is on) can't read or write any table (`tests/test_data_api_access.py`), and the Data API itself is deleted per branch with `neonctl data-api delete --project-id example-project --branch <branch> --database neondb` (done on `dev` and `main`).
 
 ### Family members (invite-only)
 
@@ -327,10 +327,9 @@ prod uv run castle-chef family list
 
 ## Status and next steps
 
-Production runs on AWS from release `r6`: verified with a real request through the queue (worker on Fargate, Grok login on EFS, meal saved to Neon `main`), and in a browser against the API on `dev` before that. Not yet done:
+Production runs on AWS (since release `r6`; now date-versioned, e.g. `2026.9.24.1`): verified with a real request through the queue (worker on Fargate, Grok login on EFS, meal saved to Neon `main`), and in a browser against the API on `dev` before that. Not yet done:
 
 1. Confirm the alarm email subscription (the "AWS Notification - Subscription Confirmation" email), or alarms can't reach you.
 2. TestFlight: create the app record in App Store Connect ([TestFlight](#testflight)); then the next release (or `gh workflow run release.yml -f force_ios=true`) uploads the first build. Then install it with TestFlight, sign in, and invite the family ([Family members](#family-members-invite-only)).
 3. On a phone: sign in with a code, fully quit and relaunch (should stay signed in and show data instantly), request meals, and send logs from Account. The native auth path (`src/neonAuth.ts`) has only been verified at the HTTP level.
-4. Delete the Data API on `main` once the `remove Data API access` migration is released (see [Neon](#neon)).
-5. Product: give the agent meal history so it avoids repeats.
+4. Product: give the agent meal history so it avoids repeats.
