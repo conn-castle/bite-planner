@@ -1,6 +1,7 @@
-# Every push to main is a release: CI, a Neon snapshot of `main`, migrations,
-# a GitHub release (which the home worker follows), and a TestFlight build when
-# the app changed. Nothing is published unless the database is ready for it.
+# Every push to main is a release: CI, the images, a Neon snapshot of `main`,
+# migrations, a deploy to AWS (smoke-tested), a GitHub release recording what
+# was deployed (release.json, for rollback.yml), and a TestFlight build when the
+# app changed. Nothing is deployed unless the database is ready for it.
 # See README "Releases".
 name: Release
 
@@ -25,6 +26,10 @@ permissions:
 env:
   NEON_PROJECT_ID: example-project
   NEONCTL_VERSION: 4.17.4
+  AWS_REGION: us-east-1
+  # Created by infra/ (CastleChefRepositories); trusts only this repository's main branch.
+  DEPLOY_ROLE: arn:aws:iam::123456789012:role/castle-chef-github-deploy
+  REGISTRY: 123456789012.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
   ci:
@@ -47,8 +52,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Never go backwards: re-running an old run must not publish an older
-          # commit as latest (the worker would follow it) or upload an older app.
+          # Never go backwards: re-running an old run must not deploy an older
+          # commit or upload an older app (rollback.yml is for going back).
           if ! latest=$(gh release view --json tagName --jq .tagName 2> "$RUNNER_TEMP/gh-error"); then
             grep -qx "release not found" "$RUNNER_TEMP/gh-error" || { cat "$RUNNER_TEMP/gh-error" >&2; exit 1; }
             latest="" # first release
@@ -94,9 +99,87 @@ jobs:
           echo "iOS build: $ios ($reason)"
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
 
-  migrate:
-    needs: [ci, changes]
+  images:
+    # Built alongside CI; nothing uses them until the deploy.
+    needs: changes
     if: needs.changes.outputs.already_released == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      api: ${{ steps.digests.outputs.api }}
+      worker: ${{ steps.digests.outputs.worker }}
+    env:
+      RELEASE: ${{ needs.changes.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v4
+      - id: existing
+        name: Images already pushed for this release (a re-run; tags are immutable)
+        run: |
+          for image in api worker; do
+            if digest=$(aws ecr describe-images --repository-name "castle-chef-$image" --image-ids "imageTag=$RELEASE" \
+                --query 'imageDetails[0].imageDigest' --output text 2> "$RUNNER_TEMP/ecr-error"); then
+              echo "castle-chef-$image:$RELEASE already pushed ($digest)"
+              echo "$image=$digest" >> "$GITHUB_OUTPUT"
+            elif ! grep -q ImageNotFoundException "$RUNNER_TEMP/ecr-error"; then
+              cat "$RUNNER_TEMP/ecr-error" >&2
+              exit 1
+            fi
+          done
+      - id: api
+        if: steps.existing.outputs.api == ''
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: api
+          platforms: linux/amd64
+          provenance: false # a plain image manifest, which Lambda requires
+          sbom: false
+          build-args: |
+            CASTLE_CHEF_RELEASE=${{ env.RELEASE }}
+            CASTLE_CHEF_COMMIT=${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/castle-chef-api:${{ env.RELEASE }}
+          push: true
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - id: worker
+        if: steps.existing.outputs.worker == ''
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: worker
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          build-args: |
+            CASTLE_CHEF_RELEASE=${{ env.RELEASE }}
+            CASTLE_CHEF_COMMIT=${{ github.sha }}
+          # zstd layers: Fargate starts them faster than gzip.
+          outputs: type=image,name=${{ env.REGISTRY }}/castle-chef-worker:${{ env.RELEASE }},push=true,compression=zstd,force-compression=true,oci-mediatypes=true
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
+      - id: digests
+        env:
+          API: ${{ steps.existing.outputs.api || steps.api.outputs.digest }}
+          WORKER: ${{ steps.existing.outputs.worker || steps.worker.outputs.digest }}
+        run: |
+          for digest in "$API" "$WORKER"; do
+            [[ "$digest" == sha256:* ]] || { echo "::error::Missing image digest ('$digest')"; exit 1; }
+          done
+          echo "api=$API" >> "$GITHUB_OUTPUT"
+          echo "worker=$WORKER" >> "$GITHUB_OUTPUT"
+
+  migrate:
+    needs: [ci, changes, images]
     runs-on: ubuntu-latest
     outputs:
       from: ${{ steps.before.outputs.revision }}
@@ -126,8 +209,6 @@ jobs:
       - id: before
         run: echo "revision=$(uv run alembic current | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - run: uv run alembic upgrade head
-      - name: Refresh the Data API schema cache
-        run: neonctl data-api refresh-schema --project-id "$NEON_PROJECT_ID" --branch main --database neondb
       - id: after
         name: Check main is at this release's migrations and matches the models
         run: |
@@ -140,8 +221,24 @@ jobs:
           uv run alembic check
           echo "revision=$current" >> "$GITHUB_OUTPUT"
 
+  deploy:
+    # After the migrations: expand/contract keeps the running code working in between.
+    needs: [changes, images, migrate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/deploy
+        with:
+          api-image-digest: ${{ needs.images.outputs.api }}
+          worker-image-digest: ${{ needs.images.outputs.worker }}
+          role: ${{ env.DEPLOY_ROLE }}
+          region: ${{ env.AWS_REGION }}
+
   publish:
-    needs: [changes, migrate]
+    needs: [changes, images, migrate, deploy]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -149,27 +246,33 @@ jobs:
       RELEASE: ${{ needs.changes.outputs.release }}
       FROM: ${{ needs.migrate.outputs.from }}
       TO: ${{ needs.migrate.outputs.to }}
+      API_IMAGE: ${{ needs.images.outputs.api }}
+      WORKER_IMAGE: ${{ needs.images.outputs.worker }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      # The home worker follows the latest release: it must be created with
-      # GITHUB_TOKEN (author github-actions[bot]) and point at this commit.
+      # release.json is what rollback.yml redeploys; created with GITHUB_TOKEN.
       - run: |
           if gh release view "$RELEASE" > /dev/null 2>&1; then
             echo "Release $RELEASE already exists (re-run)"
             exit 0
           fi
+          jq -n --arg release "$RELEASE" --arg commit "$GITHUB_SHA" --arg api "$API_IMAGE" \
+            --arg worker "$WORKER_IMAGE" --arg migration "$TO" \
+            '{release: $release, commit: $commit, images: {api: $api, worker: $worker}, migration: $migration}' \
+            > "$RUNNER_TEMP/release.json"
           previous=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
           migrations="unchanged ($TO)"
           [ "$FROM" != "$TO" ] && migrations="${FROM:-none} → $TO"
           changes="first release"
           [ -n "$previous" ] && changes="https://github.com/$GH_REPO/compare/$previous...$RELEASE"
-          gh release create "$RELEASE" --target "$GITHUB_SHA" --title "$RELEASE" --latest --notes "$(cat <<EOF
+          gh release create "$RELEASE" "$RUNNER_TEMP/release.json" --target "$GITHUB_SHA" --title "$RELEASE" --latest --notes "$(cat <<NOTES
           Commit: $GITHUB_SHA
+          Deployed: api $API_IMAGE, worker $WORKER_IMAGE
           Migrations on Neon main: $migrations
           Restore point: Neon snapshot pre-$RELEASE (kept 14 days)
           Changes: $changes
-          EOF
+          NOTES
           )"
 
   ios:

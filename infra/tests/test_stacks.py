@@ -267,3 +267,15 @@ def test_each_stage_deploys_its_own_runtime_stack(tmp_path: Path) -> None:
         ]
         runtime_stacks.add(stack)
     assert len(runtime_stacks) == len(context["stages"])
+
+
+def test_development_images_never_expire_releases(repositories: Template) -> None:
+    for repository in repositories.find_resources("AWS::ECR::Repository").values():
+        policy = json.loads(repository["Properties"]["LifecyclePolicy"]["LifecyclePolicyText"])
+        counted = {
+            tuple(rule["selection"].get("tagPrefixList", [])): rule["selection"]["countNumber"]
+            for rule in policy["rules"]
+            if rule["selection"]["countType"] == "imageCountMoreThan"
+        }
+        # Releases (r<N>, what rollback.yml deploys) are counted apart from dev- pushes.
+        assert counted == {("dev-",): 5, ("r",): 30}

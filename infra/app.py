@@ -50,6 +50,7 @@ if app.node.try_get_context("repositoriesOnly") != "true":
     )
     CfnOutput(runtime, "ApiUrlOutput", value=runtime.api_url)
     CfnOutput(runtime, "ClusterNameOutput", value=runtime.cluster.cluster_name)
+    CfnOutput(runtime, "JobsPipeOutput", value=runtime.pipe_name)
     CfnOutput(runtime, "WorkerTaskDefinitionOutput", value=runtime.worker.task_definition_arn)
     CfnOutput(
         runtime, "WorkerSecurityGroupOutput", value=runtime.worker_security_group.security_group_id

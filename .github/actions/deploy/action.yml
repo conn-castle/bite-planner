@@ -1,0 +1,56 @@
+# Deploys the CDK stacks (infra/, stage prod) with the given images, then
+# smoke-tests the API. Used by release.yml and rollback.yml (which runs it from
+# the release it goes back to, with that release's CDK code).
+name: Deploy
+description: cdk deploy the prod stacks with the given image digests, then smoke-test the API
+
+inputs:
+  api-image-digest:
+    description: sha256:… of the api image in ECR
+    required: true
+  worker-image-digest:
+    description: sha256:… of the worker image in ECR
+    required: true
+  role:
+    description: IAM role to deploy with (GitHub OIDC)
+    required: true
+  region:
+    description: AWS region
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v10.2.0  # publishes no major-version tag
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 22
+    - uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: ${{ inputs.role }}
+        aws-region: ${{ inputs.region }}
+    - name: cdk deploy
+      shell: bash
+      working-directory: infra
+      env:
+        CDK_VERSION: 2.1143.0
+        API_DIGEST: ${{ inputs.api-image-digest }}
+        WORKER_DIGEST: ${{ inputs.worker-image-digest }}
+      run: |
+        uv sync --locked
+        npx --yes "aws-cdk@$CDK_VERSION" deploy --all --require-approval never --progress events \
+          -c stage=prod -c "apiImageDigest=$API_DIGEST" -c "workerImageDigest=$WORKER_DIGEST" \
+          --outputs-file "$RUNNER_TEMP/cdk-outputs.json"
+    - name: Smoke test
+      shell: bash
+      run: |
+        url=$(jq -er '.CastleChef.ApiUrlOutput' "$RUNNER_TEMP/cdk-outputs.json")
+        # A cold start loads secrets from SSM and connects nothing else; retry briefly.
+        curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --max-time 30 "${url}health"
+        echo
+        status=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 "${url}v1/me")
+        if [ "$status" != 401 ]; then
+          echo "::error::GET /v1/me without a token returned $status, expected 401"
+          exit 1
+        fi
+        echo "Smoke test passed: $url" >> "$GITHUB_STEP_SUMMARY"

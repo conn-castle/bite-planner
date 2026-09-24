@@ -1,20 +1,24 @@
-# Restore Neon `main` to the snapshot taken before a release (README "Rollback").
-# Discards everything written since that snapshot, including sign-ins.
-# Before running: stop the home worker and its updater (README "Rollback"), so
-# no new code runs on the older schema. Afterwards:
-# `git revert` the release's migration and push, or the next release re-applies it.
+# Go back to an earlier release (README "Rollback"): redeploy its images with
+# its own CDK code, no rebuild. Optionally also restore Neon `main` to how it was
+# while that release was the latest, which discards everything written since
+# (including sign-ins). Temporary until main is fixed: the next push to main
+# releases main again, so follow a rollback with `git revert` of the bad commits.
 # Don't push while this runs: a new release run would cancel this one if it is
 # still waiting (one pending run per concurrency group).
-name: Rollback database
+name: Rollback
 
 on:
   workflow_dispatch:
     inputs:
       release:
-        description: Release whose restore point to go back to (e.g. r12)
+        description: Release to go back to (e.g. r12)
         required: true
+      restore_database:
+        description: Also restore the database (loses everything written since)
+        type: boolean
+        default: false
       confirm:
-        description: Type "restore main to pre-<release>" to confirm
+        description: Type "roll back to <release>", plus " and restore the database" when restoring
         required: true
 
 concurrency:
@@ -27,64 +31,113 @@ permissions:
 env:
   NEON_PROJECT_ID: example-project
   NEONCTL_VERSION: 4.17.4
+  AWS_REGION: us-east-1
+  DEPLOY_ROLE: arn:aws:iam::123456789012:role/castle-chef-github-deploy
+  STACK: CastleChef
 
 jobs:
-  restore:
+  rollback:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
       RELEASE: ${{ inputs.release }}
+      RESTORE: ${{ inputs.restore_database }}
       CONFIRM: ${{ inputs.confirm }}
       NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - run: npm install --global "neonctl@$NEONCTL_VERSION"
-      - name: Check the preconditions
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.release }} # its CDK code and deploy action
+          fetch-depth: 0 # all tags, to find the release after it
+      - id: check
+        name: Check the preconditions
         run: |
-          if [ "$CONFIRM" != "restore main to pre-$RELEASE" ]; then
-            echo "::error::Confirmation must be exactly: restore main to pre-$RELEASE"
-            exit 1
-          fi
+          fail() { echo "::error::$1"; exit 1; }
+          expected="roll back to $RELEASE"
+          [ "$RESTORE" = "true" ] && expected="$expected and restore the database"
+          [ "$CONFIRM" = "$expected" ] || fail "Confirmation must be exactly: $expected"
+          gh release download "$RELEASE" --pattern release.json --dir "$RUNNER_TEMP" \
+            || fail "$RELEASE has no release.json (only releases deployed to AWS can be rolled back to)."
+          echo "api=$(jq -er .images.api "$RUNNER_TEMP/release.json")" >> "$GITHUB_OUTPUT"
+          echo "worker=$(jq -er .images.worker "$RUNNER_TEMP/release.json")" >> "$GITHUB_OUTPUT"
           latest=$(gh release view --json tagName --jq .tagName)
-          if [ "$latest" = "$RELEASE" ]; then
-            echo "::error::$RELEASE is still the latest release. Make the previous release latest first (README \"Rollback\"), or the worker returns to it after the restore."
-            exit 1
+          if [ "$RESTORE" = "true" ]; then
+            # The database as it was while $RELEASE was the latest: the snapshot
+            # the next release took before migrating.
+            next=$(git tag --list 'r[0-9]*' | sed 's/^r//' | sort -n | awk -v n="${RELEASE#r}" '$1 > n { print "r" $1; exit }')
+            [ -n "$next" ] || fail "$RELEASE is the latest release; there is nothing to restore."
+            npm install --global "neonctl@$NEONCTL_VERSION"
+            neonctl snapshots get "pre-$next" --project-id "$NEON_PROJECT_ID" > /dev/null \
+              || fail "Snapshot pre-$next not found; restore points are kept 14 days."
+            echo "snapshot=pre-$next" >> "$GITHUB_OUTPUT"
+          else
+            # Without a restore, the database keeps the newer schema: fine unless
+            # a contract migration since then dropped something $RELEASE uses.
+            contract=$(git diff --name-only "$RELEASE" "$latest" -- backend/migrations/versions \
+              | while read -r file; do git show "$latest:$file" 2> /dev/null | grep -q '# contract:' && echo "$file"; done || true)
+            [ -z "$contract" ] || fail "Contract migrations since $RELEASE ($contract) removed what it needs; restore the database too, or roll back less far."
           fi
-          if ! neonctl snapshots get "pre-$RELEASE" --project-id "$NEON_PROJECT_ID" > /dev/null; then
-            echo "::error::Snapshot pre-$RELEASE not found; restore points are kept 14 days."
-            exit 1
-          fi
-      - id: before
-        name: Record main's branch id and Data API URL
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: pause
+        if: inputs.restore_database
+        name: Stop starting jobs and wait for running ones (at most 20 minutes each)
         run: |
-          echo "branch=$(neonctl branches get main --project-id "$NEON_PROJECT_ID" -o json | jq -r .id)" >> "$GITHUB_OUTPUT"
-          echo "data_api=$(neonctl data-api get --project-id "$NEON_PROJECT_ID" --branch main --database neondb -o json | jq -r .url)" >> "$GITHUB_OUTPUT"
-      - name: Snapshot main as it is now (so nothing is lost for good)
+          output() { aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+          pipe=$(output JobsPipeOutput)
+          cluster=$(output ClusterNameOutput)
+          echo "pipe=$pipe" >> "$GITHUB_OUTPUT"
+          aws pipes stop-pipe --name "$pipe" > /dev/null
+          until [ "$(aws pipes describe-pipe --name "$pipe" --query CurrentState --output text)" = STOPPED ]; do sleep 5; done
+          for _ in $(seq 150); do
+            [ -z "$(aws ecs list-tasks --cluster "$cluster" --desired-status RUNNING --query taskArns --output text)" ] && exit 0
+            sleep 10
+          done
+          echo "::error::Workers are still running after 25 minutes; the jobs pipe is stopped ($pipe)."
+          exit 1
+      - name: Restore the database from ${{ steps.check.outputs.snapshot }}
+        if: inputs.restore_database
+        env:
+          SNAPSHOT: ${{ steps.check.outputs.snapshot }}
         run: |
+          before=$(neonctl branches get main --project-id "$NEON_PROJECT_ID" -o json | jq -r .id)
           neonctl snapshots create --project-id "$NEON_PROJECT_ID" --branch main \
             --name "before-rollback-$RELEASE-$(date -u +%Y%m%dT%H%M%SZ)" \
             --expires-at "$(date -u -d '+14 days' +%Y-%m-%dT%H:%M:%SZ)"
-      - name: Restore main from pre-${{ inputs.release }}
-        run: neonctl snapshots restore "pre-$RELEASE" --project-id "$NEON_PROJECT_ID" --target-branch main --finalize
-      - name: Refresh the Data API schema cache
-        run: neonctl data-api refresh-schema --project-id "$NEON_PROJECT_ID" --branch main --database neondb
-      - name: Check the Data API URL is unchanged
-        env:
-          BRANCH_BEFORE: ${{ steps.before.outputs.branch }}
-          DATA_API_BEFORE: ${{ steps.before.outputs.data_api }}
-        run: |
-          branch=$(neonctl branches get main --project-id "$NEON_PROJECT_ID" -o json | jq -r .id)
-          data_api=$(neonctl data-api get --project-id "$NEON_PROJECT_ID" --branch main --database neondb -o json | jq -r .url)
+          neonctl snapshots restore "$SNAPSHOT" --project-id "$NEON_PROJECT_ID" --target-branch main --finalize
+          after=$(neonctl branches get main --project-id "$NEON_PROJECT_ID" -o json | jq -r .id)
           {
-            echo "Restored main from pre-$RELEASE. Next steps (README \"Rollback\"):"
-            echo "- git revert $RELEASE's migration commit and push."
-            echo "- Sign in on the app to check Neon Auth."
-            if [ "$branch" != "$BRANCH_BEFORE" ]; then
+            echo "Restored Neon main from $SNAPSHOT (everything written since is gone; everyone signs in again)."
+            if [ "$after" != "$before" ]; then
               # Expected: the restored branch takes over the name; the old one is kept.
-              echo "- main's branch id changed ($BRANCH_BEFORE -> $branch): set CASTLE_CHEF_NEON_BRANCH_ID=$branch in the worker's backend/.env. The pre-restore branch is kept; delete it when no longer needed."
+              echo "main's branch id changed ($before -> $after): set CASTLE_CHEF_NEON_BRANCH_ID=$after in backend/.env for \`castle-chef family\`. Delete the pre-restore branch when no longer needed."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$data_api" != "$DATA_API_BEFORE" ]; then
-            echo "::error::The Data API URL changed ($DATA_API_BEFORE -> $data_api). Update apps/mobile/.env.production and release a new app build."
-            exit 1
-          fi
+      - uses: ./.github/actions/deploy
+        with:
+          api-image-digest: ${{ steps.check.outputs.api }}
+          worker-image-digest: ${{ steps.check.outputs.worker }}
+          role: ${{ env.DEPLOY_ROLE }}
+          region: ${{ env.AWS_REGION }}
+      - name: Start jobs again
+        if: inputs.restore_database
+        env:
+          PIPE: ${{ steps.pause.outputs.pipe }}
+        run: aws pipes start-pipe --name "$PIPE" > /dev/null
+      - name: Next steps
+        run: |
+          {
+            echo "Deployed $RELEASE. main still has the newer code, and the next push to main releases it again:"
+            echo "\`git revert\` the bad commits (including their migrations if the database was restored) and push."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: If this failed
+        if: failure() && steps.pause.outputs.pipe != ''
+        env:
+          PIPE: ${{ steps.pause.outputs.pipe }}
+        run: echo "::error::The jobs pipe ($PIPE) is stopped. Start it (aws pipes start-pipe --name $PIPE) once the code and the database match."

@@ -21,8 +21,17 @@ class RepositoriesStack(Stack):
                 image_tag_mutability=ecr.TagMutability.IMMUTABLE,
                 image_scan_on_push=True,
                 removal_policy=RemovalPolicy.RETAIN,
-                # Keeps enough releases to roll back to.
-                lifecycle_rules=[ecr.LifecycleRule(max_image_count=30)],
+                # Each prefix is counted on its own, so development pushes never
+                # expire the releases rollback.yml can go back to.
+                lifecycle_rules=[
+                    ecr.LifecycleRule(
+                        rule_priority=1,
+                        tag_status=ecr.TagStatus.UNTAGGED,
+                        max_image_age=Duration.days(1),
+                    ),
+                    ecr.LifecycleRule(rule_priority=2, tag_prefix_list=["dev-"], max_image_count=5),
+                    ecr.LifecycleRule(rule_priority=3, tag_prefix_list=["r"], max_image_count=30),
+                ],
             )
             for name in ("api", "worker")
         }
@@ -51,8 +60,23 @@ class RepositoriesStack(Stack):
         )
         for repository in self.repositories.values():
             repository.grant_pull_push(self.deploy_role)
+            # A re-run reuses the images already pushed for its release.
+            repository.grant(self.deploy_role, "ecr:DescribeImages")
         self.deploy_role.add_to_policy(
             iam.PolicyStatement(actions=["ecr:GetAuthorizationToken"], resources=["*"])
+        )
+        # A database restore (rollback.yml) pauses job starts and waits for
+        # running workers.
+        self.deploy_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["pipes:DescribePipe", "pipes:StartPipe", "pipes:StopPipe"],
+                resources=[f"arn:aws:pipes:{self.region}:{self.account}:pipe/*"],
+            )
+        )
+        self.deploy_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["cloudformation:DescribeStacks", "ecs:ListTasks"], resources=["*"]
+            )
         )
         # `cdk deploy` works through the account's CDK bootstrap roles.
         self.deploy_role.add_to_policy(

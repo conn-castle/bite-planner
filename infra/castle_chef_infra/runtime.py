@@ -367,6 +367,7 @@ class RuntimeStack(Stack):
 
         self.api_url = api_url.url
         self.cluster = cluster
+        self.pipe_name = pipe.ref
         self.worker = worker
         self.worker_security_group = worker_sg
         self.subnets = vpc.public_subnets
