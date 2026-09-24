@@ -3,7 +3,7 @@ import { Preferences } from '@capacitor/preferences'
 /**
  * Structured app logging. Each entry is `{ ts, level, event, launch, ...fields }`.
  * Entries go to the console and to a ring buffer persisted on the device, which
- * the Account page can send to the household's machine (see sendLogs in neon.ts).
+ * the Account page can send to the household's machine (see sendLogs in api.ts).
  * Never log secrets (sign-in codes, tokens).
  */
 

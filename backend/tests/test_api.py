@@ -1,0 +1,492 @@
+"""The API, through HTTP. A stand-in verifier maps bearer tokens to users (JWT
+verification itself is tested in test_auth.py); jobs dispatch to a recorder, or
+to a real local worker in the end-to-end test."""
+
+import logging
+import subprocess
+import sys
+import threading
+import time
+from collections.abc import Iterator
+from datetime import timedelta
+from uuid import UUID, uuid4
+
+import pytest
+from botocore.stub import Stubber
+from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlmodel import Session, select
+
+from castle_chef import api as api_module
+from castle_chef.api import app, create_app
+from castle_chef.auth import AuthError, AuthUnavailable, Principal
+from castle_chef.db import get_engine
+from castle_chef.dispatch import DispatchError, LocalDispatcher, SqsDispatcher, get_dispatcher
+from castle_chef.jobs import (
+    ACTIVE,
+    GENERATE_MEALS,
+    GenerateMealsParams,
+    NotAMember,
+    TooManyActiveJobs,
+    create_job,
+    submit_job,
+)
+from castle_chef.meals import IngredientInput, MealInput, add_meals
+from castle_chef.models import Job, JobStatus, utc_now
+from castle_chef.settings import get_settings
+from tests.test_worker import FAKE_AGENT
+
+STALE_AFTER = (timedelta(minutes=10), timedelta(minutes=20))
+MOM = uuid4()  # an invited household member
+DAD = uuid4()  # another member
+STRANGER = uuid4()  # signed in, but never invited
+
+
+class TokensAreUserIds:
+    """Accepts `Bearer <user id>`; `Bearer expired` and `Bearer outage` simulate failures."""
+
+    def verify(self, token: str) -> Principal:
+        if token == "outage":
+            raise AuthUnavailable("keys unreachable")
+        try:
+            return Principal(user_id=UUID(token))
+        except ValueError as error:
+            raise AuthError("bad token") from error
+
+
+class RecordingDispatcher:
+    def __init__(self, fail: bool = False) -> None:
+        self.dispatched: list[UUID] = []
+        self.fail = fail
+
+    def dispatch(self, job_id: UUID) -> None:
+        if self.fail:
+            raise DispatchError("queue unavailable")
+        self.dispatched.append(job_id)
+
+
+@pytest.fixture
+def dispatcher() -> RecordingDispatcher:
+    return RecordingDispatcher()
+
+
+@pytest.fixture
+def client(dispatcher: RecordingDispatcher) -> Iterator[TestClient]:
+    app.dependency_overrides[api_module.get_verifier] = TokensAreUserIds
+    app.dependency_overrides[get_dispatcher] = lambda: dispatcher
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def household(session: Session) -> None:
+    for user_id, email, name in [(MOM, "mom@example.com", "Mom"), (DAD, "dad@example.com", "Dad")]:
+        session.execute(
+            text('INSERT INTO neon_auth."user" (id, email, name) VALUES (:id, :email, :name)'),
+            {"id": user_id, "email": email, "name": name},
+        )
+        session.execute(
+            text("INSERT INTO household_member (user_id) VALUES (:id)"), {"id": user_id}
+        )
+    session.commit()
+
+
+def as_user(user_id: UUID) -> dict[str, str]:
+    return {"Authorization": f"Bearer {user_id}"}
+
+
+def reload(session: Session, job_id: UUID) -> Job:
+    session.expire_all()
+    return session.exec(select(Job).where(Job.id == job_id)).one()
+
+
+# Authentication and membership.
+
+
+def test_health_needs_no_sign_in(client: TestClient) -> None:
+    assert client.get("/health").json() == {"status": "ok"}
+
+
+@pytest.mark.parametrize(
+    "headers", [{}, {"Authorization": "Bearer expired"}, {"Authorization": "Basic x"}]
+)
+def test_requests_without_a_valid_token_are_rejected(client: TestClient, headers: dict) -> None:
+    response = client.get("/v1/jobs", headers=headers)
+
+    assert response.status_code == 401
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+def test_sign_in_outage_is_reported_as_unavailable(client: TestClient) -> None:
+    assert client.get("/v1/jobs", headers={"Authorization": "Bearer outage"}).status_code == 503
+
+
+def test_me_reports_membership_and_account(client: TestClient) -> None:
+    assert client.get("/v1/me", headers=as_user(MOM)).json() == {
+        "user_id": str(MOM),
+        "email": "mom@example.com",
+        "name": "Mom",
+        "member": True,
+    }
+    assert client.get("/v1/me", headers=as_user(STRANGER)).json()["member"] is False
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", "/v1/jobs"),
+        ("post", "/v1/jobs"),
+        ("get", f"/v1/jobs/{uuid4()}/meals"),
+        ("post", "/v1/logs"),
+    ],
+)
+def test_non_members_can_do_nothing_else(client: TestClient, method: str, path: str) -> None:
+    body = {"count": 2} if path == "/v1/jobs" else {"device": {}, "entries": []}
+    kwargs = {"json": body} if method == "post" else {}
+
+    response = getattr(client, method)(path, headers=as_user(STRANGER), **kwargs)
+
+    assert response.status_code == 403
+
+
+# Requesting meals.
+
+
+def test_member_requests_meals(
+    client: TestClient, dispatcher: RecordingDispatcher, session: Session
+) -> None:
+    job_id = uuid4()
+
+    response = client.post(
+        "/v1/jobs", headers=as_user(MOM), json={"job_id": str(job_id), "count": 3}
+    )
+
+    assert response.status_code == 201
+    assert response.json() | {"created_at": None} == {
+        "id": str(job_id),
+        "kind": "generate_meals",
+        "params": {"count": 3},
+        "status": "pending",
+        "error": None,
+        "created_at": None,
+        "finished_at": None,
+    }
+    assert reload(session, job_id).requested_by == MOM
+    assert dispatcher.dispatched == [job_id]
+    listed = client.get("/v1/jobs", headers=as_user(DAD)).json()
+    assert [job["id"] for job in listed] == [str(job_id)]
+
+
+def test_retrying_a_request_returns_the_same_job(
+    client: TestClient, dispatcher: RecordingDispatcher
+) -> None:
+    body = {"job_id": str(uuid4()), "count": 2}
+
+    first = client.post("/v1/jobs", headers=as_user(MOM), json=body)
+    retry = client.post("/v1/jobs", headers=as_user(MOM), json=body)
+
+    assert (first.status_code, retry.status_code) == (201, 200)
+    assert retry.json()["id"] == first.json()["id"]
+    assert len(dispatcher.dispatched) == 1
+
+
+def test_someone_elses_job_id_is_rejected(client: TestClient) -> None:
+    body = {"job_id": str(uuid4()), "count": 2}
+    client.post("/v1/jobs", headers=as_user(MOM), json=body)
+
+    assert client.post("/v1/jobs", headers=as_user(DAD), json=body).status_code == 409
+
+
+@pytest.mark.parametrize("count", [0, 15, 2.5, "3"])
+def test_invalid_counts_are_rejected(client: TestClient, count: object) -> None:
+    response = client.post("/v1/jobs", headers=as_user(MOM), json={"count": count})
+
+    assert response.status_code == 422
+
+
+def test_each_member_can_have_at_most_three_requests_waiting(client: TestClient) -> None:
+    for _ in range(3):
+        assert client.post("/v1/jobs", headers=as_user(MOM), json={"count": 1}).status_code == 201
+
+    fourth = client.post("/v1/jobs", headers=as_user(MOM), json={"count": 1})
+
+    assert fourth.status_code == 429
+    assert "3 requests waiting" in fourth.json()["detail"]
+    # The limit is per person.
+    assert client.post("/v1/jobs", headers=as_user(DAD), json={"count": 1}).status_code == 201
+
+
+def test_stale_requests_do_not_count_against_the_limit(
+    client: TestClient, session: Session
+) -> None:
+    # Three requests whose tasks never started (or were lost) long ago.
+    for status, started in [
+        (JobStatus.PENDING, None),
+        (JobStatus.PENDING, None),
+        (JobStatus.RUNNING, utc_now() - timedelta(hours=2)),
+    ]:
+        job = create_job(session, GENERATE_MEALS, {"count": 1}, requested_by=MOM)
+        job.status, job.started_at = status, started
+        job.created_at = utc_now() - timedelta(hours=2)
+        session.add(job)
+        session.commit()
+
+    response = client.post("/v1/jobs", headers=as_user(MOM), json={"count": 1})
+
+    assert response.status_code == 201
+    statuses = session.exec(select(Job.status).where(Job.requested_by == MOM)).all()
+    assert sorted(statuses) == ["failed", "failed", "failed", "pending"]
+
+
+def test_request_that_cannot_be_started_fails_visibly(client: TestClient, session: Session) -> None:
+    app.dependency_overrides[get_dispatcher] = lambda: RecordingDispatcher(fail=True)
+    job_id = uuid4()
+
+    response = client.post(
+        "/v1/jobs", headers=as_user(MOM), json={"job_id": str(job_id), "count": 2}
+    )
+
+    assert response.status_code == 503
+    job = reload(session, job_id)
+    assert job.status == JobStatus.FAILED
+    assert job.error == "The request could not be started. Try again."
+
+
+# Meals.
+
+
+def test_meals_of_a_request_in_the_order_the_agent_added_them(
+    client: TestClient, session: Session
+) -> None:
+    job = create_job(session, GENERATE_MEALS, {"count": 2}, requested_by=MOM)
+    meal = MealInput(
+        name="Tacos",
+        servings=4,
+        ingredients=[
+            IngredientInput(name="tortillas", quantity=8),
+            IngredientInput(name="beef", quantity=1, unit="lb"),
+        ],
+        steps=["Cook.", "Serve."],
+    )
+    add_meals(session, job.id, [meal, meal.model_copy(update={"name": "Soup"})])
+    session.commit()
+
+    meals = client.get(f"/v1/jobs/{job.id}/meals", headers=as_user(DAD)).json()
+
+    assert [m["name"] for m in meals] == ["Tacos", "Soup"]
+    assert [(i["position"], i["name"], i["unit"]) for i in meals[0]["meal_ingredient"]] == [
+        (0, "tortillas", None),
+        (1, "beef", "lb"),
+    ]
+    assert meals[0]["steps"] == ["Cook.", "Serve."]
+
+
+def test_meals_of_an_unknown_request_are_not_found(client: TestClient) -> None:
+    assert client.get(f"/v1/jobs/{uuid4()}/meals", headers=as_user(MOM)).status_code == 404
+
+
+# App logs.
+
+
+def test_app_logs_are_written_as_structured_log_lines(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    entries = [
+        {"event": "app.start", "level": "info"},
+        {"event": "jobs.load_failed", "error": "boom"},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="castle_chef.client"):
+        response = client.post(
+            "/v1/logs",
+            headers=as_user(MOM),
+            json={"device": {"platform": "ios"}, "entries": entries},
+        )
+
+    assert response.status_code == 204
+    batch, *lines = [r for r in caplog.records if r.name == "castle_chef.client"]
+    assert (batch.getMessage(), batch.email, batch.device, batch.entries) == (
+        "client.batch",
+        "mom@example.com",
+        {"platform": "ios"},
+        2,
+    )
+    assert [line.entry for line in lines] == entries
+    assert {line.batch_id for line in lines} == {batch.batch_id}
+
+
+def test_too_many_log_entries_are_rejected(client: TestClient) -> None:
+    body = {"device": {}, "entries": [{"event": "x"}] * 2001}
+
+    assert client.post("/v1/logs", headers=as_user(MOM), json=body).status_code == 422
+
+
+# Browser access.
+
+
+def test_configured_origins_may_call_the_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CASTLE_CHEF_CORS_ORIGINS", '["capacitor://localhost"]')
+    get_settings.cache_clear()
+    cors_client = TestClient(create_app())
+    preflight = {
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization",
+    }
+
+    allowed = cors_client.options(
+        "/v1/jobs", headers={"Origin": "capacitor://localhost"} | preflight
+    )
+    other = cors_client.options("/v1/jobs", headers={"Origin": "https://evil.example"} | preflight)
+
+    assert allowed.headers["access-control-allow-origin"] == "capacitor://localhost"
+    assert "access-control-allow-origin" not in other.headers
+
+
+# End to end in development: the API starts a real local worker.
+
+
+def test_request_runs_to_completion_with_a_local_worker(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CASTLE_CHEF_JOB_DISPATCH", "local")
+    monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 2 end_turn 0 0")
+    get_settings.cache_clear()
+    get_dispatcher.cache_clear()
+    app.dependency_overrides[api_module.get_verifier] = TokensAreUserIds
+    try:
+        client = TestClient(app)
+        job_id = client.post("/v1/jobs", headers=as_user(MOM), json={"count": 2}).json()["id"]
+
+        deadline = time.monotonic() + 30
+        while (job := reload(session, UUID(job_id))).status in ACTIVE:
+            assert time.monotonic() < deadline, "the local worker did not finish"
+            time.sleep(0.2)
+
+        assert job.status == JobStatus.SUCCEEDED, job.error
+        meals = client.get(f"/v1/jobs/{job_id}/meals", headers=as_user(MOM)).json()
+        assert len(meals) == 2
+    finally:
+        app.dependency_overrides.clear()
+
+
+# Review follow-ups: stale scoping, derived status, idempotency, concurrency, limits.
+
+
+def make_job(session: Session, member: UUID, status: JobStatus, hours_ago: float) -> Job:
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, requested_by=member)
+    job.status = status
+    job.created_at = utc_now() - timedelta(hours=hours_ago)
+    job.started_at = job.created_at if status == JobStatus.RUNNING else None
+    session.add(job)
+    session.commit()
+    return job
+
+
+def test_submitting_fails_only_the_requesters_stale_jobs(
+    client: TestClient, session: Session
+) -> None:
+    dads = make_job(session, DAD, JobStatus.RUNNING, hours_ago=2)
+
+    assert client.post("/v1/jobs", headers=as_user(MOM), json={"count": 1}).status_code == 201
+
+    assert reload(session, dads.id).status == JobStatus.RUNNING
+
+
+def test_overdue_jobs_are_listed_as_failed_without_changing_them(
+    client: TestClient, session: Session
+) -> None:
+    lost = make_job(session, MOM, JobStatus.PENDING, hours_ago=1)
+    fresh = make_job(session, MOM, JobStatus.RUNNING, hours_ago=0)
+
+    listed = {job["id"]: job for job in client.get("/v1/jobs", headers=as_user(MOM)).json()}
+
+    assert listed[str(lost.id)]["status"] == "failed"
+    assert "stopped without finishing" in listed[str(lost.id)]["error"]
+    assert listed[str(fresh.id)]["status"] == "running"
+    assert reload(session, lost.id).status == JobStatus.PENDING  # a read writes nothing
+
+
+def test_reusing_a_job_id_for_a_different_request_is_rejected(client: TestClient) -> None:
+    job_id = str(uuid4())
+    client.post("/v1/jobs", headers=as_user(MOM), json={"job_id": job_id, "count": 2})
+
+    response = client.post("/v1/jobs", headers=as_user(MOM), json={"job_id": job_id, "count": 5})
+
+    assert response.status_code == 409
+
+
+def test_concurrent_requests_cannot_exceed_the_limit(session: Session) -> None:
+    results: list[str] = []
+
+    def submit() -> None:
+        with Session(get_engine()) as own:
+            try:
+                submit_job(own, MOM, uuid4(), GenerateMealsParams(count=1), 3, STALE_AFTER)
+                results.append("created")
+            except TooManyActiveJobs:
+                results.append("refused")
+
+    threads = [threading.Thread(target=submit) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(results) == ["created"] * 3 + ["refused"] * 3
+    assert len(session.exec(select(Job).where(Job.requested_by == MOM)).all()) == 3
+
+
+def test_submitting_after_being_removed_is_refused(session: Session) -> None:
+    session.execute(text("DELETE FROM household_member WHERE user_id = :id"), {"id": MOM})
+    session.commit()
+
+    with pytest.raises(NotAMember):
+        submit_job(session, MOM, uuid4(), GenerateMealsParams(count=1), 3, STALE_AFTER)
+
+
+def test_oversized_log_batches_are_rejected(client: TestClient) -> None:
+    body = {"device": {}, "entries": [{"event": "x", "blob": "y" * 600_000}] * 2}
+
+    assert client.post("/v1/logs", headers=as_user(MOM), json=body).status_code == 422
+
+
+def test_local_worker_that_cannot_start_fails_the_request(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def cannot_start(*_args: object, **_kwargs: object) -> None:
+        raise OSError("too many processes")
+
+    monkeypatch.setattr(subprocess, "Popen", cannot_start)
+    app.dependency_overrides[api_module.get_verifier] = TokensAreUserIds
+    app.dependency_overrides[get_dispatcher] = LocalDispatcher
+    try:
+        job_id = uuid4()
+        response = TestClient(app).post(
+            "/v1/jobs", headers=as_user(MOM), json={"job_id": str(job_id), "count": 1}
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert reload(session, job_id).status == JobStatus.FAILED
+
+
+def test_sqs_dispatcher_sends_the_job_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/castle-chef-jobs"
+    dispatcher = SqsDispatcher(queue_url)
+    job_id = uuid4()
+
+    with Stubber(dispatcher._sqs) as sqs:
+        sqs.add_response(
+            "send_message",
+            {"MessageId": "1"},
+            {"QueueUrl": queue_url, "MessageBody": f'{{"version":1,"job_id":"{job_id}"}}'},
+        )
+        dispatcher.dispatch(job_id)
+
+        sqs.add_client_error("send_message", "AWS.SimpleQueueService.NonExistentQueue")
+        with pytest.raises(DispatchError):
+            dispatcher.dispatch(job_id)

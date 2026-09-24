@@ -46,8 +46,8 @@ function RequestBody({ job }: { job: Job }) {
   if (job.status === 'pending') {
     return (
       <p className="muted">
-        Waiting for the chef to pick up this request. The chef checks for new requests every 30
-        minutes; this page updates on its own.
+        Waiting for the chef to start on this request (usually within a couple of minutes); this
+        page updates on its own.
       </p>
     )
   }
@@ -60,7 +60,7 @@ function RequestBody({ job }: { job: Job }) {
         <button
           disabled={request.isPending}
           onClick={() =>
-            request.mutate(job.params.count, { onSuccess: () => void navigate('/') })
+            request.mutate({ jobId: crypto.randomUUID(), count: job.params.count }, { onSuccess: () => void navigate('/') })
           }
         >
           Request again

@@ -7,14 +7,9 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+import { getMe, listJobMeals, listJobs, type MealRequest, sendLogs } from './api'
+import { auth } from './auth'
 import { getLogEntries, logger } from './log'
-import {
-  isHouseholdMember,
-  listJobMeals,
-  listJobs,
-  neon,
-  sendLogs,
-} from './neon'
 import { persister } from './queryClient'
 import type { Job } from './types'
 
@@ -26,12 +21,10 @@ export interface Session {
 export const sessionQuery = queryOptions({
   queryKey: ['session'],
   queryFn: async (): Promise<Session | null> => {
-    const { data, error } = await neon.auth.getSession()
-    if (error) throw new Error(error.message)
-    if (!data?.user) return null
-    const { id, email, name } = data.user
-    const session = { user: { id, email, name }, member: await isHouseholdMember() }
-    logger.info('session.loaded', { userId: id, member: session.member })
+    const user = await auth.getUser()
+    if (!user) return null
+    const session = { user, member: (await getMe()).member }
+    logger.info('session.loaded', { userId: user.id, member: session.member })
     return session
   },
   // Always stale: the persisted session renders the app instantly, and is
@@ -56,7 +49,7 @@ export async function afterSignIn(queryClient: QueryClient) {
 }
 
 export async function signOut(queryClient: QueryClient) {
-  await neon.auth.signOut()
+  await auth.signOut()
   queryClient.setQueryData(sessionQuery.queryKey, null)
   removeAccountData(queryClient)
   // A request made offline must not be sent later as whoever signs in next.
@@ -105,13 +98,13 @@ export const OPTIMISTIC_PREFIX = 'optimistic-'
 export function useRequestMeals() {
   const queryClient = useQueryClient()
   // mutationFn and onSettled are defaults set in queryClient.ts.
-  return useMutation<void, Error, number, { previous?: Job[] }>({
+  return useMutation<void, Error, MealRequest, { previous?: Job[] }>({
     mutationKey: ['requestMeals'],
-    onMutate: async (count) => {
+    onMutate: async ({ jobId, count }) => {
       await queryClient.cancelQueries({ queryKey: jobsQuery.queryKey })
       const previous = queryClient.getQueryData(jobsQuery.queryKey)
       const optimistic: Job = {
-        id: `${OPTIMISTIC_PREFIX}${crypto.randomUUID()}`,
+        id: `${OPTIMISTIC_PREFIX}${jobId}`,
         kind: 'generate_meals',
         params: { count },
         status: 'pending',
@@ -122,7 +115,7 @@ export function useRequestMeals() {
       queryClient.setQueryData(jobsQuery.queryKey, (jobs = []) => [optimistic, ...jobs])
       return { previous }
     },
-    onError: (_error, _count, context) => {
+    onError: (_error, _request, context) => {
       queryClient.setQueryData(jobsQuery.queryKey, context?.previous)
       // A refusal can mean the account was removed from the household.
       void queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey })

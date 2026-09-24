@@ -1,32 +1,29 @@
-"""`castle-chef` command line: the agent's meal tool, dev helpers, and the worker."""
+"""`castle-chef` command line: the agent's meal tool, the job worker, and admin helpers."""
 
 import json
 import logging
 import sys
 from pathlib import Path
 from typing import Annotated
+from uuid import UUID
 
 import typer
 from pydantic import ValidationError
 
 from castle_chef import family, jobs, worker
 from castle_chef import log as logging_config
-from castle_chef.client_logs import save_client_logs
 from castle_chef.db import get_session
+from castle_chef.dispatch import JOB_ID_ENV, get_dispatcher
 from castle_chef.meals import MealInput, save_meal
 from castle_chef.settings import get_settings
 
 app = typer.Typer(no_args_is_help=True)
 meal_app = typer.Typer(no_args_is_help=True, help="Manage meals.")
-job_app = typer.Typer(no_args_is_help=True, help="Manage queued jobs.")
-worker_app = typer.Typer(no_args_is_help=True, help="Process queued jobs.")
+job_app = typer.Typer(no_args_is_help=True, help="Create and run jobs.")
 family_app = typer.Typer(no_args_is_help=True, help="Manage who can use the app (invite-only).")
-logs_app = typer.Typer(no_args_is_help=True, help="Logs sent from the app.")
 app.add_typer(meal_app, name="meal")
 app.add_typer(job_app, name="job")
-app.add_typer(worker_app, name="worker")
 app.add_typer(family_app, name="family")
-app.add_typer(logs_app, name="logs")
 log = logging.getLogger(__name__)
 
 
@@ -65,26 +62,32 @@ def meal_add(
 
 @job_app.command("create")
 def job_create(count: Annotated[int, typer.Option(min=1, max=14)]) -> None:
-    """Queue a meal generation job, as the app does. Prints the job id."""
+    """Create a meal generation job and start it (SQS or a local worker, per
+    CASTLE_CHEF_JOB_DISPATCH). Prints the job id."""
     params = jobs.GenerateMealsParams(count=count).model_dump()
     with get_session() as session:
         job = jobs.create_job(session, jobs.GENERATE_MEALS, params)
+    get_dispatcher().dispatch(job.id)
     typer.echo(json.dumps({"job_id": str(job.id)}))
 
 
-@worker_app.command("run")
-def worker_run(
-    once: Annotated[
-        bool, typer.Option(help="Process all pending jobs now, then exit (manual trigger).")
-    ] = False,
+@job_app.command("run")
+def job_run(
+    job_id: Annotated[
+        UUID, typer.Option(envvar=JOB_ID_ENV, help="The job to run (set per task in AWS).")
+    ],
 ) -> None:
-    """Poll the job queue and run the agent for each job. SIGTERM lets a running job finish."""
+    """Run one job: claim it, run the agent, and save its meals. This is the worker."""
     try:
-        worker.run(once=once)
+        worker.run_job(job_id)
     except worker.SchemaBehindError as error:
         log.error("schema.behind", extra={"error": str(error)})
         typer.echo(str(error), err=True)
         raise typer.Exit(worker.SCHEMA_BEHIND_EXIT_CODE) from error
+    except LookupError as error:
+        log.error("job.not_found", extra={"job_id": str(job_id)})
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
 
 
 @family_app.command("invite")
@@ -114,13 +117,3 @@ def family_remove(email: str) -> None:
     with get_session() as session:
         family.remove(session, email)
     typer.echo(f"Removed {email}.")
-
-
-@logs_app.command("pull")
-def logs_pull() -> None:
-    """Save logs sent from the app to disk now (the worker also does this every cycle)."""
-    settings = get_settings()
-    with get_session() as session:
-        saved = save_client_logs(session, settings.logs_dir)
-    log.info("client_logs.pulled", extra={"batches": saved})
-    typer.echo(f"Saved {saved} log batch(es) to {settings.logs_dir / 'client'}.")

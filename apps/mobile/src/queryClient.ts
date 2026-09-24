@@ -10,7 +10,8 @@ import {
   QueryClient,
 } from '@tanstack/react-query'
 import { errorFields, logger } from './log'
-import { requestMeals } from './neon'
+import { requestMeals } from './api'
+import { isRetryable } from './apiError'
 
 /**
  * Server state lives in TanStack Query: cached, shown instantly (including
@@ -49,6 +50,9 @@ export const queryClient = new QueryClient({
 // to know how to send itself (resumed in App.tsx once the cache is restored).
 queryClient.setMutationDefaults(['requestMeals'], {
   mutationFn: requestMeals,
+  // Resent with the same job id, so a response lost in transit can't create a
+  // second request: the API returns the one it already has.
+  retry: (failureCount, error) => isRetryable(error, failureCount),
   onSettled: () => queryClient.invalidateQueries({ queryKey: ['jobs'] }),
 })
 

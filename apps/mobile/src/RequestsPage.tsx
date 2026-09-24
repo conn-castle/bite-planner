@@ -25,7 +25,7 @@ export function RequestsPage() {
 
   function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (count !== null && countIsValid) request.mutate(count)
+    if (count !== null && countIsValid) request.mutate({ jobId: crypto.randomUUID(), count })
   }
 
   return (

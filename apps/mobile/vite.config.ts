@@ -26,9 +26,15 @@ function devServer(env: Record<string, string>) {
   return {
     host: true, // Listen on the local network, not just localhost.
     proxy: {
+      // The Castle Chef API, run locally with `uv run uvicorn castle_chef.api:app`
+      // (backend/). Same origin as the app, so no CORS in development.
+      '/api': {
+        target: process.env.CASTLE_CHEF_API_DEV_URL ?? 'http://localhost:8000',
+        rewrite: (path: string) => path.replace(/^\/api/, ''),
+      },
       // Dev only: serve Neon Auth from the app's own origin so its session
       // cookie is first-party in any browser, and present the trusted origin
-      // Neon Auth expects (see src/neon.ts).
+      // Neon Auth expects (see src/neonAuth.ts).
       '/neon-auth': {
         target: authUrl.origin,
         changeOrigin: true,

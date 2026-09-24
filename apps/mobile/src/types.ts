@@ -1,4 +1,4 @@
-// Row shapes returned by the Neon Data API. Mirrors backend/src/castle_chef/models.py.
+// Shapes returned by the Castle Chef API (backend/src/castle_chef/api.py).
 
 export type JobStatus = 'pending' | 'running' | 'succeeded' | 'failed'
 

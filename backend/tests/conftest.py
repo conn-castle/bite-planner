@@ -20,6 +20,7 @@ if not TEST_DATABASE_URL:
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 from castle_chef.db import get_engine  # noqa: E402
+from castle_chef.dispatch import get_dispatcher  # noqa: E402
 from castle_chef.settings import get_settings  # noqa: E402
 
 
@@ -45,8 +46,10 @@ def clean_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[No
     monkeypatch.setenv("CASTLE_CHEF_JOBS_DIR", str(tmp_path / "jobs"))
     monkeypatch.setenv("CASTLE_CHEF_LOGS_DIR", str(tmp_path / "logs"))
     get_settings.cache_clear()
+    get_dispatcher.cache_clear()
     yield
     get_settings.cache_clear()
+    get_dispatcher.cache_clear()
     with get_engine().begin() as connection:
         connection.execute(
             text('TRUNCATE job, meal, household_member, client_log_batch, neon_auth."user" CASCADE')

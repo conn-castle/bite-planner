@@ -1,14 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
+import { auth } from './auth'
 import { errorFields, logger } from './log'
-import { neon } from './neon'
 import { afterSignIn } from './queries'
 
 function describeError(error: unknown): string {
-  const message = (error as { message?: string } | null)?.message
-  if (message === 'Invalid OTP') return 'That code is wrong or has expired. Send a new one.'
-  return message || 'Something went wrong. Try again.'
+  return (error as { message?: string } | null)?.message || 'Something went wrong. Try again.'
 }
 
 /**
@@ -25,17 +23,11 @@ export function SignIn() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // neon-js throws on HTTP errors and returns `error` for others; handle both.
-  async function run(
-    event: string,
-    action: () => Promise<{ error?: unknown }>,
-    then: () => void | Promise<void>,
-  ) {
+  async function run(event: string, action: () => Promise<void>, then: () => void | Promise<void>) {
     setBusy(true)
     setError(null)
     try {
-      const result = await action()
-      if (result.error) throw result.error
+      await action()
       logger.info(event)
       await then()
     } catch (e) {
@@ -49,7 +41,7 @@ export function SignIn() {
   function sendCode() {
     void run(
       'auth.code_sent',
-      () => neon.auth.emailOtp.sendVerificationOtp({ email, type: 'sign-in' }),
+      () => auth.sendCode(email),
       () => {
         setCode('')
         setStep('code')
@@ -63,7 +55,7 @@ export function SignIn() {
     else
       void run(
         'auth.signed_in',
-        () => neon.auth.signIn.emailOtp({ email, otp: code }),
+        () => auth.verifyCode(email, code),
         async () => {
           await afterSignIn(queryClient)
           await navigate('/')

@@ -1,6 +1,7 @@
 from functools import lru_cache
 
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine, event
+from sqlalchemy.pool import NullPool
 from sqlmodel import Session, create_engine
 
 from castle_chef.settings import get_settings
@@ -12,8 +13,27 @@ def get_engine() -> Engine:
     # Neon hands out `postgresql://` URLs; use the psycopg 3 driver for them.
     if url.startswith("postgresql://"):
         url = "postgresql+psycopg://" + url.removeprefix("postgresql://")
-    return create_engine(url, pool_pre_ping=True)
+    # No client-side pool: the API runs on Lambda and the worker is one short-lived
+    # process per job, and Neon's pooler (PgBouncer, transaction mode) pools for us.
+    # Its transaction mode also can't keep server-side prepared statements.
+    return create_engine(
+        url, poolclass=NullPool, connect_args={"prepare_threshold": None, "connect_timeout": 10}
+    )
 
 
 def get_session() -> Session:
     return Session(get_engine())
+
+
+def _limit_waits(_session: Session, _transaction: object, connection: Connection) -> None:
+    # SET LOCAL: per transaction. A plain SET would leak to other clients of
+    # the pooler's shared server connections.
+    connection.exec_driver_sql("SET LOCAL statement_timeout = '10s'; SET LOCAL lock_timeout = '5s'")
+
+
+def get_request_session() -> Session:
+    """A session for API requests: every transaction gives up on a slow statement
+    or lock well within the Lambda's time limit."""
+    session = get_session()
+    event.listen(session, "after_begin", _limit_waits)
+    return session

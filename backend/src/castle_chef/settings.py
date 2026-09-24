@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,11 +21,27 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Direct (owner role) connection string for the Neon branch.
+    # Owner-role connection string for the Neon branch (the pooled one on Lambda).
     database_url: str = Field(validation_alias="DATABASE_URL")
 
-    # How often the worker checks the queue. Each check wakes Neon compute.
-    poll_interval_seconds: int = 1800
+    # Neon Auth URL of the branch (e.g. https://ep-….neonauth…/neondb/auth). The API
+    # verifies the app's JWTs against its keys.
+    neon_auth_url: str | None = None
+    # Expected JWT issuer and audience; default: the Neon Auth URL's origin.
+    neon_auth_issuer: str | None = None
+    neon_auth_audience: str | None = None
+    # Browser origins allowed to call the API (JSON list).
+    cors_origins: list[str] = []
+
+    # How the API starts a job: `sqs` (the queue on AWS) or `local` (a
+    # `castle-chef job run` subprocess, for development).
+    job_dispatch: Literal["sqs", "local"] = "local"
+    jobs_queue_url: str | None = None
+    # At most this many pending or running requests per person.
+    max_active_jobs_per_member: int = 3
+    # A pending job whose task never started is failed after this long.
+    pending_timeout_seconds: int = 600
+
     # Hard limit for one agent run.
     agent_timeout_seconds: int = 900
     # Command that starts the agent harness; Grok flags are appended to it.

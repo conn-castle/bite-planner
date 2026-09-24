@@ -1,4 +1,4 @@
-"""Polls the job queue and runs the agent harness for each job."""
+"""Runs one job: the agent harness in a job directory, then its meals saved."""
 
 import json
 import logging
@@ -8,9 +8,9 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import timedelta
 from pathlib import Path
 from string import Template
+from uuid import UUID
 
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
@@ -18,17 +18,10 @@ from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
 from pydantic import ValidationError
 
-from castle_chef.client_logs import save_client_logs
 from castle_chef.db import get_engine, get_session
-from castle_chef.jobs import (
-    GENERATE_MEALS,
-    GenerateMealsParams,
-    claim_next_job,
-    fail_stale_jobs,
-    finish_job,
-)
+from castle_chef.jobs import GENERATE_MEALS, GenerateMealsParams, claim_job, finish_job
 from castle_chef.meals import MealInput, add_meals, load_meals
-from castle_chef.models import Job, JobStatus
+from castle_chef.models import Job
 from castle_chef.settings import REPO_ROOT, get_settings
 
 log = logging.getLogger(__name__)
@@ -57,8 +50,8 @@ read_only = [$read_only]
 """)
 
 
-# Exit status when the database is behind this code. The systemd unit does not
-# restart on it (RestartPreventExitStatus), so the refusal is logged once.
+# Exit status when the database is behind this code: the release's migration
+# did not run (in AWS, the failure handler reports the stopped task).
 SCHEMA_BEHIND_EXIT_CODE = 78
 
 
@@ -70,51 +63,52 @@ class SchemaBehindError(Exception):
     pass
 
 
-_stop_requested = False
+def run_job(job_id: UUID) -> None:
+    """Run one job: claim it, run the agent, and save its meals (or its failure).
 
-
-def _request_stop(_signum: int, _frame: object) -> None:
-    global _stop_requested
-    _stop_requested = True
-
-
-def run(once: bool) -> None:
-    """Poll the queue until done (`once`) or SIGTERM, which lets a running job finish."""
-    global _stop_requested
-    settings = get_settings()
+    Raises LookupError if the job doesn't exist and SchemaBehindError if the
+    database is behind this code; a job someone else already claimed is left alone.
+    """
     check_schema()
-    log.info("worker.started", extra=current_release())
-    _stop_requested = False
-    previous_handler = signal.signal(signal.SIGTERM, _request_stop)
+    fields = {"job_id": str(job_id)}
+    log.info("worker.started", extra=current_release() | fields)
+    with get_session() as session:
+        job = claim_job(session, job_id)
+    if job is None:
+        log.warning("job.already_claimed", extra=fields)
+        return
+    log.info("job.claimed", extra=fields | {"kind": job.kind, "params": job.params})
     try:
-        while not _stop_requested:
-            with get_session() as session:
-                # Grace period beyond the agent timeout before a run counts as lost.
-                stale = fail_stale_jobs(
-                    session, timedelta(seconds=settings.agent_timeout_seconds + 300)
-                )
-                if stale:
-                    log.error("jobs.stale_failed", extra={"count": stale})
-            processed = 0
-            while not _stop_requested and process_next_job():
-                processed += 1
-            with get_session() as session:
-                saved = save_client_logs(session, settings.logs_dir)
-            log.info(
-                "queue.checked", extra={"jobs_processed": processed, "client_logs_saved": saved}
-            )
-            if once:
+        meals = process_job(job)
+    except (AgentRunError, ValidationError) as error:
+        log.error("job.failed", extra=fields | {"error": str(error)})
+        _finish(job_id, error=str(error))
+        return
+    except Exception as error:
+        log.exception("job.crashed", extra=fields)
+        _finish(job_id, error=f"Unexpected worker error: {error!r}")
+        return
+    try:
+        with get_session() as session:
+            # The meals and the job's success are committed together, and only if
+            # the job is still running (not failed as stale meanwhile).
+            add_meals(session, job_id, meals)
+            if not finish_job(session, job_id):
+                log.error("job.no_longer_running", extra=fields | {"meal_count": len(meals)})
                 return
-            _sleep_unless_stopped(settings.poll_interval_seconds)
-        log.info("worker.stopped")
-    finally:
-        signal.signal(signal.SIGTERM, previous_handler)
+    except Exception as error:
+        # If the commit went through despite the error (a lost acknowledgement),
+        # the job is no longer running and this changes nothing.
+        log.exception("job.save_failed", extra=fields)
+        _finish(job_id, error=f"Could not save the meals: {error!r}")
+        return
+    log.info("job.succeeded", extra=fields | {"meal_count": len(meals)})
 
 
-def _sleep_unless_stopped(seconds: float) -> None:
-    deadline = time.monotonic() + seconds
-    while not _stop_requested and (remaining := deadline - time.monotonic()) > 0:
-        time.sleep(min(remaining, 1))
+def _finish(job_id: UUID, error: str) -> None:
+    with get_session() as session:
+        if not finish_job(session, job_id, error=error):
+            log.error("job.no_longer_running", extra={"job_id": str(job_id)})
 
 
 def check_schema() -> None:
@@ -149,7 +143,14 @@ def _is_known_revision(script: ScriptDirectory, revision: str) -> bool:
 
 
 def current_release() -> dict[str, str]:
-    """The checked-out commit and its release tag (`r<N>`), or `dev-<sha>` if untagged."""
+    """The release (`r<N>`) and commit this code is, from the image's environment
+    (CASTLE_CHEF_RELEASE, CASTLE_CHEF_COMMIT, set at build) or else from git:
+    the checkout's release tag, or `dev-<sha>` if untagged."""
+    if "CASTLE_CHEF_COMMIT" in os.environ:
+        return {
+            "release": os.environ.get("CASTLE_CHEF_RELEASE", "unknown"),
+            "commit": os.environ["CASTLE_CHEF_COMMIT"],
+        }
 
     def git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -160,46 +161,6 @@ def current_release() -> dict[str, str]:
     tag = git("describe", "--exact-match", "--tags", "--match", "r[0-9]*", "HEAD", check=False)
     release = tag.stdout.strip() if tag.returncode == 0 else f"dev-{commit[:7]}"
     return {"release": release, "commit": commit}
-
-
-def process_next_job() -> bool:
-    """Process one pending job. Returns False when the queue is empty."""
-    with get_session() as session:
-        job = claim_next_job(session)
-    if job is None:
-        return False
-
-    fields = {"job_id": str(job.id)}
-    log.info("job.claimed", extra=fields | {"kind": job.kind, "params": job.params})
-    try:
-        meals = process_job(job)
-    except (AgentRunError, ValidationError) as error:
-        log.error("job.failed", extra=fields | {"error": str(error)})
-        with get_session() as session:
-            finish_job(session, job.id, error=str(error))
-        return True
-    except Exception as error:
-        log.exception("job.crashed", extra=fields)
-        with get_session() as session:
-            finish_job(session, job.id, error=f"Unexpected worker error: {error!r}")
-        return True
-
-    try:
-        with get_session() as session:
-            # The meals and the job's success are committed together.
-            add_meals(session, job.id, meals)
-            finish_job(session, job.id)
-    except Exception as error:
-        # The commit may have succeeded even though it raised (e.g. a lost
-        # acknowledgement), so fail the job only if it is not already done.
-        log.exception("job.save_failed", extra=fields)
-        with get_session() as session:
-            saved = session.get(Job, job.id)
-            if saved is not None and saved.status == JobStatus.RUNNING:
-                finish_job(session, job.id, error=f"Could not save the meals: {error!r}")
-        return True
-    log.info("job.succeeded", extra=fields | {"meal_count": len(meals)})
-    return True
 
 
 def process_job(job: Job) -> list[MealInput]:
@@ -242,45 +203,50 @@ def run_agent(job_dir: Path, prompt: str) -> None:
     ]  # fmt: skip
     # A minimal environment: no database credentials or other secrets reach the agent.
     env = {
-        "HOME": os.environ["HOME"],
+        "HOME": os.environ.get("HOME", str(job_dir)),
         # Puts this environment's `castle-chef` executable first on the agent's PATH.
-        "PATH": f"{venv_bin}{os.pathsep}{os.environ['PATH']}",
+        "PATH": f"{venv_bin}{os.pathsep}{os.environ.get('PATH', os.defpath)}",
         "CASTLE_CHEF_JOB_DIR": str(job_dir),
     }
     if "LANG" in os.environ:
         env["LANG"] = os.environ["LANG"]
     stdout_path = job_dir / "agent-output.json"
     stderr_path = job_dir / "agent-stderr.log"
-    log.info("agent.started", extra={"job_dir": str(job_dir)})
+    # The job directory is named after the job, which ties these events to it.
+    log.info("agent.started", extra={"job_id": job_dir.name, "job_dir": str(job_dir)})
     started = time.monotonic()
-    try:
-        with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
-            completed = subprocess.run(
-                command,
-                cwd=REPO_ROOT,  # `al` resolves the Agent Layer project from here.
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=stdout,
-                stderr=stderr,
-                timeout=settings.agent_timeout_seconds,
-                check=False,
-            )
-    except subprocess.TimeoutExpired as error:
-        raise AgentRunError(
-            f"Agent timed out after {settings.agent_timeout_seconds}s; see {job_dir}."
-        ) from error
+    with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
+        # Its own process group, so a timeout kills everything the agent started.
+        agent = subprocess.Popen(
+            command,
+            cwd=REPO_ROOT,  # `al` resolves the Agent Layer project from here.
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+        )
+        try:
+            returncode = agent.wait(timeout=settings.agent_timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            os.killpg(agent.pid, signal.SIGKILL)
+            agent.wait()
+            raise AgentRunError(
+                f"Agent timed out after {settings.agent_timeout_seconds}s; see {job_dir}."
+            ) from error
 
     duration = round(time.monotonic() - started, 1)
-    if completed.returncode != 0:
+    if returncode != 0:
         log.error(
             "agent.exited",
             extra={
+                "job_id": job_dir.name,
                 "job_dir": str(job_dir),
-                "returncode": completed.returncode,
+                "returncode": returncode,
                 "seconds": duration,
             },
         )
-        raise AgentRunError(f"Agent exited with code {completed.returncode}; see {stderr_path}.")
+        raise AgentRunError(f"Agent exited with code {returncode}; see {stderr_path}.")
     try:
         output = json.loads(stdout_path.read_text())
     except json.JSONDecodeError as error:
@@ -289,6 +255,7 @@ def run_agent(job_dir: Path, prompt: str) -> None:
     log.info(
         "agent.finished",
         extra={
+            "job_id": job_dir.name,
             "job_dir": str(job_dir),
             "seconds": duration,
             "stop_reason": stop_reason,
