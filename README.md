@@ -327,9 +327,7 @@ prod uv run castle-chef family list
 
 ## Status and next steps
 
-Production runs on AWS (since release `r6`; now date-versioned, e.g. `2026.9.24.1`): verified with a real request through the queue (worker on Fargate, Grok login on EFS, meal saved to Neon `main`), and in a browser against the API on `dev` before that. Not yet done:
+Production runs on AWS (since release `r6`; now date-versioned, e.g. `2026.9.24.1`), with alarms emailing the owner, and the iOS app on TestFlight (verified on a phone: sign-in, relaunch, requests, sending logs). A code rollback was rehearsed. Next:
 
-1. Confirm the alarm email subscription (the "AWS Notification - Subscription Confirmation" email), or alarms can't reach you.
-2. TestFlight: create the app record in App Store Connect ([TestFlight](#testflight)); then the next release (or `gh workflow run release.yml -f force_ios=true`) uploads the first build. Then install it with TestFlight, sign in, and invite the family ([Family members](#family-members-invite-only)).
-3. On a phone: sign in with a code, fully quit and relaunch (should stay signed in and show data instantly), request meals, and send logs from Account. The native auth path (`src/neonAuth.ts`) has only been verified at the HTTP level.
-4. Product: give the agent meal history so it avoids repeats.
+1. Product: give the agent meal history so it avoids repeats, and iterate on the app.
+2. Invite the family ([Family members](#family-members-invite-only)), as App Store Connect users (internal testers) or external testers (Apple reviews the first build).
