@@ -10,13 +10,18 @@ def connect_api_key
 end
 
 platform :ios do
-  # In GitHub Actions, writes the uploaded build number to the step output `build_number`.
+  # In GitHub Actions, writes the version and build to the step outputs `version` and `build_number`.
   desc "Build the Capacitor iOS app and upload it to TestFlight (without waiting for processing)"
   lane :beta do
     api_key = connect_api_key
 
     setup_ci
     match(type: "appstore", readonly: true, api_key: api_key)
+
+    # The release (YYYY.M.D.N) is the app's version (YYYY.M.D) and build (N).
+    release = ENV.fetch("CASTLE_CHEF_RELEASE")
+    version, build_number = release.match(/\A(\d{4}\.\d{1,2}\.\d{1,2})\.(\d+)\z/)&.captures
+    UI.user_error!("CASTLE_CHEF_RELEASE #{release.inspect} is not YYYY.M.D.N") if version.nil?
 
     project = "ios/App/App.xcodeproj"
     update_code_signing_settings(
@@ -26,22 +31,17 @@ platform :ios do
       code_sign_identity: "Apple Distribution",
       profile_name: ENV.fetch("sigh_com.conncastle.castlechef_appstore_profile-name")
     )
-    build_number = increment_build_number(
-      xcodeproj: project,
-      # initial_build_number applies before the first upload exists.
-      build_number: latest_testflight_build_number(api_key: api_key, initial_build_number: 0) + 1
-    )
-
     build_app(
       project: project,
       scheme: "App",
       configuration: "Release",
       export_method: "app-store",
-      output_directory: "build"
+      output_directory: "build",
+      xcargs: "MARKETING_VERSION=#{version} CURRENT_PROJECT_VERSION=#{build_number}"
     )
     # Processing is awaited by the `processed` lane on a cheaper Linux runner.
     upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: true)
-    File.write(ENV["GITHUB_OUTPUT"], "build_number=#{build_number}\n", mode: "a") if ENV["GITHUB_OUTPUT"]
+    File.write(ENV["GITHUB_OUTPUT"], "version=#{version}\nbuild_number=#{build_number}\n", mode: "a") if ENV["GITHUB_OUTPUT"]
   end
 
   # Needs write access to the match repo (MATCH_GIT_BASIC_AUTHORIZATION); the
@@ -51,8 +51,9 @@ platform :ios do
     match(type: "appstore", readonly: false, api_key: connect_api_key)
   end
 
-  desc "Wait until App Store Connect has processed build `build_number`; fail unless it is valid"
+  desc "Wait until App Store Connect has processed `version` (`build_number`); fail unless it is valid"
   lane :processed do |options|
+    version = options.fetch(:version).to_s
     build_number = options.fetch(:build_number).to_s
     connect_api_key
     app = Spaceship::ConnectAPI::App.find(CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier))
@@ -60,6 +61,7 @@ platform :ios do
     build = FastlaneCore::BuildWatcher.wait_for_build_processing_to_be_complete(
       app_id: app.id,
       platform: :ios,
+      app_version: version,
       build_version: build_number,
       select_latest: true,
       poll_interval: 60,
@@ -68,8 +70,8 @@ platform :ios do
     )
     state = build.processing_state
     unless state == Spaceship::ConnectAPI::Build::ProcessingState::VALID
-      UI.user_error!("Build #{build_number} finished processing as #{state}; see App Store Connect and your email")
+      UI.user_error!("#{version} (#{build_number}) finished processing as #{state}; see App Store Connect and your email")
     end
-    UI.success("Build #{build_number} is processed and valid")
+    UI.success("#{version} (#{build_number}) is processed and valid")
   end
 end

@@ -5,6 +5,9 @@ name: Deploy
 description: cdk deploy the prod stacks with the given image digests, then smoke-test the API
 
 inputs:
+  release:
+    description: The release version being deployed (YYYY.M.D.N), which the services log
+    required: true
   api-image-digest:
     description: sha256:… of the api image in ECR
     required: true
@@ -34,12 +37,13 @@ runs:
       working-directory: infra
       env:
         CDK_VERSION: 2.1143.0
+        RELEASE: ${{ inputs.release }}
         API_DIGEST: ${{ inputs.api-image-digest }}
         WORKER_DIGEST: ${{ inputs.worker-image-digest }}
       run: |
         uv sync --locked
         npx --yes "aws-cdk@$CDK_VERSION" deploy --all --require-approval never --progress events \
-          -c stage=prod -c "apiImageDigest=$API_DIGEST" -c "workerImageDigest=$WORKER_DIGEST" \
+          -c stage=prod -c "release=$RELEASE" -c "apiImageDigest=$API_DIGEST" -c "workerImageDigest=$WORKER_DIGEST" \
           --outputs-file "$RUNNER_TEMP/cdk-outputs.json"
     - name: Smoke test
       shell: bash

@@ -30,6 +30,8 @@ env:
   # Created by infra/ (CastleChefRepositories); trusts only this repository's main branch.
   DEPLOY_ROLE: arn:aws:iam::123456789012:role/castle-chef-github-deploy
   REGISTRY: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+  # Release versions are dates here: YYYY.M.D.N, the Nth release that day.
+  RELEASE_TIMEZONE: America/New_York
 
 jobs:
   ci:
@@ -62,13 +64,18 @@ jobs:
             echo "::error::$GITHUB_SHA does not contain the latest release $latest. Release a newer commit instead of re-running an old run."
             exit 1
           fi
-          existing=$(git tag --points-at HEAD --list 'r[0-9]*' | head -n 1)
+          # Release tags: YYYY.M.D.N (and r<N> before 2026-09-24).
+          existing=$(git tag --points-at HEAD --list 'r[0-9]*' '20[0-9][0-9].*' | head -n 1)
           if [ -n "$existing" ]; then
             echo "release=$existing" >> "$GITHUB_OUTPUT"
             echo "already_released=true" >> "$GITHUB_OUTPUT"
             echo "$GITHUB_SHA is already released as $existing"
           else
-            echo "release=r$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+            # Only published releases count, so a failed run's number is reused.
+            today=$(TZ="$RELEASE_TIMEZONE" date +%Y.%-m.%-d)
+            count=$(gh release list --exclude-drafts --limit 100 --json tagName \
+              --jq "[.[] | select(.tagName | startswith(\"$today.\"))] | length")
+            echo "release=$today.$((count + 1))" >> "$GITHUB_OUTPUT"
             echo "already_released=false" >> "$GITHUB_OUTPUT"
           fi
       - id: ios
@@ -86,15 +93,15 @@ jobs:
             echo "ios=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          last=$(git tag --list 'ios-r[0-9]*' | sed 's/^ios-r//' | sort -n | tail -n 1)
+          last=$(git tag --list 'ios-*' --sort=-creatordate | head -n 1)
           if [ "$FORCE_IOS" = "true" ]; then
             reason="forced"; ios=true
           elif [ -z "$last" ]; then
             reason="no previous upload"; ios=true
-          elif ! git diff --quiet "ios-r$last" HEAD -- apps/mobile; then
-            reason="apps/mobile changed since ios-r$last"; ios=true
+          elif ! git diff --quiet "$last" HEAD -- apps/mobile; then
+            reason="apps/mobile changed since $last"; ios=true
           else
-            reason="apps/mobile unchanged since ios-r$last"; ios=false
+            reason="apps/mobile unchanged since $last"; ios=false
           fi
           echo "iOS build: $ios ($reason)"
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
@@ -111,7 +118,9 @@ jobs:
       api: ${{ steps.digests.outputs.api }}
       worker: ${{ steps.digests.outputs.worker }}
     env:
-      RELEASE: ${{ needs.changes.outputs.release }}
+      # Images are tagged by commit, so a re-run (even on another day, under
+      # another release version) reuses exactly this commit's images.
+      TAG: commit-${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
       - uses: aws-actions/configure-aws-credentials@v6
@@ -121,12 +130,12 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
       - uses: docker/setup-buildx-action@v4
       - id: existing
-        name: Images already pushed for this release (a re-run; tags are immutable)
+        name: Images already pushed for this commit (a re-run; tags are immutable)
         run: |
           for image in api worker; do
-            if digest=$(aws ecr describe-images --repository-name "castle-chef-$image" --image-ids "imageTag=$RELEASE" \
+            if digest=$(aws ecr describe-images --repository-name "castle-chef-$image" --image-ids "imageTag=$TAG" \
                 --query 'imageDetails[0].imageDigest' --output text 2> "$RUNNER_TEMP/ecr-error"); then
-              echo "castle-chef-$image:$RELEASE already pushed ($digest)"
+              echo "castle-chef-$image:$TAG already pushed ($digest)"
               echo "$image=$digest" >> "$GITHUB_OUTPUT"
             elif ! grep -q ImageNotFoundException "$RUNNER_TEMP/ecr-error"; then
               cat "$RUNNER_TEMP/ecr-error" >&2
@@ -143,10 +152,8 @@ jobs:
           platforms: linux/amd64
           provenance: false # a plain image manifest, which Lambda requires
           sbom: false
-          build-args: |
-            CASTLE_CHEF_RELEASE=${{ env.RELEASE }}
-            CASTLE_CHEF_COMMIT=${{ github.sha }}
-          tags: ${{ env.REGISTRY }}/castle-chef-api:${{ env.RELEASE }}
+          build-args: CASTLE_CHEF_COMMIT=${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/castle-chef-api:${{ env.TAG }}
           push: true
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
@@ -160,11 +167,9 @@ jobs:
           platforms: linux/amd64
           provenance: false
           sbom: false
-          build-args: |
-            CASTLE_CHEF_RELEASE=${{ env.RELEASE }}
-            CASTLE_CHEF_COMMIT=${{ github.sha }}
+          build-args: CASTLE_CHEF_COMMIT=${{ github.sha }}
           # zstd layers: Fargate starts them faster than gzip.
-          outputs: type=image,name=${{ env.REGISTRY }}/castle-chef-worker:${{ env.RELEASE }},push=true,compression=zstd,force-compression=true,oci-mediatypes=true
+          outputs: type=image,name=${{ env.REGISTRY }}/castle-chef-worker:${{ env.TAG }},push=true,compression=zstd,force-compression=true,oci-mediatypes=true
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
       - id: digests
@@ -232,6 +237,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/deploy
         with:
+          release: ${{ needs.changes.outputs.release }}
           api-image-digest: ${{ needs.images.outputs.api }}
           worker-image-digest: ${{ needs.images.outputs.worker }}
           role: ${{ env.DEPLOY_ROLE }}
@@ -281,6 +287,7 @@ jobs:
     if: ${{ !cancelled() && !failure() && needs.changes.outputs.ios == 'true' }}
     runs-on: macos-latest
     outputs:
+      version: ${{ steps.upload.outputs.version }}
       build_number: ${{ steps.upload.outputs.build_number }}
     defaults:
       run:
@@ -326,6 +333,8 @@ jobs:
           APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           CERTS_TOKEN: ${{ steps.certs.outputs.token }}
+          # The app's version and build: 2026.9.24.2 is version 2026.9.24, build 2.
+          CASTLE_CHEF_RELEASE: ${{ needs.changes.outputs.release }}
 
   # Waiting for Apple's processing on Linux costs ~1/10 of waiting on macOS.
   testflight-processed:
@@ -347,7 +356,9 @@ jobs:
           working-directory: apps/mobile
           bundler-cache: true
       - name: Wait for App Store Connect processing
-        run: bundle exec fastlane processed build_number:${{ needs.ios.outputs.build_number }}
+        run: >-
+          bundle exec fastlane processed
+          version:${{ needs.ios.outputs.version }} build_number:${{ needs.ios.outputs.build_number }}
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}

@@ -2,6 +2,7 @@
 
 Context:
   stage              dev | prod (cdk.json `stages`); default prod
+  release            the release version deployed (YYYY.M.D.N; e.g. dev-<sha> by hand)
   apiImageDigest     sha256:… of the api image in ECR (runtime stack)
   workerImageDigest  sha256:… of the worker image in ECR (runtime stack)
 """
@@ -45,6 +46,7 @@ if app.node.try_get_context("repositoriesOnly") != "true":
             database_url_parameter=stage["databaseUrlParameter"],
             cors_origins=stage["corsOrigins"],
             alarm_email=app.node.get_context("alarmEmail"),
+            release=app.node.get_context("release"),
             api_image_digest=required("apiImageDigest"),
             worker_image_digest=required("workerImageDigest"),
         ),

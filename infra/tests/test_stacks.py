@@ -31,6 +31,7 @@ def runtime() -> Template:
             database_url_parameter="/castle-chef/test/database-url-pooled",
             cors_origins=["capacitor://localhost"],
             alarm_email="owner@example.com",
+            release="2026.9.24.1",
             api_image_digest=API_DIGEST,
             worker_image_digest=WORKER_DIGEST,
         ),
@@ -254,6 +255,7 @@ def test_each_stage_deploys_its_own_runtime_stack(tmp_path: Path) -> None:
                     context
                     | {
                         "stage": stage,
+                        "release": "2026.9.24.1",
                         "apiImageDigest": API_DIGEST,
                         "workerImageDigest": WORKER_DIGEST,
                     }
@@ -279,8 +281,9 @@ def test_development_images_never_expire_releases(repositories: Template) -> Non
             for rule in policy["rules"]
             if rule["selection"]["countType"] == "imageCountMoreThan"
         }
-        # Releases (r<N>, what rollback.yml deploys) are counted apart from dev- pushes.
-        assert counted == {("dev-",): 5, ("r",): 30}
+        # Released images (commit-<sha>, what rollback.yml deploys) are counted apart
+        # from dev- pushes.
+        assert counted == {("dev-",): 5, ("commit-",): 30}
 
 
 def test_a_monthly_budget_emails_the_owner(repositories: Template) -> None:
@@ -306,3 +309,12 @@ def test_a_monthly_budget_emails_the_owner(repositories: Template) -> None:
             ),
         },
     )
+
+
+def test_services_log_the_deployed_release(runtime: Template) -> None:
+    environments = [
+        {e["Name"]: e["Value"] for e in worker_container(runtime)["Environment"]},
+        *(f["Environment"]["Variables"] for f in functions(runtime).values()),
+    ]
+    assert len(environments) == 3  # the worker, the API, the failure handler
+    assert all(env["CASTLE_CHEF_RELEASE"] == "2026.9.24.1" for env in environments)

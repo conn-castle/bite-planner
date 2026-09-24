@@ -45,6 +45,7 @@ class RuntimeConfig:
     database_url_parameter: str  # SSM SecureString: pooled Neon URL
     cors_origins: list[str]
     alarm_email: str
+    release: str  # the release version, logged by the services (CASTLE_CHEF_RELEASE)
     api_image_digest: str
     worker_image_digest: str
 
@@ -170,6 +171,7 @@ class RuntimeStack(Stack):
             logging=ecs.LogDriver.aws_logs(stream_prefix="worker", log_group=worker_logs),
             secrets={"DATABASE_URL": ecs.Secret.from_ssm_parameter(database_url)},
             environment={
+                "CASTLE_CHEF_RELEASE": config.release,
                 "GROK_AUTH_PATH": f"{GROK_AUTH_DIR}/auth.json",
                 "CASTLE_CHEF_AGENT_LOCK_FILE": f"{GROK_AUTH_DIR}/agent.lock",
             },
@@ -273,6 +275,7 @@ class RuntimeStack(Stack):
                 {"DATABASE_URL": config.database_url_parameter}
             ),
             "AWS_LWA_READINESS_CHECK_TIMEOUT_SECONDS": "20",
+            "CASTLE_CHEF_RELEASE": config.release,
         }
         api = lambda_.DockerImageFunction(
             self,

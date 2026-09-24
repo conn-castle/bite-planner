@@ -147,9 +147,9 @@ def _is_known_revision(script: ScriptDirectory, revision: str) -> bool:
 
 
 def current_release() -> dict[str, str]:
-    """The release (`r<N>`) and commit this code is, from the image's environment
-    (CASTLE_CHEF_RELEASE, CASTLE_CHEF_COMMIT, set at build) or else from git:
-    the checkout's release tag, or `dev-<sha>` if untagged."""
+    """The release (`YYYY.M.D.N`) and commit this code is, from the environment
+    (CASTLE_CHEF_COMMIT set in the image, CASTLE_CHEF_RELEASE by the deploy) or
+    else from git: the checkout's release tag, or `dev-<sha>` if untagged."""
     if "CASTLE_CHEF_COMMIT" in os.environ:
         return {
             "release": os.environ.get("CASTLE_CHEF_RELEASE", "unknown"),
@@ -162,7 +162,11 @@ def current_release() -> dict[str, str]:
         )
 
     commit = git("rev-parse", "HEAD").stdout.strip()
-    tag = git("describe", "--exact-match", "--tags", "--match", "r[0-9]*", "HEAD", check=False)
+    # Release tags: YYYY.M.D.N, and r<N> before 2026-09-24.
+    tag = git(
+        "describe", "--exact-match", "--tags", "--match", "20[0-9][0-9].*", "--match", "r[0-9]*",
+        "HEAD", check=False,
+    )  # fmt: skip
     release = tag.stdout.strip() if tag.returncode == 0 else f"dev-{commit[:7]}"
     return {"release": release, "commit": commit}
 

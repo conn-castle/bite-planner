@@ -43,9 +43,9 @@ FROM python AS api
 COPY --from=lambda-adapter /lambda-adapter /opt/extensions/lambda-adapter
 COPY --from=api-build /app/backend /app/backend
 ENV AWS_LWA_PORT=8080 AWS_LWA_READINESS_CHECK_PATH=/health
-ARG CASTLE_CHEF_RELEASE=dev
+# The commit is the image's; the release version is set by the deploy (infra/).
 ARG CASTLE_CHEF_COMMIT=unknown
-ENV CASTLE_CHEF_RELEASE=${CASTLE_CHEF_RELEASE} CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
+ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
 CMD ["uvicorn", "castle_chef.api:app", "--host", "0.0.0.0", "--port", "8080"]
 
 FROM python AS worker
@@ -75,9 +75,9 @@ ENV GROK_DISABLE_API_KEY_AUTH=true \
     CASTLE_CHEF_AGENT_PROJECT_DIR=/tmp/agent-project \
     CASTLE_CHEF_JOBS_DIR=/tmp/jobs \
     CASTLE_CHEF_LOGS_DIR=/tmp/logs
-ARG CASTLE_CHEF_RELEASE=dev
+# The commit is the image's; the release version is set by the deploy (infra/).
 ARG CASTLE_CHEF_COMMIT=unknown
-ENV CASTLE_CHEF_RELEASE=${CASTLE_CHEF_RELEASE} CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
+ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
 # A hard cap above the agent timeout (15 min) plus saving: a hung process can't
 # keep the task (and its bill) running.
 ENTRYPOINT ["timeout", "--kill-after=30s", "1200s", "castle-chef"]

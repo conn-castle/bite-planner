@@ -40,7 +40,9 @@ class RepositoriesStack(Stack):
                         max_image_age=Duration.days(1),
                     ),
                     ecr.LifecycleRule(rule_priority=2, tag_prefix_list=["dev-"], max_image_count=5),
-                    ecr.LifecycleRule(rule_priority=3, tag_prefix_list=["r"], max_image_count=30),
+                    ecr.LifecycleRule(
+                        rule_priority=3, tag_prefix_list=["commit-"], max_image_count=30
+                    ),
                 ],
             )
             for name in ("api", "worker")
