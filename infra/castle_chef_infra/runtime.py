@@ -269,7 +269,7 @@ class RuntimeStack(Stack):
                 repositories["api"], tag_or_digest=config.api_image_digest
             ),
             architecture=lambda_.Architecture.X86_64,
-            memory_size=1024,
+            memory_size=2048,  # more CPU with it: faster cold starts
             timeout=Duration.seconds(30),
             reserved_concurrent_executions=5,  # bounds connections to Neon's pooler
             log_group=api_logs,

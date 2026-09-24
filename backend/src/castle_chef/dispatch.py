@@ -10,8 +10,6 @@ from functools import lru_cache
 from typing import Literal, Protocol
 from uuid import UUID
 
-import boto3
-from botocore.config import Config
 from pydantic import BaseModel
 
 from castle_chef.settings import get_settings
@@ -39,6 +37,10 @@ class JobDispatcher(Protocol):
 
 class SqsDispatcher:
     def __init__(self, queue_url: str) -> None:
+        # Only the API sends to the queue; the worker image doesn't install boto3.
+        import boto3
+        from botocore.config import Config
+
         self.queue_url = queue_url
         # Bounded, so a stuck call fails within the API's time limit and the job
         # is marked failed instead of the request timing out.
