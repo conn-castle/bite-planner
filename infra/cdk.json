@@ -1,0 +1,21 @@
+{
+  "app": "uv run python app.py",
+  "context": {
+    "account": "123456789012",
+    "region": "us-east-1",
+    "githubRepo": "nicholasjconn/castle-chef",
+    "alarmEmail": "operator@example.com",
+    "stages": {
+      "dev": {
+        "neonAuthUrl": "https://auth.example.test/neondb/auth",
+        "databaseUrlParameter": "/castle-chef/development/database-url-pooled",
+        "corsOrigins": ["capacitor://localhost"]
+      },
+      "prod": {
+        "neonAuthUrl": "https://auth.example.test/neondb/auth",
+        "databaseUrlParameter": "/castle-chef/production/database-url-pooled",
+        "corsOrigins": ["capacitor://localhost"]
+      }
+    }
+  }
+}

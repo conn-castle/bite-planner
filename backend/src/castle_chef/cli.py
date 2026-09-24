@@ -90,6 +90,13 @@ def job_run(
         raise typer.Exit(1) from error
 
 
+@app.command("agent-login")
+def agent_login(provider: Annotated[str, typer.Argument(help="Agent provider.")] = "grok") -> None:
+    """Sign the worker's agent in to its subscription (device code). In AWS this
+    runs as a one-off worker task with the command `agent-login grok`."""
+    raise typer.Exit(worker.login_agent(provider))
+
+
 @family_app.command("invite")
 def family_invite(
     email: str, name: Annotated[str, typer.Option(help="Name for their account.")]

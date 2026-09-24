@@ -1,13 +1,17 @@
 """Runs one job: the agent harness in a job directory, then its meals saved."""
 
+import fcntl
 import json
 import logging
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from string import Template
 from uuid import UUID
@@ -31,13 +35,13 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 # Grok flags that make the run bare: shell as the only tool and no subagents.
 # `al grok` supplies the model, reasoning effort, and `--no-memory` from
 # .agent-layer/config.toml. Grok's headless mode auto-approves every tool call,
-# so the sandbox profile below is what limits the agent.
+# so the sandbox profile below (or, in the worker container, the container) is
+# what limits the agent.
 SANDBOX_PROFILE = "castle-chef-agent"
 GROK_ARGS = [
     "--output-format", "json",
     "--tools", "run_terminal_cmd",
     "--disallowed-tools", "Agent,search_tool,use_tool",
-    "--sandbox", SANDBOX_PROFILE,
     "--max-turns", "60",
 ]  # fmt: skip
 
@@ -181,50 +185,146 @@ def process_job(job: Job) -> list[MealInput]:
     return meals
 
 
+def prepare_agent_project() -> Path:
+    """The Agent Layer project to launch the agent from: the repository, or (in
+    the worker container) a fresh writable copy of the image's template owned
+    by the agent user."""
+    settings = get_settings()
+    project = settings.agent_project_dir
+    if settings.agent_uid is not None:
+        # Fargate's empty task volumes hide the image's /tmp permissions; the
+        # agent's tools need a shared, sticky /tmp.
+        os.chmod("/tmp", 0o1777)
+    if settings.agent_project_template is not None:
+        shutil.copytree(settings.agent_project_template, project, dirs_exist_ok=True)
+        if settings.agent_uid is not None:
+            for path in [project, *project.rglob("*")]:
+                os.chown(path, settings.agent_uid, settings.agent_uid)
+    return project
+
+
+def login_agent(provider: str) -> int:
+    """Sign the agent in to its subscription with a device code (the link and
+    code are printed; the owner approves in a browser). Runs as the agent user,
+    so the login (on EFS in AWS, via GROK_AUTH_PATH) is owned by it. Returns
+    the login command's exit status."""
+    if provider != "grok":
+        raise ValueError(f"Unsupported agent provider {provider!r}; only grok is set up.")
+    settings = get_settings()
+    project = prepare_agent_project()
+    env = {
+        # Agent Layer writes some clients' settings under HOME: somewhere the
+        # agent user can write.
+        "HOME": str(project) if settings.agent_uid is not None else os.environ.get("HOME", "/tmp"),
+        "PATH": os.environ.get("PATH", os.defpath),
+    }
+    for name in ["LANG", *settings.agent_env]:
+        if name in os.environ:
+            env[name] = os.environ[name]
+    command = [*shlex.split(settings.agent_command), "login", "--device-auth"]
+    with agent_lock(provider=provider):
+        log.info("agent.login_started", extra={"provider": provider})
+        completed = subprocess.run(
+            command,
+            cwd=project,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            user=settings.agent_uid,
+            group=settings.agent_uid,
+            extra_groups=[] if settings.agent_uid is not None else None,
+            check=False,
+        )
+    event = "agent.login_finished" if completed.returncode == 0 else "agent.login_failed"
+    (log.info if completed.returncode == 0 else log.error)(
+        event, extra={"provider": provider, "returncode": completed.returncode}
+    )
+    return completed.returncode
+
+
+@contextmanager
+def agent_lock(**fields: str) -> Iterator[None]:
+    """Hold the agent provider's lock (settings.agent_lock_file) while the agent
+    runs or signs in, so parallel jobs take turns with the one subscription login."""
+    path = get_settings().agent_lock_file
+    if path is None:
+        yield
+        return
+    started = time.monotonic()
+    with path.open("a") as lock:  # closing it releases the lock
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        log.info(
+            "agent.lock_acquired",
+            extra=fields | {"waited_seconds": round(time.monotonic() - started, 1)},
+        )
+        yield
+
+
 def run_agent(job_dir: Path, prompt: str) -> None:
     settings = get_settings()
     job_dir.mkdir(parents=True)
     prompt_path = job_dir / "prompt.md"
     prompt_path.write_text(prompt)
     venv_bin = Path(sys.executable).parent
-    read_only = [Path(sys.prefix), Path(__file__).resolve().parents[1]]
-    (job_dir / ".grok").mkdir()
-    (job_dir / ".grok" / "sandbox.toml").write_text(
-        SANDBOX_TOML.substitute(
-            name=SANDBOX_PROFILE, read_only=", ".join(json.dumps(str(p)) for p in read_only)
+    sandbox_args: list[str] = []
+    if settings.agent_sandbox:
+        read_only = [Path(sys.prefix), Path(__file__).resolve().parents[1]]
+        (job_dir / ".grok").mkdir()
+        (job_dir / ".grok" / "sandbox.toml").write_text(
+            SANDBOX_TOML.substitute(
+                name=SANDBOX_PROFILE, read_only=", ".join(json.dumps(str(p)) for p in read_only)
+            )
         )
-    )
+        sandbox_args = ["--sandbox", SANDBOX_PROFILE]
+    project = prepare_agent_project()
+    if settings.agent_uid is not None:
+        # The agent writes its meals into the job directory.
+        for path in [job_dir, *job_dir.rglob("*")]:
+            os.chown(path, settings.agent_uid, settings.agent_uid)
 
     command = [
         *shlex.split(settings.agent_command),
         "--cwd", str(job_dir),
         "--prompt-file", str(prompt_path),
         *GROK_ARGS,
+        *sandbox_args,
     ]  # fmt: skip
     # A minimal environment: no database credentials or other secrets reach the agent.
     env = {
-        "HOME": os.environ.get("HOME", str(job_dir)),
+        "HOME": str(job_dir)
+        if settings.agent_uid is not None
+        else os.environ.get("HOME", str(job_dir)),
         # Puts this environment's `castle-chef` executable first on the agent's PATH.
         "PATH": f"{venv_bin}{os.pathsep}{os.environ.get('PATH', os.defpath)}",
         "CASTLE_CHEF_JOB_DIR": str(job_dir),
     }
-    if "LANG" in os.environ:
-        env["LANG"] = os.environ["LANG"]
+    for name in ["LANG", *settings.agent_env]:
+        if name in os.environ:
+            env[name] = os.environ[name]
     stdout_path = job_dir / "agent-output.json"
     stderr_path = job_dir / "agent-stderr.log"
     # The job directory is named after the job, which ties these events to it.
-    log.info("agent.started", extra={"job_id": job_dir.name, "job_dir": str(job_dir)})
-    started = time.monotonic()
-    with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
+    with (
+        agent_lock(job_id=job_dir.name),
+        stdout_path.open("w") as stdout,
+        stderr_path.open("w") as stderr,
+    ):
+        log.info("agent.started", extra={"job_id": job_dir.name, "job_dir": str(job_dir)})
+        started = time.monotonic()
         # Its own process group, so a timeout kills everything the agent started.
         agent = subprocess.Popen(
             command,
-            cwd=REPO_ROOT,  # `al` resolves the Agent Layer project from here.
+            cwd=project,  # `al` resolves the Agent Layer project from here.
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=stdout,
             stderr=stderr,
             start_new_session=True,
+            # Unprivileged, and no other open files: it can't read the worker's
+            # environment (the database URL) or anything the worker holds.
+            user=settings.agent_uid,
+            group=settings.agent_uid,
+            extra_groups=[] if settings.agent_uid is not None else None,
+            close_fds=True,
         )
         try:
             returncode = agent.wait(timeout=settings.agent_timeout_seconds)

@@ -20,6 +20,7 @@ from castle_chef import log as logging_config
 from castle_chef.auth import AuthError, AuthUnavailable, AuthVerifier, NeonAuthVerifier, Principal
 from castle_chef.db import get_request_session
 from castle_chef.dispatch import DispatchError, JobDispatcher, get_dispatcher
+from castle_chef.failures import handle_event
 from castle_chef.jobs import (
     STALE_ERROR,
     GenerateMealsParams,
@@ -31,7 +32,7 @@ from castle_chef.jobs import (
     submit_job,
 )
 from castle_chef.models import HouseholdMember, Job, JobMeal, JobStatus, Meal
-from castle_chef.settings import get_settings
+from castle_chef.settings import get_settings, load_ssm_parameters
 
 log = logging.getLogger(__name__)
 client_log = logging.getLogger("castle_chef.client")
@@ -186,6 +187,7 @@ def account(session: Session, user_id: UUID) -> tuple[str | None, str | None]:
 
 def create_app() -> FastAPI:
     logging_config.configure(None)  # JSON lines on stderr; CloudWatch on Lambda
+    load_ssm_parameters()  # once per cold start, before settings are read
     settings = get_settings()
     api = FastAPI(title="Castle Chef", docs_url=None, redoc_url=None)
     api.add_middleware(
@@ -198,6 +200,14 @@ def create_app() -> FastAPI:
     @api.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    if settings.failure_handler:
+
+        @api.post("/events")
+        def events(event: dict[str, Any]) -> dict[str, str]:
+            # Non-HTTP Lambda events, posted here by the Lambda Web Adapter.
+            handle_event(event)
+            return {"status": "handled"}
 
     @api.get("/v1/me")
     def me(

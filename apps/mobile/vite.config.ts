@@ -28,8 +28,10 @@ function devServer(env: Record<string, string>) {
     proxy: {
       // The Castle Chef API, run locally with `uv run uvicorn castle_chef.api:app`
       // (backend/). Same origin as the app, so no CORS in development.
+      // Set CASTLE_CHEF_API_DEV_URL to use a deployed API (e.g. the AWS stack on dev).
       '/api': {
         target: process.env.CASTLE_CHEF_API_DEV_URL ?? 'http://localhost:8000',
+        changeOrigin: true, // a Lambda Function URL routes by its own Host header
         rewrite: (path: string) => path.replace(/^\/api/, ''),
       },
       // Dev only: serve Neon Auth from the app's own origin so its session

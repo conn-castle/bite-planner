@@ -1,6 +1,8 @@
+import fcntl
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -220,3 +222,25 @@ def test_agent_timeout_stops_everything_the_agent_started(
     time.sleep(0.2)
     with pytest.raises(ProcessLookupError):
         os.kill(child_pid, 0)  # the agent's own child is gone too
+
+
+def test_parallel_jobs_wait_for_the_agent_lock(
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lock_path = tmp_path / "agent.lock"
+    monkeypatch.setenv("CASTLE_CHEF_AGENT_LOCK_FILE", str(lock_path))
+    use_fake_agent(monkeypatch, meals=1)
+    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    agent_started = tmp_path / "jobs" / str(job.id) / "fake-agent-prompt.md"
+
+    with lock_path.open("a") as other_job:  # another job's agent is running
+        fcntl.flock(other_job, fcntl.LOCK_EX)
+        waiting = threading.Thread(target=worker.run_job, args=(job.id,))
+        waiting.start()
+        time.sleep(1)
+        assert not agent_started.exists()
+        assert reload(session, job).status == JobStatus.RUNNING
+    waiting.join(timeout=30)
+
+    assert agent_started.exists()
+    assert reload(session, job).status == JobStatus.SUCCEEDED

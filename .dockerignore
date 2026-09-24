@@ -1,0 +1,15 @@
+# Only what docker/Dockerfile copies; everything else stays out of the build context.
+*
+!backend/pyproject.toml
+!backend/uv.lock
+!backend/.python-version
+!backend/alembic.ini
+!backend/migrations
+!backend/src
+!.agent-layer
+.agent-layer/.env
+.agent-layer/*.bak
+.agent-layer/state
+.agent-layer/sync.lock
+.agent-layer/tmp
+**/__pycache__

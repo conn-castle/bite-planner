@@ -3,6 +3,7 @@ verification itself is tested in test_auth.py); jobs dispatch to a recorder, or
 to a real local worker in the end-to-end test."""
 
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -33,7 +34,7 @@ from castle_chef.jobs import (
 )
 from castle_chef.meals import IngredientInput, MealInput, add_meals
 from castle_chef.models import Job, JobStatus, utc_now
-from castle_chef.settings import get_settings
+from castle_chef.settings import get_settings, load_ssm_parameters
 from tests.test_worker import FAKE_AGENT
 
 STALE_AFTER = (timedelta(minutes=10), timedelta(minutes=20))
@@ -490,3 +491,30 @@ def test_sqs_dispatcher_sends_the_job_message(monkeypatch: pytest.MonkeyPatch) -
         sqs.add_client_error("send_message", "AWS.SimpleQueueService.NonExistentQueue")
         with pytest.raises(DispatchError):
             dispatcher.dispatch(job_id)
+
+
+def test_secrets_are_loaded_from_ssm_where_not_injected(monkeypatch: pytest.MonkeyPatch) -> None:
+    import boto3
+
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv(
+        "CASTLE_CHEF_SSM_PARAMETERS",
+        '{"CASTLE_CHEF_TEST_SECRET": "/castle-chef/test/secret", "DATABASE_URL": "/unused"}',
+    )
+    monkeypatch.delenv("CASTLE_CHEF_TEST_SECRET", raising=False)
+    ssm = boto3.client("ssm")
+    monkeypatch.setattr(boto3, "client", lambda service: ssm)
+
+    with Stubber(ssm) as stub:
+        # DATABASE_URL is already set, so only the missing variable is fetched.
+        stub.add_response(
+            "get_parameter",
+            {"Parameter": {"Value": "s3cret"}},
+            {"Name": "/castle-chef/test/secret", "WithDecryption": True},
+        )
+        load_ssm_parameters()
+
+    assert os.environ["CASTLE_CHEF_TEST_SECRET"] == "s3cret"
+    monkeypatch.delenv("CASTLE_CHEF_TEST_SECRET")
