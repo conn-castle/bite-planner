@@ -1,6 +1,7 @@
 """Worker start-up: the schema guard and the release it logs."""
 
 import json
+import re
 import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -105,7 +106,12 @@ def test_worker_logs_the_checkout_it_runs(
     [started] = [e for e in log_events(tmp_path / "logs") if e["event"] == "worker.started"]
     commit = git("rev-parse", "HEAD")
     assert started["commit"] == commit
-    release_tags = [tag for tag in git("tag", "--points-at", "HEAD").split() if tag[1:].isdigit()]
+    # Release tags: YYYY.M.D.N, and r<N> before 2026-09-24.
+    release_tags = [
+        tag
+        for tag in git("tag", "--points-at", "HEAD").split()
+        if re.fullmatch(r"\d{4}\.\d{1,2}\.\d{1,2}\.\d+|r\d+", tag)
+    ]
     assert started["release"] in (release_tags or [f"dev-{commit[:7]}"])
 
 

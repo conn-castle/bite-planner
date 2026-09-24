@@ -33,50 +33,45 @@ A request takes one to two minutes: about 30 s to start the task (mostly Fargate
 | `apps/mobile/` | Capacitor + React + Vite app (`ios/` is the Xcode project) |
 | `docker/Dockerfile` | The `api` (Lambda) and `worker` (Fargate) images |
 | `infra/` | AWS CDK (Python): image repositories, deploy role, and the runtime stack |
+| `Makefile`, `scripts/` | Developer commands: run `make` to list them |
 | `.github/workflows/` | CI, releases (`release.yml`: images, migrations, deploy, GitHub release, TestFlight), `rollback.yml` |
 
 Every push to `main` is a release ([Releases](#releases)). Development happens against the Neon `dev` branch ([Development](#development)).
 
 ## Local development
 
-Runs the whole loop on this machine against the Neon `dev` branch: the API with `uvicorn`, jobs as local subprocesses (no AWS), and the app on the local network. Use two terminals.
-
-Prerequisites (once): `cd backend && uv sync`, `cd apps/mobile && pnpm install`, `backend/.env` for `dev` (see [Development](#development)), and for phones, port 5173 open: `sudo ufw allow from 192.168.1.0/24 to any port 5173 proto tcp`.
+Runs the whole loop on this machine against the Neon `dev` branch: the API with `uvicorn`, jobs as local subprocesses (no AWS), and the app on the local network. `make` is the entry point for every development command; run `make` to list them.
 
 ```sh
-# Terminal 1: the API on http://localhost:8000; each request starts `castle-chef job run`
-cd backend && uv run uvicorn castle_chef.api:app --reload
-
-# Terminal 2: app dev server (HTTPS, local network), proxying /api to the API
-cd apps/mobile && pnpm dev
+make setup       # once: install dependencies, write backend/.env for dev from SSM
+make dev-reset   # optional: make dev a fresh copy of production (discards dev's changes)
+make dev         # the API on http://localhost:8000 and the app on https://localhost:5173
 ```
+
+`make dev` runs the API (each request starts `castle-chef job run`) and the app's dev server, which proxies `/api` to it, until you press `Ctrl+C` or either one exits. For phones, open port 5173 once: `sudo ufw allow from 192.168.1.0/24 to any port 5173 proto tcp`.
 
 **Try it:** open `https://<this machine's LAN IP>:5173` (e.g. `https://192.168.1.252:5173`) on a phone or computer and accept the certificate warning (Safari: Show Details → visit this website). Sign in with your email and the emailed code, then request meals. Grok takes 30–60 s. Local jobs use your own Grok login (`al grok`) and Grok's sandbox ([Worker](#worker)).
 
-**Stop:** `Ctrl+C` in each terminal (or `lsof -ti :8000,:5173 | xargs -r kill`). A job already started keeps running to the end.
+**Stop:** `Ctrl+C`. A job already started keeps running to the end.
 
-To try the app against a deployed API instead of the local one: `CASTLE_CHEF_API_DEV_URL=<its URL> pnpm dev` (the deployed stack must use the same Neon branch as `.env.development`).
+To try the app against a deployed API instead of the local one: `cd apps/mobile && CASTLE_CHEF_API_DEV_URL=<its URL> pnpm dev` (the deployed stack must use the same Neon branch as `.env.development`).
 
 ## Backend
 
-```sh
-cd backend
-uv sync
-```
-
-`backend/.env` (gitignored) holds `DATABASE_URL`, the direct owner-role connection string for the Neon `dev` branch, the Neon ids for `family` commands, `CASTLE_CHEF_NEON_AUTH_URL` (`dev`'s Neon Auth), and `CASTLE_CHEF_JOB_DISPATCH=local` (see [Development](#development)). It is generated from SSM ([Secrets](#secrets)); credentials for `main` are never in your checkout. Every setting is in `src/castle_chef/settings.py`.
+`backend/.env` (gitignored, written by `make env`; `make` ignores a `DATABASE_URL` in your shell) holds `DATABASE_URL`, the direct owner-role connection string for the Neon `dev` branch, the Neon ids for `family` commands, `CASTLE_CHEF_NEON_AUTH_URL` (`dev`'s Neon Auth), and `CASTLE_CHEF_JOB_DISPATCH=local` (see [Development](#development)). It is generated from SSM ([Secrets](#secrets)); credentials for `main` are never in your checkout. Every setting is in `src/castle_chef/settings.py`.
 
 The worker's packages are the project's dependencies; the API's extra packages (FastAPI, boto3, PyJWT, uvicorn) are the `api` dependency group, installed by default locally and left out of the worker image.
 
 ### Tests
 
-Tests run against a local Postgres, never Neon:
+Tests run against a local Postgres (Docker, port 54329), never Neon:
 
 ```sh
-docker compose up -d --wait        # local Postgres on port 54329
-TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:54329/castle_chef uv run pytest
-uv run ruff check . && uv run ruff format --check .
-docker compose stop                # stop it when done (data is kept)
+make test      # starts the local Postgres, then backend, app, and infra tests
+make lint      # lint and check formatting
+make format    # fix Python formatting
+make check     # lint, test, and build: what CI checks
+make db-stop   # stop the local Postgres when done (data is kept)
 ```
 
 The API is tested through FastAPI's test client with a test token verifier (real JWT verification is tested separately against a local JWKS server), the worker with a fake agent, and the failure handler with recorded AWS event shapes. `tests/neon_stubs.sql` creates stand-ins for the roles and `auth.uid()` that Neon provides, which older migrations use.
@@ -89,12 +84,11 @@ Neon `main` is migrated only by the release workflow ([Releases](#releases)), be
 - To remove or rename a table or column, stop using it in one release and drop it in a later one. `tests/test_migration_guard.py` fails on a drop or rename in `upgrade()` unless the statement has `# contract: <why the previous release no longer uses it>` on the line above. `rollback.yml` refuses to go back past a contract migration without restoring the database.
 - Downgrades are still written (CI tests them) but never run on `main`.
 
-Edit `src/castle_chef/models.py`, then generate the migration against local Postgres, and apply it to `dev` (`backend/.env`) to try it:
+Edit `backend/src/castle_chef/models.py`, then generate the migration against local Postgres, and apply it to `dev` to try it:
 
 ```sh
-DATABASE_URL=postgresql://postgres:postgres@localhost:54329/castle_chef uv run alembic upgrade head
-DATABASE_URL=postgresql://postgres:postgres@localhost:54329/castle_chef uv run alembic revision --autogenerate -m "..."
-uv run alembic upgrade head   # dev
+make migration m="what it does"   # autogenerate in backend/migrations/versions/
+make migrate                      # apply to dev
 ```
 
 ### Worker
@@ -174,18 +168,13 @@ A new stack has its own EFS, so run the agent login for it once. `cd infra && uv
 
 ## App
 
-```sh
-cd apps/mobile
-pnpm install
-pnpm dev          # https://localhost:5173 and https://<this machine's LAN IP>:5173
-pnpm test && pnpm lint && pnpm build
-```
+`apps/mobile/` is the Capacitor project and `src/` is the app's only source: `make dev` serves it directly, `make build` compiles it to `dist/`, and Capacitor copies `dist/` into the iOS project (`ios/App/App/public/`, gitignored). Both are build output.
 
 Public URLs (not secrets): `.env.development` (Neon `dev`'s auth, and the API at `/api`, which the dev server proxies to `localhost:8000`) is used by `pnpm dev`; `.env.production` (Neon `main`'s auth and the prod API's Function URL, which stays the same across deploys) by `pnpm build`, so by TestFlight **and by any local iOS build**; `.env` holds what both share. The Account page shows the app version and the release (`YYYY.M.D.N`, or `dev` for local builds). `__APP_VERSION__` (`package.json`) also invalidates the persisted cache; bump it when the cached data's shape changes.
 
 The dev server listens on the local network over HTTPS with a self-signed certificate (browsers warn once; accept it). It also proxies Neon Auth at `/neon-auth` so the session cookie is first-party in any browser, including Safari on a phone, and sends the trusted origin Neon Auth requires (`vite.config.ts`). If other devices can't connect, allow the port through the firewall: `sudo ufw allow from 192.168.1.0/24 to any port 5173 proto tcp`.
 
-iOS (on a Mac): `pnpm build && pnpm exec cap sync ios && pnpm exec cap open ios`. This build talks to **production** (`main`).
+iOS (on a Mac): `make ios` builds, copies the build into the iOS project, and opens Xcode. This build talks to **production** (`main`). Opening Xcode without `make ios` runs whatever was copied last.
 
 Data handling (`src/queryClient.ts`, `src/queries.ts`):
 
@@ -289,9 +278,9 @@ For a file such as the App Store Connect `.p8`: `base64 -i AuthKey_EXAMP12345.p8
 
 Development uses the Neon branch `dev` (`example-development-branch`), a copy of `main` with its own Neon Auth (users and keys copied when the branch was made, then independent). Test in the browser with [local development](#local-development); iOS-only behavior (native sign-in in `src/neonAuth.ts`, the persisted cache across relaunches) still needs a TestFlight build.
 
-`backend/.env` for `dev`: `DATABASE_URL` from SSM `/castle-chef/development/database-url` ([Secrets](#secrets)), `CASTLE_CHEF_NEON_PROJECT_ID=example-project`, `CASTLE_CHEF_NEON_BRANCH_ID=example-development-branch`, `CASTLE_CHEF_NEON_AUTH_URL` (`dev`'s, as in `apps/mobile/.env.development`), and `CASTLE_CHEF_JOB_DISPATCH=local`. The database and the Neon ids must all point at `dev`, or `family invite` creates the account on one branch and the membership on the other.
+`make env` writes `backend/.env` for `dev`: `DATABASE_URL` from SSM `/castle-chef/development/database-url` ([Secrets](#secrets)), the Neon project and `dev` branch ids (`Makefile`), `CASTLE_CHEF_NEON_AUTH_URL` (from `apps/mobile/.env.development`), and `CASTLE_CHEF_JOB_DISPATCH=local`. The database and the Neon ids must all point at `dev`, or `family invite` creates the account on one branch and the membership on the other.
 
-Refresh `dev` from production with `neonctl branches reset dev --parent --project-id example-project`. This discards `dev`'s changes (including migrations not yet released: re-run `alembic upgrade head`).
+`make dev-reset` (it asks first) replaces `dev` with a copy of production as it is now, then applies this checkout's migrations. It discards everything on `dev`, including its Neon Auth state (users and sessions become production's, so sign in again). Connection details stay the same, so `backend/.env` still works. The copy is the family's real data: keep it on this machine.
 
 ## Neon
 
