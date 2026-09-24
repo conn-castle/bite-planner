@@ -1,7 +1,9 @@
-"""Image repositories and the GitHub deploy role. Deployed once, before the
-runtime stack, so images can be pushed before anything references them."""
+"""What every stage shares: image repositories, the GitHub deploy role, and the
+monthly budget. Deployed before the runtime stack, so images can be pushed
+before anything references them."""
 
 from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_iam as iam
 from constructs import Construct
@@ -11,7 +13,13 @@ GITHUB_OIDC_HOST = "token.actions.githubusercontent.com"
 
 class RepositoriesStack(Stack):
     def __init__(
-        self, scope: Construct, construct_id: str, *, github_subject: str, **kwargs
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        github_subject: str,
+        budget_email: str,
+        **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
@@ -88,4 +96,35 @@ class RepositoriesStack(Stack):
                 actions=["sts:AssumeRole"],
                 resources=[f"arn:aws:iam::{self.account}:role/cdk-hnb659fds-*-{self.account}-*"],
             )
+        )
+
+        # Everything tagged project=castle-chef (the `project` cost allocation
+        # tag is active in Billing). Idle cost is under $1; this catches a
+        # runaway (e.g. tasks that never stop).
+        budgets.CfnBudget(
+            self,
+            "MonthlyBudget",
+            budget=budgets.CfnBudget.BudgetDataProperty(
+                budget_name="castle-chef-monthly",
+                budget_type="COST",
+                time_unit="MONTHLY",
+                budget_limit=budgets.CfnBudget.SpendProperty(amount=5, unit="USD"),
+                cost_filters={"TagKeyValue": ["user:project$castle-chef"]},
+            ),
+            notifications_with_subscribers=[
+                budgets.CfnBudget.NotificationWithSubscribersProperty(
+                    notification=budgets.CfnBudget.NotificationProperty(
+                        notification_type=notification_type,
+                        comparison_operator="GREATER_THAN",
+                        threshold=threshold,
+                        threshold_type="PERCENTAGE",
+                    ),
+                    subscribers=[
+                        budgets.CfnBudget.SubscriberProperty(
+                            subscription_type="EMAIL", address=budget_email
+                        )
+                    ],
+                )
+                for notification_type, threshold in [("ACTUAL", 80), ("FORECASTED", 100)]
+            ],
         )

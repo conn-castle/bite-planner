@@ -3,13 +3,14 @@ Web Adapter) in production, and with `uvicorn castle_chef.api:app` locally."""
 
 import json
 import logging
-from collections.abc import Iterator
+import time
+from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
@@ -196,6 +197,25 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+    @api.middleware("http")
+    async def log_request(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        started = time.monotonic()
+        response = await call_next(request)
+        # The route's template, so the line carries no ids.
+        route = getattr(request.scope.get("route"), "path", None)
+        log.info(
+            "http.request",
+            extra={
+                "method": request.method,
+                "route": route,
+                "status": response.status_code,
+                "ms": round((time.monotonic() - started) * 1000),
+            },
+        )
+        return response
 
     @api.get("/health")
     def health() -> dict[str, str]:

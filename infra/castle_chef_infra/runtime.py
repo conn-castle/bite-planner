@@ -205,6 +205,16 @@ class RuntimeStack(Stack):
                 conditions={"ArnEquals": {"ecs:cluster": cluster.cluster_arn}},
             )
         )
+        # Tagging the tasks it starts (propagate_tags below).
+        pipe_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ecs:TagResource"],
+                resources=[
+                    f"arn:aws:ecs:{self.region}:{self.account}:task/{cluster.cluster_name}/*"
+                ],
+                conditions={"StringEquals": {"ecs:CreateAction": "RunTask"}},
+            )
+        )
         pipe_role.add_to_policy(
             iam.PolicyStatement(
                 actions=["iam:PassRole"],
@@ -229,6 +239,8 @@ class RuntimeStack(Stack):
                     task_definition_arn=worker.task_definition_arn,
                     launch_type="FARGATE",
                     task_count=1,
+                    # Tasks carry the stack's tags, so their cost counts toward the budget.
+                    propagate_tags="TASK_DEFINITION",
                     network_configuration=pipes.CfnPipe.NetworkConfigurationProperty(
                         awsvpc_configuration=pipes.CfnPipe.AwsVpcConfigurationProperty(
                             subnets=[subnet.subnet_id for subnet in vpc.public_subnets],

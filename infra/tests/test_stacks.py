@@ -46,6 +46,7 @@ def repositories() -> Template:
         "Repositories",
         env=cdk.Environment(account="123456789012", region="us-east-1"),
         github_subject="repo:owner@1/castle-chef@2",
+        budget_email="owner@example.com",
     )
     return Template.from_stack(stack)
 
@@ -110,6 +111,7 @@ def test_each_queued_job_starts_one_worker_with_its_id(runtime: Template) -> Non
                     {
                         "LaunchType": "FARGATE",
                         "TaskCount": 1,
+                        "PropagateTags": "TASK_DEFINITION",
                         "NetworkConfiguration": {
                             "AwsvpcConfiguration": Match.object_like({"AssignPublicIp": "ENABLED"})
                         },
@@ -279,3 +281,28 @@ def test_development_images_never_expire_releases(repositories: Template) -> Non
         }
         # Releases (r<N>, what rollback.yml deploys) are counted apart from dev- pushes.
         assert counted == {("dev-",): 5, ("r",): 30}
+
+
+def test_a_monthly_budget_emails_the_owner(repositories: Template) -> None:
+    repositories.has_resource_properties(
+        "AWS::Budgets::Budget",
+        {
+            "Budget": Match.object_like(
+                {
+                    "TimeUnit": "MONTHLY",
+                    "CostFilters": {"TagKeyValue": ["user:project$castle-chef"]},
+                }
+            ),
+            "NotificationsWithSubscribers": Match.array_with(
+                [
+                    Match.object_like(
+                        {
+                            "Subscribers": [
+                                {"SubscriptionType": "EMAIL", "Address": "owner@example.com"}
+                            ]
+                        }
+                    )
+                ]
+            ),
+        },
+    )

@@ -132,6 +132,23 @@ def test_me_reports_membership_and_account(client: TestClient) -> None:
     assert client.get("/v1/me", headers=as_user(STRANGER)).json()["member"] is False
 
 
+def test_each_request_is_logged_without_ids(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    job_id = uuid4()
+    with caplog.at_level(logging.INFO, logger="castle_chef.api"):
+        client.get(f"/v1/jobs/{job_id}/meals", headers=as_user(MOM))
+        client.get("/v1/me")
+
+    lines = [r.__dict__ for r in caplog.records if r.getMessage() == "http.request"]
+    assert [(line["method"], line["route"], line["status"]) for line in lines] == [
+        ("GET", "/v1/jobs/{job_id}/meals", 404),
+        ("GET", "/v1/me", 401),
+    ]
+    assert all(isinstance(line["ms"], int) for line in lines)
+    assert not [line for line in lines if str(job_id) in str(line)]
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [
