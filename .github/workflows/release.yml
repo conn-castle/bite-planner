@@ -70,11 +70,11 @@ jobs:
         name: Did the app change since the last TestFlight upload?
         env:
           FORCE_IOS: ${{ inputs.force_ios || false }}
-          # Only whether each is set; TestFlight is on once all five are copied from SSM.
+          # Only whether each is set; TestFlight is on once all are copied from SSM.
           APPLE_SECRETS: >-
             ${{ secrets.APP_STORE_CONNECT_KEY_ID != '' && secrets.APP_STORE_CONNECT_ISSUER_ID != ''
             && secrets.APP_STORE_CONNECT_API_KEY_BASE64 != '' && secrets.MATCH_PASSWORD != ''
-            && secrets.MATCH_GIT_BASIC_AUTHORIZATION != '' }}
+            && secrets.CASTLE_CHEF_APP_CLIENT_ID != '' && secrets.CASTLE_CHEF_APP_PRIVATE_KEY != '' }}
         run: |
           if [ "$APPLE_SECRETS" != "true" ]; then
             echo "::warning::iOS build skipped: TestFlight secrets are not all set (README \"TestFlight\")."
@@ -201,15 +201,28 @@ jobs:
         env:
           CASTLE_CHEF_RELEASE: ${{ needs.changes.outputs.release }}
       - run: pnpm exec cap sync ios
+      # One-hour, read-only token for the match certificates repo (Castle Chef Bot app).
+      - id: certs
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.CASTLE_CHEF_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CASTLE_CHEF_APP_PRIVATE_KEY }}
+          owner: nicholasjconn
+          repositories: conn-castle-apple-certs
+          permission-contents: read
       - id: upload
         name: Build and upload to TestFlight
-        run: bundle exec fastlane beta
+        run: |
+          MATCH_GIT_BASIC_AUTHORIZATION=$(printf 'x-access-token:%s' "$CERTS_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$MATCH_GIT_BASIC_AUTHORIZATION"
+          export MATCH_GIT_BASIC_AUTHORIZATION
+          bundle exec fastlane beta
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          CERTS_TOKEN: ${{ steps.certs.outputs.token }}
 
   # Waiting for Apple's processing on Linux costs ~1/10 of waiting on macOS.
   testflight-processed:

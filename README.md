@@ -130,7 +130,7 @@ The worker runs `al -q grok` from the repo root, so Grok uses this repo's login 
 Everything logs structured JSON, one object per line: `{"ts", "level", "logger", "event", ...fields}`.
 
 - Worker and CLI: stderr (journald for the service) and `~/.local/state/castle-chef/logs/castle-chef.jsonl` (rotated at 10 MB, 5 files). Events include `worker.started` (release, commit), `job.claimed`, `agent.finished` (seconds, turns, cost), `job.succeeded`, `job.failed`, `queue.checked`, `schema.behind`, and `worker.stopped`. `meal add` runs inside the agent's sandbox, so it logs to stderr only.
-- Updater (production worker only): the same file, logger `castle_chef.update`: `update.started`, `update.finished`, `update.worker_restarted`, and at error level `update.rolled_back`, `update.deploy_failed`, `update.fetch_failed`, `update.untrusted_release`, `update.rollback_failed`.
+- Updater (production worker only): the same file, logger `castle_chef.update`: `update.installed`, `update.started`, `update.finished`, `update.worker_restarted`, and at error level `update.rolled_back`, `update.deploy_failed`, `update.fetch_failed`, `update.auth_failed`, `update.untrusted_release`, `update.invalid_release`, `update.rollback_failed`.
 - App: each entry is `{"ts", "level", "event", "launch", ...fields}`, kept in a 1,000-entry buffer on the device. Account → **Send logs** uploads it to `client_log_batch`; the worker saves each batch to `~/.local/state/castle-chef/logs/client/<time>-<id>.jsonl` (first line: sender, device, app version) on its next cycle and deletes the row. `uv run castle-chef logs pull` saves them immediately.
 
 ```sh
@@ -161,22 +161,20 @@ Then, in the `castle-chef` shell, `export XDG_RUNTIME_DIR=/run/user/$(id -u)` so
 
 As `castle-chef`:
 
-1. Install `uv`, `al`, `grok`, and `neonctl` into `~/.local/bin` (as for your own account). The updater also needs `git`, `curl`, and `jq` (system packages).
-2. Write the updater's GitHub token from SSM (`/castle-chef/production/github-updater-token`; [Secrets](#secrets)). From **your** account, which has the AWS profile:
+1. Install `uv`, `al`, `grok`, and `neonctl` into `~/.local/bin` (as for your own account). The updater also needs `git`, `curl`, `jq`, and `openssl` (system packages).
+2. Give it the Castle Chef Bot GitHub App's credentials from SSM ([Secrets](#secrets)). From **your** account, which has the AWS profile:
    ```sh
+   ssm() { aws ssm get-parameter --profile conn --region us-east-1 --with-decryption --name "$1" --query Parameter.Value --output text; }
    sudo -H -u castle-chef bash -c 'umask 077; mkdir -p ~/.config/castle-chef'
-   printf 'GITHUB_TOKEN=%s\n' "$(aws ssm get-parameter --profile conn --region us-east-1 --with-decryption \
-     --name /castle-chef/production/github-updater-token --query Parameter.Value --output text)" |
-     sudo -H -u castle-chef bash -c 'umask 077; cat > ~/.config/castle-chef/github.env'
+   ssm /castle-chef/shared/github-app-private-key |
+     sudo -H -u castle-chef bash -c 'umask 077; cat > ~/.config/castle-chef/github-app.pem'
+   printf 'GITHUB_APP_CLIENT_ID=%s\n' "$(ssm /castle-chef/shared/github-app-client-id)" |
+     sudo -H -u castle-chef bash -c 'umask 077; cat > ~/.config/castle-chef/github-app.env'
    ```
-3. Clone and check out the latest release:
+3. Clone `~/app` at the latest release, using the app (from your checkout of this repository):
    ```sh
-   set -a; . ~/.config/castle-chef/github.env; set +a
-   git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f' \
-     clone https://github.com/nicholasjconn/castle-chef.git ~/app
-   sha=$(curl -fsS -H "Authorization: Bearer $GITHUB_TOKEN" \
-     https://api.github.com/repos/nicholasjconn/castle-chef/releases/latest | jq -r .target_commitish)
-   git -C ~/app checkout --detach "$sha"
+   sudo -H -u castle-chef bash -c 'cd; set -a; . ~/.config/castle-chef/github-app.env; set +a; bash -s install' \
+     < deploy/castle-chef-update
    ```
 4. Write `~/app/backend/.env` for production, again from your account:
    ```sh
@@ -231,7 +229,7 @@ The release workflow builds on a macOS runner and uploads with fastlane (`apps/m
 
 1. In App Store Connect, create the app with bundle id `com.conncastle.castlechef`.
 2. On a Mac, create the App Store profile in the match repo: `cd apps/mobile && bundle install && bundle exec fastlane match appstore`.
-3. Repository secrets `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY_BASE64` (base64 of the `.p8`), `MATCH_PASSWORD`, `MATCH_GIT_BASIC_AUTHORIZATION` (base64 of `user:token` with read access to `conn-castle-apple-certs`), copied from SSM ([Secrets](#secrets)).
+3. Repository secrets `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY_BASE64` (base64 of the `.p8`), `MATCH_PASSWORD`, `CASTLE_CHEF_APP_CLIENT_ID`, and `CASTLE_CHEF_APP_PRIVATE_KEY`, copied from SSM ([Secrets](#secrets)). The release reads `conn-castle-apple-certs` with a one-hour token from the Castle Chef Bot app.
 
 ## Releases
 
@@ -268,14 +266,15 @@ The database restore has not been exercised yet (Neon doesn't allow a test root 
 | `/castle-chef/production/database-url` | GitHub `MIGRATION_DATABASE_URL`; worker `~castle-chef/app/backend/.env` `DATABASE_URL` | set |
 | `/castle-chef/development/database-url` | your checkout's `backend/.env` `DATABASE_URL` | set |
 | `/castle-chef/shared/neon-api-key` (Neon key `castle-chef-release`, limited to this project) | GitHub `NEON_API_KEY` | set |
-| `/castle-chef/production/github-updater-token` (fine-grained, this repository, Contents: read) | worker `~castle-chef/.config/castle-chef/github.env` `GITHUB_TOKEN` | needed |
+| `/castle-chef/shared/github-app-private-key` (Castle Chef Bot GitHub App) | worker `~castle-chef/.config/castle-chef/github-app.pem`; GitHub `CASTLE_CHEF_APP_PRIVATE_KEY` | set |
+| `/castle-chef/shared/github-app-client-id` (not secret) | worker `~castle-chef/.config/castle-chef/github-app.env` `GITHUB_APP_CLIENT_ID`; GitHub `CASTLE_CHEF_APP_CLIENT_ID` | set |
 | `/castle-chef/shared/app-store-connect-key-id` (`EXAMP12345`) | GitHub `APP_STORE_CONNECT_KEY_ID` | in SSM |
 | `/castle-chef/shared/app-store-connect-issuer-id` | GitHub `APP_STORE_CONNECT_ISSUER_ID` | in SSM |
 | `/castle-chef/shared/app-store-connect-api-key-base64` (the `.p8`, base64) | GitHub `APP_STORE_CONNECT_API_KEY_BASE64` | in SSM |
 | `/castle-chef/shared/match-password` (encrypts `conn-castle-apple-certs`) | GitHub `MATCH_PASSWORD` | in SSM |
-| `/castle-chef/shared/match-git-basic-authorization` (base64 of `user:token`, read access to `conn-castle-apple-certs`) | GitHub `MATCH_GIT_BASIC_AUTHORIZATION` | needed |
+**Castle Chef Bot** is this repository's own GitHub App (one app per repository): private, read-only access to repository contents, installed on `castle-chef` and `conn-castle-apple-certs`, settings at https://github.com/settings/apps. Nothing stores a GitHub token: the updater and the release workflow mint one-hour tokens from its key (the updater's can read only `castle-chef`; the release's only `conn-castle-apple-certs`, for fastlane match).
 
-The release builds iOS only once all five Apple secrets are in GitHub; they are copied there when App Store signing is ready ([TestFlight](#testflight)).
+The release builds iOS only once the Apple secrets and the app's are all in GitHub; the Apple ones are copied there when App Store signing is ready ([TestFlight](#testflight)).
 
 Copy a secret to GitHub (the value never appears in the terminal):
 
