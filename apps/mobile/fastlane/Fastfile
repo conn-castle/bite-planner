@@ -44,6 +44,13 @@ platform :ios do
     File.write(ENV["GITHUB_OUTPUT"], "build_number=#{build_number}\n", mode: "a") if ENV["GITHUB_OUTPUT"]
   end
 
+  # Needs write access to the match repo (MATCH_GIT_BASIC_AUTHORIZATION); the
+  # release only reads it. README "TestFlight".
+  desc "Create the App Store certificate and profile in the match repo (once, and when they expire)"
+  lane :certificates do
+    match(type: "appstore", readonly: false, api_key: connect_api_key)
+  end
+
   desc "Wait until App Store Connect has processed build `build_number`; fail unless it is valid"
   lane :processed do |options|
     build_number = options.fetch(:build_number).to_s
