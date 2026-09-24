@@ -51,9 +51,7 @@ def clean_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[No
     get_settings.cache_clear()
     get_dispatcher.cache_clear()
     with get_engine().begin() as connection:
-        connection.execute(
-            text('TRUNCATE job, meal, household_member, client_log_batch, neon_auth."user" CASCADE')
-        )
+        connection.execute(text('TRUNCATE job, meal, household_member, neon_auth."user" CASCADE'))
 
 
 @pytest.fixture

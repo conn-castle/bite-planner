@@ -106,7 +106,7 @@ CASTLE_CHEF_JOB_ID=<id> uv run castle-chef job run   # run one pending job; what
 
 Each job gets a directory (locally `~/.local/state/castle-chef/jobs/<job-id>/`, in the container `/tmp/jobs/`) with the prompt, Grok's JSON output, and its stderr.
 
-`job run` logs `worker.started` with its release (`r<N>`, or `dev-<sha>` for an untagged checkout) and commit. It refuses to run (`schema.behind`, exit status 78) if the database's migrations are older than the code. A database that is *newer* than the code (after a rollback) is fine. A job someone else already claimed is left alone (exit 0); a job that doesn't exist exits 1.
+`job run` logs `worker.started` with its release (`YYYY.M.D.N`, or `dev-<sha>` for an untagged checkout) and commit. It refuses to run (`schema.behind`, exit status 78) if the database's migrations are older than the code. A database that is *newer* than the code (after a rollback) is fine. A job someone else already claimed is left alone (exit 0); a job that doesn't exist exits 1.
 
 The worker runs `al -q grok`, so Grok uses Agent Layer's model settings (`.agent-layer/config.toml`). Grok's headless mode auto-approves every tool call, so the run is contained by construction:
 
@@ -135,7 +135,7 @@ tail -f ~/.local/state/castle-chef/logs/castle-chef.jsonl | jq -c '{ts, event, j
 
 Account `123456789012` (profile `conn`), region `us-east-1`, defined in `infra/` (CDK, Python). Releases deploy it ([Releases](#releases)); nothing needs a manual deploy. Stacks:
 
-- `CastleChefRepositories`: ECR repositories `castle-chef-api` and `castle-chef-worker` (immutable tags; the last 30 releases `r<N>` and 5 development pushes `dev-…` are kept), and the role `castle-chef-github-deploy`, which only this repository's `main` branch can assume (GitHub OIDC).
+- `CastleChefRepositories`: ECR repositories `castle-chef-api` and `castle-chef-worker` (immutable tags; the last 30 released images `commit-<sha>` and 5 development pushes `dev-…` are kept), and the role `castle-chef-github-deploy`, which only this repository's `main` branch can assume (GitHub OIDC).
 - `CastleChef` (stage `prod`, Neon `main`): a VPC with public subnets only (no NAT), the API and failure-handler Lambdas, the jobs queue and its dead-letter queue, the Pipe, the ECS cluster and worker task definition, EFS for the agent's login, log groups, and alarms. Its outputs name the API URL, cluster, task definition, subnets, security group, log group, and Pipe. `CastleChef-dev` (stage `dev`, Neon `dev`) is the same stack for trying infrastructure changes; it is not deployed now.
 
 Costs: nothing runs while idle; EFS, ECR, and alarms are well under $1 a month, a job is a fraction of a cent of Fargate, and Grok is the subscription. Lambda and the Pipe scale to zero.
@@ -181,7 +181,7 @@ pnpm dev          # https://localhost:5173 and https://<this machine's LAN IP>:5
 pnpm test && pnpm lint && pnpm build
 ```
 
-Public URLs (not secrets): `.env.development` (Neon `dev`'s auth, and the API at `/api`, which the dev server proxies to `localhost:8000`) is used by `pnpm dev`; `.env.production` (Neon `main`'s auth and the prod API's Function URL, which stays the same across deploys) by `pnpm build`, so by TestFlight **and by any local iOS build**; `.env` holds what both share. The Account page shows the version and release (`r<N>`, or `dev` for local builds). `__APP_VERSION__` (`package.json`) also invalidates the persisted cache; bump it when the cached data's shape changes.
+Public URLs (not secrets): `.env.development` (Neon `dev`'s auth, and the API at `/api`, which the dev server proxies to `localhost:8000`) is used by `pnpm dev`; `.env.production` (Neon `main`'s auth and the prod API's Function URL, which stays the same across deploys) by `pnpm build`, so by TestFlight **and by any local iOS build**; `.env` holds what both share. The Account page shows the app version and the release (`YYYY.M.D.N`, or `dev` for local builds). `__APP_VERSION__` (`package.json`) also invalidates the persisted cache; bump it when the cached data's shape changes.
 
 The dev server listens on the local network over HTTPS with a self-signed certificate (browsers warn once; accept it). It also proxies Neon Auth at `/neon-auth` so the session cookie is first-party in any browser, including Safari on a phone, and sends the trusted origin Neon Auth requires (`vite.config.ts`). If other devices can't connect, allow the port through the firewall: `sudo ufw allow from 192.168.1.0/24 to any port 5173 proto tcp`.
 
@@ -214,14 +214,16 @@ Set up (team `EXAMP12345`):
 
 ## Releases
 
+Every push to `main` is a release, versioned by date: `YYYY.M.D.N`, the Nth release that day (US Eastern), e.g. `2026.9.24.1`. The iOS app built from it has the same numbers: version `2026.9.24`, build `1`, which is what TestFlight shows. Releases before 2026-09-24 were numbered `r<N>`.
+
 Every push to `main` runs `.github/workflows/release.yml`:
 
 1. **CI** (`ci.yml`): lint and tests for the backend (including migration up/down and the migration guard), the app (and its build), and `infra/`.
-2. **Images**, alongside CI: `api` and `worker` built from `docker/Dockerfile` and pushed to ECR as `r<N>` (the worker with zstd layers, which Fargate starts faster). A re-run reuses images already pushed for its release.
-3. **Migrate**: a Neon snapshot of `main` named `pre-r<N>` (the restore point, kept 14 days), `alembic upgrade head` on `main`, then checks that `main` is at this release's migrations and matches the models.
+2. **Images**, alongside CI: `api` and `worker` built from `docker/Dockerfile` and pushed to ECR as `commit-<sha>` (the worker with zstd layers, which Fargate starts faster). A re-run reuses images already pushed for its commit.
+3. **Migrate**: a Neon snapshot of `main` named `pre-<release>` (the restore point, kept 14 days), `alembic upgrade head` on `main`, then checks that `main` is at this release's migrations and matches the models.
 4. **Deploy** (`.github/actions/deploy`): `cdk deploy` of both stacks (stage `prod`) with the images' digests, through the `castle-chef-github-deploy` role (GitHub OIDC; no AWS keys stored), then a smoke test: `GET /health` must answer and `GET /v1/me` without a token must return 401.
-5. **Publish**: GitHub release `r<N>` for the commit, with `release.json` (commit, image digests, migration), which `rollback.yml` uses.
-6. **iOS**, only if `apps/mobile/` changed since the last upload (or when run manually with `force_ios`): build and upload on macOS, then wait for Apple's processing on Linux (cheaper). Tag `ios-r<N>` marks a processed upload; without it, the next release builds again.
+5. **Publish**: the GitHub release for the commit, with `release.json` (commit, image digests, migration), which `rollback.yml` uses.
+6. **iOS**, only if `apps/mobile/` changed since the last upload (or when run manually with `force_ios`): build and upload on macOS, then wait for Apple's processing on Linux (cheaper). Tag `ios-<release>` marks a processed upload; without it, the next release builds again.
 
 If CI, the images, the migration, or its checks fail, nothing is deployed: AWS keeps running the previous release, which works with the migrated database (backward-compatible migrations), and GitHub emails you. A failed migration leaves `main` unchanged (it runs in one transaction). A failed `cdk deploy` is rolled back by CloudFormation. If the smoke test fails, the new code is deployed but no release is published: fix forward, or go back with `rollback.yml`.
 
@@ -231,16 +233,16 @@ Repository secrets: `NEON_API_KEY`, `MIGRATION_DATABASE_URL` (direct owner conne
 
 ### Rollback
 
-**Rollback** (`rollback.yml`, run from the Actions tab or `gh workflow run rollback.yml -f release=r<N> -f confirm="roll back to r<N>"`) redeploys an earlier release's images with that release's own CDK code, without rebuilding, and smoke-tests it. Only releases with `release.json` (from `r6` on, the first deployed to AWS) can be rolled back to. Don't push while it runs (a new release run would cancel it while it waits).
+**Rollback** (`rollback.yml`, run from the Actions tab or `gh workflow run rollback.yml -f release=<release> -f confirm="roll back to <release>"`) redeploys an earlier release's images with that release's own CDK code, without rebuilding, and smoke-tests it. Only releases with `release.json` (from `r6` on, the first deployed to AWS) can be rolled back to. Don't push while it runs (a new release run would cancel it while it waits).
 
 | What went wrong | What to do |
 | --- | --- |
 | The release failed | Nothing to undo. Fix and push. |
 | The release is bad, the data is fine | Run **Rollback** with the previous release. The database keeps the newer schema, which the older code works with; the workflow refuses if a contract migration since then removed something it needs. Then `git revert` the bad commits and push (the next push releases `main` again). |
-| Data was damaged | Run **Rollback** with the last good release, `restore_database` checked, and the confirmation `roll back to r<N> and restore the database`. It stops the Pipe (no new jobs start; requests wait in the queue), waits for running workers, snapshots `main` as it is (`before-rollback-r<N>-…`), restores `main` from the snapshot taken before the next release, deploys the release, and starts the Pipe again. Everything written since that snapshot is lost, including sign-ins (Neon Auth lives in the same database), so everyone signs in again. Restore points expire after 14 days. Then follow its summary: `git revert` the bad commits and their migrations and push; if `main`'s branch id changed, update `CASTLE_CHEF_NEON_BRANCH_ID` where you run `family` commands; delete the pre-restore branch Neon keeps when done, and reset `dev` if it was a child of it. |
+| Data was damaged | Run **Rollback** with the last good release, `restore_database` checked, and the confirmation `roll back to <release> and restore the database`. It stops the Pipe (no new jobs start; requests wait in the queue), waits for running workers, snapshots `main` as it is (`before-rollback-<release>-…`), restores `main` from the snapshot taken before the next release, deploys the release, and starts the Pipe again. Everything written since that snapshot is lost, including sign-ins (Neon Auth lives in the same database), so everyone signs in again. Restore points expire after 14 days. Then follow its summary: `git revert` the bad commits and their migrations and push; if `main`'s branch id changed, update `CASTLE_CHEF_NEON_BRANCH_ID` where you run `family` commands; delete the pre-restore branch Neon keeps when done, and reset `dev` if it was a child of it. |
 | A bad iOS build | Expire it in App Store Connect; testers can reinstall the previous build from TestFlight → Previous Builds. Then fix forward. |
 
-Neither rollback has been exercised yet (Neon doesn't allow a test root branch in this project); a database restore also assumes the restored branch keeps `main`'s endpoints, so check sign-in and a request afterwards.
+A code rollback was rehearsed on 2026-09-24 (r8 to r7). The database restore has not been exercised (Neon doesn't allow a test root branch in this project); it also assumes the restored branch keeps `main`'s endpoints, so check sign-in and a request afterwards.
 
 ## Secrets
 
@@ -302,7 +304,7 @@ Security model:
 - The API enforces the request rules: counts from 1 to 14, at most 3 pending or running per person, and client-generated job ids that can't be reused by someone else or with different parameters.
 - The API and worker use the owner role through Neon's pooled endpoint; the agent has no database access. Local tools use the direct endpoint.
 - Trusted auth origin: `https://app.example.test`, presented by the iOS app and the dev server's auth proxy. Keep this domain under your control. Localhost is not trusted.
-- The Data API, its grants, the RLS policies, and `client_log_batch` are left from before the API and no longer used; a later contract migration removes them.
+- The app doesn't use the Neon Data API. The `remove Data API access` migration removed its grants, row-level security, policies, and `client_log_batch`, so its roles (`authenticated`, `anonymous`, which Neon keeps while Neon Auth is on) can't read or write any table (`tests/test_data_api_access.py`), and the Data API itself is deleted per branch with `neonctl data-api delete --project-id example-project --branch <branch> --database neondb` (done on `dev`).
 
 ### Family members (invite-only)
 
@@ -330,5 +332,5 @@ Production runs on AWS from release `r6`: verified with a real request through t
 1. Confirm the alarm email subscription (the "AWS Notification - Subscription Confirmation" email), or alarms can't reach you.
 2. TestFlight: create the app record in App Store Connect ([TestFlight](#testflight)); then the next release (or `gh workflow run release.yml -f force_ios=true`) uploads the first build. Then install it with TestFlight, sign in, and invite the family ([Family members](#family-members-invite-only)).
 3. On a phone: sign in with a code, fully quit and relaunch (should stay signed in and show data instantly), request meals, and send logs from Account. The native auth path (`src/neonAuth.ts`) has only been verified at the HTTP level.
-4. Contract migration: revoke the Data API grants and RLS policies, disable the Data API, and drop `client_log_batch` (unused since the API).
+4. Delete the Data API on `main` once the `remove Data API access` migration is released (see [Neon](#neon)).
 5. Product: give the agent meal history so it avoids repeats.

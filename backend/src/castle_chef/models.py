@@ -18,7 +18,7 @@ def utc_now() -> datetime:
 class TimestampMixin(SQLModel):
     """Common creation and modification timestamps.
 
-    Server defaults cover rows inserted through the Neon Data API, where the
+    Server defaults cover rows inserted outside Python (plain SQL), where the
     Python defaults never run.
     """
 
@@ -124,10 +124,8 @@ class Job(TimestampMixin, SQLModel, table=True):
         ),
         sa_column_kwargs={"server_default": JobStatus.PENDING.value},
     )
-    # Neon Auth user id of the requester; `auth.uid()` fills it for app inserts.
-    requested_by: UUID | None = Field(
-        default=None, sa_column_kwargs={"server_default": text("auth.uid()")}
-    )
+    # Neon Auth user id of the requester (set by the API; none for `job create`).
+    requested_by: UUID | None = None
     error: str | None = None
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
@@ -143,43 +141,13 @@ class JobMeal(SQLModel, table=True):
 
 
 class HouseholdMember(SQLModel, table=True):
-    """A Neon Auth user invited to the household. The app is invite-only: RLS
-    lets only members read data or queue jobs. Email and name live in Neon Auth."""
+    """A Neon Auth user invited to the household. The app is invite-only: the API
+    serves only members. Email and name live in Neon Auth."""
 
     __tablename__ = "household_member"
 
     user_id: UUID = Field(primary_key=True)
     invited_at: datetime = Field(
-        default_factory=utc_now,
-        sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"server_default": func.now()},
-    )
-
-
-class ClientLogBatch(SQLModel, table=True):
-    """Logs the app sent from its Account page; the worker saves them to disk."""
-
-    __tablename__ = "client_log_batch"
-    __table_args__ = (
-        CheckConstraint(
-            "jsonb_typeof(entries) = 'array' AND jsonb_array_length(entries) <= 2000",
-            name="client_log_batch_entries",
-        ),
-    )
-
-    id: UUID = Field(
-        default_factory=uuid4,
-        primary_key=True,
-        sa_column_kwargs={"server_default": text("gen_random_uuid()")},
-    )
-    # Neon Auth user id of the sender; `auth.uid()` fills it for app inserts.
-    user_id: UUID | None = Field(
-        default=None, sa_column_kwargs={"server_default": text("auth.uid()")}
-    )
-    # Platform, OS, app version, etc., as reported by the app.
-    device: dict[str, Any] = Field(default_factory=dict, sa_type=JSONB)
-    entries: list[dict[str, Any]] = Field(default_factory=list, sa_type=JSONB)
-    created_at: datetime = Field(
         default_factory=utc_now,
         sa_type=DateTime(timezone=True),
         sa_column_kwargs={"server_default": func.now()},
