@@ -1,4 +1,7 @@
-/* spec/mockup.html: .pass, .pass.draft (.gen, .ready), .pass-head, .pass-over, .pass-title, .pass-sub, .pass-body, .cover */
+/*
+ * spec/mockup.html: .pass, .pass.draft (.soon, .late, .gen, .ready), .pass-head,
+ * .pass-over, .pass-title, .pass-sub, .pass-body, .perf, .draft-row, .cover, .note
+ */
 
 .card {
   position: relative;
@@ -17,6 +20,10 @@
   }
 }
 
+.placed {
+  border-width: 1px;
+}
+
 .draft {
   background: transparent;
   border: 1.5px dashed rgba(20, 19, 17, 0.2);
@@ -27,17 +34,48 @@
   border-color: var(--cc-accent);
 }
 
+.soon {
+  border-color: var(--cc-accent);
+  box-shadow: 0 12px 30px -16px rgba(239, 90, 47, 0.45);
+}
+
+.late {
+  border-color: var(--cc-danger);
+  box-shadow: 0 12px 30px -16px rgba(210, 59, 44, 0.45);
+}
+
 .head {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  display: block;
+  width: 100%;
   padding: 16px 18px 14px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.placed .head {
   background: var(--soft);
 }
 
-.draft .head {
-  background: transparent;
+.ready .head,
+.soon .head {
+  background: var(--cc-accent-soft);
 }
 
-.ready .head {
-  background: var(--cc-accent-soft);
+.late .head {
+  background: var(--cc-danger-soft);
+}
+
+.pressable {
+  cursor: pointer;
+}
+
+.pressable:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: -2px;
 }
 
 .over {
@@ -58,7 +96,7 @@
   gap: 7px;
 }
 
-/* An unplaced order's mark: its color, dashed. */
+/* The order's mark: its color, filled once placed, dashed before. */
 .mark {
   box-sizing: border-box;
   width: 9px;
@@ -67,8 +105,21 @@
   border: 2px dashed var(--c);
 }
 
+.placed .mark {
+  border: 0;
+  background: var(--c);
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+
 .title {
-  margin: 10px 0 0;
+  flex: 1;
+  min-width: 0;
   font-family: var(--cc-font-display);
   font-size: 23px;
   font-weight: 700;
@@ -77,13 +128,27 @@
 }
 
 .subtitle {
-  margin: 6px 0 0;
+  display: block;
+  margin-top: 6px;
   font-size: 14px;
   color: var(--cc-ink-2);
 }
 
+.placed .subtitle {
+  margin-top: 3px;
+}
+
 .body {
   padding: 12px 18px 16px;
+}
+
+.placed .body {
+  padding-top: 14px;
+}
+
+.divider {
+  margin: 0 18px;
+  border-top: 0.5px solid var(--cc-hairline);
 }
 
 .line {
@@ -93,4 +158,35 @@
   margin: 0 0 14px;
   font-size: 13px;
   color: var(--cc-ink-2);
+}
+
+.line b {
+  font-weight: 650;
+  color: var(--cc-ink);
+}
+
+.line.danger,
+.line.danger b {
+  color: var(--cc-danger);
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--cc-ink-2);
+}
+
+.note svg {
+  flex: none;
+  margin-top: 1px;
+  font-size: 17px;
+  color: var(--cc-ink-3);
+}
+
+.note b {
+  font-weight: 650;
+  color: var(--cc-ink);
 }

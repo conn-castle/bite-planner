@@ -15,7 +15,7 @@ import { DeliveryStep, NextDeliveryStep } from './DateSteps'
 import { FlowFrame } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
 import styles from './OrderFlow.module.css'
-import { draftQuery, useOpenOrder, useOrder } from './orders'
+import { nextQuery, useOpenOrder, useOrder } from './orders'
 import { PickStep } from './PickStep'
 import { PlacedStep, ReviewStep } from './ReviewStep'
 import { WaitStep } from './WaitStep'
@@ -47,8 +47,8 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement }: OrderFl
   )
 
   function dismissed() {
-    // The flow kept its own copy of the order current; the draft may be out of date.
-    void queryClient.invalidateQueries({ queryKey: draftQuery.queryKey })
+    // The flow kept its own copy of the order current; the next order's may be out of date.
+    void queryClient.invalidateQueries({ queryKey: nextQuery.queryKey })
     onDismiss()
   }
 

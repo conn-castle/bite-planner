@@ -1,7 +1,9 @@
-import { IonLabel, IonRouterOutlet, IonTabBar, IonTabButton, IonTabs } from '@ionic/react'
-import { Navigate, Route } from 'react-router-dom'
+import { IonLabel, IonPage, IonRouterOutlet, IonTabBar, IonTabButton, IonTabs } from '@ionic/react'
+import { Navigate, Route, useParams } from 'react-router-dom'
 import { HistoryPage } from '../features/history/HistoryPage'
+import { MealPage } from '../features/meals/MealPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
+import { OrderPage } from '../features/week/OrderPage'
 import { WeekPage } from '../features/week/WeekPage'
 import { Icon, type IconName } from '../ui/Icon'
 
@@ -17,6 +19,23 @@ export function Tabs() {
     <IonTabs>
       <IonRouterOutlet>
         <Route path="/week" element={<WeekPage />} />
+        {/* Pages pushed in the Orders tab; NavPage explains the IonPage around them. */}
+        <Route
+          path="/week/orders/:orderId"
+          element={
+            <IonPage>
+              <OrderPage />
+            </IonPage>
+          }
+        />
+        <Route
+          path="/week/meals/:mealId"
+          element={
+            <IonPage>
+              <RoutedMeal />
+            </IonPage>
+          }
+        />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/week" replace />} />
@@ -31,4 +50,10 @@ export function Tabs() {
       </IonTabBar>
     </IonTabs>
   )
+}
+
+/** A recipe opened from a route: its meal is in the path. */
+function RoutedMeal() {
+  const { mealId } = useParams<{ mealId: string }>()
+  return mealId ? <MealPage mealId={mealId} tab={{ href: '/week' }} /> : <Navigate to="/week" replace />
 }

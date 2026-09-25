@@ -4,7 +4,7 @@ fake `neonctl` that applies them to the test database."""
 import json
 import stat
 import sys
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -83,11 +83,14 @@ def test_list_counts_each_households_members_and_orders(session: Session) -> Non
     run("household", "invite", "me@example.com", "--name", "Me", "--household", "Test Household")
     house = session.exec(select(Household.id).where(Household.name == "Test Household")).one()
     # A placed order and the current draft.
+    member = uuid4()
     session.add(
         GroceryOrder(
             household_id=house,
-            created_by=uuid4(),
+            created_by=member,
             status=GroceryOrderStatus.PLACED,
+            placed_at=datetime(2026, 9, 25, 14, tzinfo=UTC),
+            placed_by=member,
             delivery_date=date(2026, 9, 27),
             next_delivery_date=date(2026, 10, 1),
         )

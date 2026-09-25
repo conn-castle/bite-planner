@@ -2,14 +2,18 @@ import type { ButtonHTMLAttributes } from 'react'
 import styles from './Button.module.css'
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'accent' | 'secondary' | 'plain'
+  variant?: 'primary' | 'accent' | 'danger' | 'secondary' | 'white' | 'plain'
   /** Stretches across its container, as a rounded rectangle; always the large size. */
   block?: boolean
   /** The large size, e.g. a sheet footer's main action. */
   large?: boolean
 }
 
-/** The app's buttons: an ink pill for the main action (accent for committing, e.g. placing an order), a soft fill for the rest. */
+/**
+ * The app's buttons: an ink pill for the main action (accent for committing,
+ * e.g. placing an order; danger when it's overdue), a soft fill for the rest,
+ * or white on a tinted card.
+ */
 export function Button({
   variant = 'primary',
   block = false,

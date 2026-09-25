@@ -1,0 +1,60 @@
+/* spec/mockup.html: .pass.draft.soon.welcome, .welcome .art, .ghost */
+
+.welcome {
+  padding: 22px 20px 20px;
+  border-radius: var(--cc-radius-lg);
+  background: var(--cc-bg);
+  border: 1.5px solid var(--cc-accent);
+  box-shadow: 0 12px 30px -16px rgba(239, 90, 47, 0.45);
+}
+
+.art {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.meal {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--cc-fill);
+}
+
+.meal svg {
+  width: 80%;
+  height: 80%;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--cc-font-display);
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--cc-ink-2);
+}
+
+.start {
+  margin-top: 18px;
+}
+
+/* The cards to come. */
+.ghost {
+  height: 60px;
+  border-radius: 20px;
+  border: 1.5px dashed rgba(20, 19, 17, 0.13);
+}
+
+.faint {
+  opacity: 0.6;
+}

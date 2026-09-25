@@ -72,8 +72,14 @@ ion-header.header-translucent .header-background {
   transition: opacity 220ms var(--cc-ease);
 }
 
-ion-header.header-translucent.cc-scrolled .header-background {
+ion-header.header-translucent.cc-scrolled .header-background,
+ion-header.header-translucent.cc-bar .header-background {
   opacity: 1;
+}
+
+/* A pushed page's navigation bar (.navbar): always glass, over a hairline. */
+ion-header.cc-bar {
+  border-bottom: 0.5px solid var(--cc-hairline);
 }
 
 /* A soft edge where content meets the glass, instead of a hard divider. */

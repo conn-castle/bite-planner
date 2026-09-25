@@ -1,20 +1,36 @@
 import { type CSSProperties, useLayoutEffect, useRef } from 'react'
 import type { ISODate } from '../lib/api/types'
 import { formatDate, toLocalDate } from '../lib/dates'
+import { Icon } from './Icon'
 import styles from './DateBar.module.css'
 import { orderColor } from './orderColor'
 
 /** What a day in a date bar is marked with, under its date. */
 export type DayTag = 'today' | 'target' | 'soonest' | 'best' | 'delivery'
 
+/**
+ * What happens on a day, as a small mark under it (compact strip only): an
+ * order's groceries arrive (in its color once placed), the day to decide the
+ * next order by (red once passed), or an order was placed.
+ */
+export type DayMark =
+  | { kind: 'delivery'; order: number; placed: boolean }
+  | { kind: 'decide'; late: boolean }
+  | { kind: 'decided' }
+
 /** One day in a date bar. */
 export interface BarDay {
   date: ISODate
   /** The number of the order whose meals cover this day; null when no meals do. */
   coveredBy: number | null
+  /** Its meals' groceries haven't arrived yet: the bar is dashed (compact strip only). */
+  coverAhead?: boolean
   /** Whether the day can be chosen (or, in a bar without choices, isn't past); the others are greyed out. */
   selectable: boolean
+  /** Before today: greyed out, though it can still be chosen (compact strip only). */
+  past?: boolean
   tag: DayTag | null
+  marks?: DayMark[]
 }
 
 const TAG_TEXT: Record<DayTag, string> = {
@@ -28,6 +44,15 @@ const TAG_TEXT: Record<DayTag, string> = {
 // Tags on days that orient rather than suggest (they are not the app's pick).
 const QUIET_TAGS: ReadonlySet<DayTag> = new Set(['today', 'delivery'])
 
+// Days the compact strip shows before the highlighted one when it first appears.
+const DAYS_BEFORE_SELECTED = 2
+
+function markText(mark: DayMark): string {
+  if (mark.kind === 'delivery') return `Order ${mark.order} ${mark.placed ? 'delivery' : 'target delivery'}`
+  if (mark.kind === 'decide') return mark.late ? 'decide-by date, passed' : 'decide-by date'
+  return 'order placed'
+}
+
 interface DateBarProps {
   days: BarDay[]
   /** The highlighted day: the choice, or (in a bar without choices) today. */
@@ -40,10 +65,19 @@ interface DateBarProps {
   scrollable?: boolean
   /**
    * The small calendar strip in a card (home), instead of large chips: a
-   * letter for the weekday, and today in a filled circle. It shows no other
-   * tags and no legend.
+   * letter for the weekday, today in a filled circle, and each day's marks.
+   * It shows no other tags and no legend.
    */
   compact?: boolean
+  /** A line under the compact strip, in its card: e.g. what happens on the highlighted day. */
+  caption?: DayCaption
+}
+
+/** What a compact strip says under it: a day ("Today"), a dot of an order's color, and what happens. */
+export interface DayCaption {
+  day: string
+  order: number | null
+  text: string
 }
 
 /**
@@ -51,17 +85,46 @@ interface DateBarProps {
  * color, days that can't be chosen are greyed out, and a tag under a date
  * marks today, the target, or the recommended day.
  */
-export function DateBar({ days, selected, onChoose, label, scrollable = true, compact = false }: DateBarProps) {
+export function DateBar({
+  days,
+  selected,
+  onChoose,
+  label,
+  scrollable = true,
+  compact = false,
+  caption,
+}: DateBarProps) {
   const strip = useRef<HTMLDivElement>(null)
+  const positioned = useRef(false)
 
   // Keep the highlighted day in view, from the start and whenever it changes;
-  // a day already in view stays put.
+  // a day already in view stays put. The compact strip first shows a couple of
+  // days before it, so today appears with the days just past.
   useLayoutEffect(() => {
-    if (!scrollable) return
-    strip.current
-      ?.querySelector<HTMLElement>('[data-selected="true"]')
-      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }, [scrollable, selected])
+    const bar = strip.current
+    const day = bar?.querySelector<HTMLElement>('[data-selected="true"]')
+    if (!scrollable || !bar || !day) return
+    if (!compact || positioned.current) {
+      day.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      return
+    }
+    const position = () => {
+      // Measured against the strip itself; an element's offsetLeft is against its nearest positioned ancestor.
+      const start = day.getBoundingClientRect().left - bar.getBoundingClientRect().left + bar.scrollLeft
+      const padding = parseFloat(getComputedStyle(bar).paddingLeft)
+      bar.scrollLeft = start - padding - DAYS_BEFORE_SELECTED * day.offsetWidth
+      positioned.current = true
+    }
+    if (bar.clientWidth > 0) return position()
+    // Not laid out yet (e.g. on a page still hidden): position it once it is.
+    const observer = new ResizeObserver(() => {
+      if (bar.clientWidth === 0) return
+      observer.disconnect()
+      position()
+    })
+    observer.observe(bar)
+    return () => observer.disconnect()
+  }, [scrollable, compact, selected])
 
   const orders = [...new Set(days.flatMap((day) => (day.coveredBy === null ? [] : [day.coveredBy])))]
   const fit: CSSProperties = scrollable ? {} : { gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }
@@ -74,14 +137,14 @@ export function DateBar({ days, selected, onChoose, label, scrollable = true, co
       role={onChoose ? 'radiogroup' : 'list'}
       aria-label={label}
     >
-      {days.map(({ date, coveredBy, selectable, tag }, index) => {
+      {days.map(({ date, coveredBy, coverAhead = false, selectable, past = false, tag, marks = [] }, index) => {
         const isSelected = date === selected
         const cover: CSSProperties & { '--cover'?: string } =
           coveredBy === null ? {} : { '--cover': orderColor(coveredBy) }
         const className = [
           styles.day,
           isSelected && styles.selected,
-          !selectable && styles.unavailable,
+          (!selectable || past) && styles.unavailable,
           compact && tag === 'today' && styles.today,
         ]
           .filter(Boolean)
@@ -90,6 +153,7 @@ export function DateBar({ days, selected, onChoose, label, scrollable = true, co
           formatDate(date, 'long'),
           tag && TAG_TEXT[tag],
           coveredBy !== null && `meals from Order ${coveredBy}`,
+          ...(compact ? marks.map(markText) : []),
           onChoose && !selectable && 'not available',
         ]
           .filter(Boolean)
@@ -106,9 +170,15 @@ export function DateBar({ days, selected, onChoose, label, scrollable = true, co
                 : day.toLocaleDateString(undefined, { weekday: 'narrow' })}
             </small>
             <b>{day.getDate()}</b>
+            <span className={styles.marks} aria-hidden="true">
+              {marks.map((mark, markIndex) => (
+                <DayMarkIcon key={markIndex} mark={mark} />
+              ))}
+            </span>
             <i
               className={[
                 styles.cover,
+                coverAhead && styles.ahead,
                 joined(days[index - 1]) && styles.joinStart,
                 joined(days[index + 1]) && styles.joinEnd,
               ]
@@ -161,7 +231,20 @@ export function DateBar({ days, selected, onChoose, label, scrollable = true, co
     </div>
   )
 
-  if (compact) return <div className={styles.box}>{bar}</div>
+  if (compact) {
+    return (
+      <div className={styles.box}>
+        {bar}
+        {caption && (
+          <p className={styles.caption} aria-live="polite">
+            {caption.order !== null && <i className={styles.dot} style={{ background: orderColor(caption.order) }} />}
+            <b>{caption.day}</b>
+            <span className={styles.captionText}>{caption.text}</span>
+          </p>
+        )}
+      </div>
+    )
+  }
   return (
     <>
       {bar}
@@ -177,4 +260,16 @@ export function DateBar({ days, selected, onChoose, label, scrollable = true, co
       )}
     </>
   )
+}
+
+function DayMarkIcon({ mark }: { mark: DayMark }) {
+  if (mark.kind === 'delivery') {
+    return (
+      <span className={styles.truck} style={mark.placed ? { color: orderColor(mark.order) } : undefined}>
+        <Icon name="truck" />
+      </span>
+    )
+  }
+  if (mark.kind === 'decide') return <span className={`${styles.decide} ${mark.late ? styles.late : ''}`} />
+  return <span className={styles.decided} />
 }

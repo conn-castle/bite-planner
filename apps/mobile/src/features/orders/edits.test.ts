@@ -9,6 +9,7 @@ const order: GroceryOrder = {
   created_by: { user_id: 'sam', name: 'Sam' },
   created_at: '2026-09-25T12:00:00Z',
   target_date: '2026-09-29',
+  decide_by_date: '2026-09-28',
   earliest_delivery_date: '2026-09-26',
   delivery_date: '2026-09-29',
   next_delivery_date: '2026-10-02',

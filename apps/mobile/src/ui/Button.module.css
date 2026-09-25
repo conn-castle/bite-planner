@@ -1,4 +1,4 @@
-/* spec/mockup.html: .btn, .btn.block, .sh-foot .btn, .sh-top .x, .round-btn */
+/* spec/mockup.html: .btn (.acc, .dng, .soft, .white), .btn.block, .sh-foot .btn, .sh-top .x, .round-btn */
 
 .button,
 .icon {
@@ -72,6 +72,11 @@
   color: var(--cc-on-ink);
 }
 
+.danger {
+  background: var(--cc-danger);
+  color: var(--cc-on-ink);
+}
+
 .secondary {
   background: var(--cc-fill);
   color: var(--cc-ink);
@@ -79,6 +84,12 @@
 
 .secondary:active:not(:disabled) {
   background: var(--cc-fill-strong);
+}
+
+.button.white {
+  background: var(--cc-bg);
+  color: var(--cc-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .plain {
@@ -92,7 +103,7 @@
   border-radius: 50%;
 }
 
-.fill {
+.icon.fill {
   width: 32px;
   height: 32px;
   background: var(--cc-fill);
@@ -100,11 +111,11 @@
   font-size: 16px;
 }
 
-.fill svg {
+.icon.fill svg {
   stroke-width: 2.6;
 }
 
-.white {
+.icon.white {
   width: 38px;
   height: 38px;
   background: var(--cc-bg);

@@ -1,0 +1,145 @@
+/* spec/mockup.html: .track, .tn, .ring */
+
+.track {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  padding: 16px 4px 2px;
+}
+
+.dated {
+  padding-bottom: 4px;
+}
+
+.line {
+  position: absolute;
+  top: 24px;
+  left: 10%;
+  right: 10%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--cc-fill-strong);
+}
+
+.line i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: var(--c);
+}
+
+.node {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.knob {
+  position: relative;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--cc-bg);
+  border: 2px solid var(--cc-fill-strong);
+  color: var(--cc-on-ink);
+  font-size: 11px;
+}
+
+.knob svg {
+  stroke-width: 3.2;
+}
+
+.done .knob {
+  background: var(--c);
+  border-color: var(--c);
+}
+
+.current .knob {
+  background: var(--c);
+  border-color: var(--c);
+  box-shadow:
+    0 0 0 5px var(--soft),
+    0 0 0 6px var(--c);
+}
+
+.pulsing .knob::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  border: 2px solid var(--c);
+  animation: ping 1.6s var(--cc-ease) infinite;
+}
+
+@keyframes ping {
+  from {
+    opacity: 1;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+.label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--cc-ink-3);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.done .label {
+  color: var(--cc-ink-2);
+}
+
+.current .label {
+  font-weight: 700;
+  color: var(--cc-ink);
+}
+
+.ring {
+  width: 23px;
+  height: 23px;
+  margin: -2px;
+}
+
+.ringTrack {
+  fill: var(--cc-bg);
+  stroke: var(--cc-fill-strong);
+  stroke-width: 3;
+}
+
+.ringFill {
+  fill: none;
+  stroke: var(--c);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.date {
+  margin-top: -3px;
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--cc-ink-2);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.date small {
+  display: block;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--cc-ink-3);
+}

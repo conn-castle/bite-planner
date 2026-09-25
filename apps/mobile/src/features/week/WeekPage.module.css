@@ -1,8 +1,17 @@
 /* spec/mockup.html: .stack (the order cards under the day strip) */
 .stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   padding-top: 14px;
 }
 
 .notice {
-  margin-top: 14px;
+  margin-bottom: 14px;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }

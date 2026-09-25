@@ -58,3 +58,44 @@
 .navBody {
   padding: 4px var(--cc-page-x) calc(var(--ion-safe-area-bottom, 0px) + 32px);
 }
+
+/* A page pushed in a tab (.navbar): Back and its label at the edge. */
+.barToolbar {
+  --padding-start: 0;
+  --padding-end: 12px;
+}
+
+.back {
+  appearance: none;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 44px;
+  padding: 0 12px 0 8px;
+  background: none;
+  font: inherit;
+  font-size: 17px;
+  color: var(--cc-ink);
+  cursor: pointer;
+}
+
+.back svg {
+  font-size: 24px;
+  stroke-width: 2.4;
+}
+
+.back:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: -2px;
+}
+
+/* Clears the tab bar. */
+.tabBody {
+  padding: 8px var(--cc-card-x) var(--cc-tab-bar-clearance);
+}
+
+/* A nav page's content (e.g. a recipe) pushed in a tab: clears the tab bar. */
+.navBody.clearTabBar {
+  padding-bottom: var(--cc-tab-bar-clearance);
+}

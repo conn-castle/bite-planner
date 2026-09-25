@@ -27,3 +27,8 @@
   opacity: 0.45;
   cursor: default;
 }
+
+/* The ideas or picks, as pictures (.stack-thumbs.lg). */
+.meals {
+  margin: 2px 0 14px;
+}

@@ -11,7 +11,7 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 - [x] The earliest selectable delivery date comes from a function (later: the grocery service's soonest slot); for now it returns tomorrow.
 - [x] The next delivery date defaults to the delivery date plus one day per meal; the user can change it.
 - [x] The next delivery date becomes the target date of the household's next order.
-- [ ] Each order's decide-by date is its target date minus the household's decide-by offset.
+- [x] Each order's decide-by date is its target date minus the household's decide-by offset.
 - [x] Delivery dates that overlap or leave a gap with the previous order are allowed.
 - [x] Orders cannot be edited once placed.
 
@@ -58,7 +58,7 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 
 ## Calendar and tasks
 
-- [ ] The app shows delivery dates, decide-by dates, and the days each order covers, from past orders to 90 days ahead.
+- [x] The app shows delivery dates, decide-by dates, and the days each order covers, from past orders to 90 days ahead.
 - [ ] The app tells the user which tasks are due, such as picking meals and placing the next order.
 
 ## Notifications

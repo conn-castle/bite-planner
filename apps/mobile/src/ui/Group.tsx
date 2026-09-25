@@ -1,14 +1,27 @@
 import type { ReactNode } from 'react'
 import styles from './Group.module.css'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
+
+interface GroupProps {
+  title?: string
+  /** A note under the card, after an icon if given. */
+  footer?: ReactNode
+  footerIcon?: IconName
+  children: ReactNode
+}
 
 /** A titled card of related rows. */
-export function Group({ title, footer, children }: { title?: string; footer?: ReactNode; children: ReactNode }) {
+export function Group({ title, footer, footerIcon, children }: GroupProps) {
   return (
     <section>
       {title && <h2 className={styles.title}>{title}</h2>}
       <div className={styles.card}>{children}</div>
-      {footer && <p className={styles.footer}>{footer}</p>}
+      {footer && (
+        <p className={styles.footer}>
+          {footerIcon && <Icon name={footerIcon} />}
+          <span>{footer}</span>
+        </p>
+      )}
     </section>
   )
 }

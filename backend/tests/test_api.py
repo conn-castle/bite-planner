@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -159,6 +159,22 @@ def get_order(client: TestClient, order_id: str, user: UUID = MOM) -> dict[str, 
     return ok(client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(user)))
 
 
+def next_order(client: TestClient, user: UUID = MOM) -> dict[str, Any]:
+    return ok(client.get("/v1/grocery-orders/next", headers=as_user(user)))
+
+
+def placed_orders(
+    client: TestClient, covering_from: date, user: UUID = MOM
+) -> list[dict[str, Any]]:
+    return ok(
+        client.get(
+            "/v1/grocery-orders",
+            params={"covering_from": covering_from.isoformat()},
+            headers=as_user(user),
+        )
+    )
+
+
 def request_batch(
     client: TestClient, order_id: str, user: UUID = MOM, job_id: UUID | None = None
 ) -> Response:
@@ -286,7 +302,7 @@ def test_requests_without_a_valid_token_are_rejected(
 
 def test_sign_in_outage_is_reported_as_unavailable(client: TestClient) -> None:
     response = client.get(
-        "/v1/grocery-orders/draft", headers={"Authorization": "Bearer outage", "Time-Zone": ZONE}
+        "/v1/grocery-orders/next", headers={"Authorization": "Bearer outage", "Time-Zone": ZONE}
     )
 
     detail(response, 503)
@@ -335,7 +351,8 @@ def test_each_request_is_logged_without_ids(
 
 
 MEMBER_ENDPOINTS = [
-    ("get", "/v1/grocery-orders/draft", None),
+    ("get", "/v1/grocery-orders/next", None),
+    ("get", "/v1/grocery-orders?covering_from=2026-09-01", None),
     ("post", "/v1/grocery-orders", None),
     ("get", "/v1/grocery-orders/{order}", None),
     ("delete", "/v1/grocery-orders/{order}", None),
@@ -376,10 +393,15 @@ def test_non_members_can_do_nothing_else(
 # The draft.
 
 
-def test_a_household_starts_without_a_draft(client: TestClient) -> None:
-    response = client.get("/v1/grocery-orders/draft", headers=as_user(MOM))
-
-    assert (response.status_code, response.json()) == (200, None)
+def test_a_household_starts_with_its_first_order_not_yet_started(client: TestClient) -> None:
+    assert next_order(client) == {
+        "number": 1,
+        "target_date": None,
+        "decide_by_date": None,
+        "earliest_delivery_date": tomorrow().isoformat(),
+        "draft": None,
+    }
+    assert placed_orders(client, date(2000, 1, 1)) == []
 
 
 def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) -> None:
@@ -393,6 +415,7 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "created_by": {"user_id": str(MOM), "name": "Mom"},
         "created_at": None,
         "target_date": None,
+        "decide_by_date": None,
         "earliest_delivery_date": tomorrow().isoformat(),
         "delivery_date": None,
         "next_delivery_date": None,
@@ -402,7 +425,7 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
     # Reopening it, or another member opening the flow, resumes the same draft.
     assert ok(client.post("/v1/grocery-orders", headers=as_user(MOM))) == draft
     assert ok(client.post("/v1/grocery-orders", headers=as_user(DAD))) == draft
-    assert ok(client.get("/v1/grocery-orders/draft", headers=as_user(DAD))) == draft
+    assert next_order(client, DAD)["draft"] == draft
     assert get_order(client, draft["id"], DAD) == draft
 
 
@@ -428,12 +451,14 @@ def test_an_unknown_order_is_not_found(client: TestClient) -> None:
 def test_households_see_and_change_only_their_own_orders(
     client: TestClient, dispatcher: RecordingDispatcher
 ) -> None:
+    placed_order(client, tomorrow(), tomorrow() + timedelta(days=3), DAD)
     order_id, [meal_id, _] = with_suggestions(client, MOM)
     ok(pick(client, order_id, meal_id))
     moms = get_order(client, order_id)
     as_neighbor = as_user(NEIGHBOR)
 
-    assert ok(client.get("/v1/grocery-orders/draft", headers=as_neighbor)) is None
+    assert next_order(client, NEIGHBOR)["draft"] is None
+    assert placed_orders(client, date(2000, 1, 1), NEIGHBOR) == []
     detail(client.get(f"/v1/grocery-orders/{order_id}", headers=as_neighbor), 404)
     detail(request_batch(client, order_id, NEIGHBOR), 404)
     detail(pick(client, order_id, meal_id, NEIGHBOR), 404)
@@ -448,7 +473,7 @@ def test_households_see_and_change_only_their_own_orders(
     assert discard.status_code == gone.status_code
 
     assert get_order(client, order_id) == moms
-    assert len(dispatcher.dispatched) == 1
+    assert len(dispatcher.dispatched) == 2  # the placed order's batch, and this draft's
     # The neighbor's household gets its own draft: its first order.
     neighbors = open_draft(client, NEIGHBOR)
     assert (neighbors["id"] != order_id, neighbors["number"]) == (True, 1)
@@ -470,7 +495,7 @@ def test_writes_to_a_discarded_draft_do_not_reach_the_new_one(client: TestClient
 # The Time-Zone header.
 
 NEEDS_TODAY = [
-    ("get", "/v1/grocery-orders/draft", None),
+    ("get", "/v1/grocery-orders/next", None),
     ("post", "/v1/grocery-orders", None),
     ("get", "/v1/grocery-orders/{order}", None),
     ("put", "/v1/grocery-orders/{order}/meals/{meal}", None),
@@ -880,7 +905,9 @@ def test_a_member_places_the_draft(client: TestClient, grocer: list[UUID]) -> No
     delivery = tomorrow()
     ok(put_dates(client, order_id, delivery, delivery + timedelta(days=2)))
 
+    before = datetime.now(UTC)
     placed = ok(place(client, order_id, DAD))
+    after = datetime.now(UTC)
 
     assert get_order(client, order_id) == placed
     assert (placed["status"], placed["meal_ids"]) == ("placed", [meal_id])
@@ -889,8 +916,12 @@ def test_a_member_places_the_draft(client: TestClient, grocer: list[UUID]) -> No
         (delivery + timedelta(days=2)).isoformat(),
     )
     assert grocer == [UUID(order_id)]
+    # Mom started it; Dad placed it, just now.
+    [listed] = placed_orders(client, delivery)
+    assert (listed["id"], listed["placed_by"]) == (order_id, {"user_id": str(DAD), "name": "Dad"})
+    assert before <= datetime.fromisoformat(listed["placed_at"]) <= after
     # The household has no draft until someone opens the flow again.
-    assert ok(client.get("/v1/grocery-orders/draft", headers=as_user(MOM))) is None
+    assert next_order(client)["draft"] is None
 
 
 def test_placing_a_placed_order_again_returns_it_unchanged(
@@ -898,10 +929,14 @@ def test_placing_a_placed_order_again_returns_it_unchanged(
 ) -> None:
     placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
 
-    retry = ok(place(client, placed["id"]))
+    [listed] = placed_orders(client, tomorrow())
+
+    retry = ok(place(client, placed["id"], DAD))
 
     assert retry == placed
     assert grocer == [UUID(placed["id"])]  # sent to the grocery service once
+    # Still placed by Mom, at the same time.
+    assert placed_orders(client, tomorrow()) == [listed]
 
 
 def test_a_running_batch_does_not_block_placing(client: TestClient) -> None:
@@ -946,7 +981,7 @@ def test_discarding_the_draft_deletes_it_and_its_batches_but_keeps_their_meals(
 
     assert (discarded.status_code, discarded.content) == (204, b"")
     detail(client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(MOM)), 404)
-    assert ok(client.get("/v1/grocery-orders/draft", headers=as_user(MOM))) is None
+    assert next_order(client)["draft"] is None
     assert jobs_in_database(session) == []
     kept = session.exec(select(Meal).where(col(Meal.id).in_([UUID(tacos), UUID(soup)]))).all()
     assert sorted((meal.name, meal.job_id) for meal in kept) == [("Soup", None), ("Tacos", None)]
@@ -980,6 +1015,76 @@ def test_order_numbers_and_target_dates_follow_the_households_orders(client: Tes
     # Another household's orders are numbered on their own.
     neighbors = open_draft(client, NEIGHBOR)
     assert (neighbors["number"], neighbors["target_date"]) == (1, None)
+
+
+def test_the_next_order_is_decided_by_its_target_less_the_households_offset(
+    client: TestClient, session: Session
+) -> None:
+    first = placed_order(client, tomorrow(), tomorrow() + timedelta(days=4))
+    target = date.fromisoformat(first["next_delivery_date"])
+
+    # Before anyone starts it.
+    assert next_order(client, DAD) == {
+        "number": 2,
+        "target_date": target.isoformat(),
+        "decide_by_date": (target - timedelta(days=1)).isoformat(),
+        "earliest_delivery_date": tomorrow().isoformat(),
+        "draft": None,
+    }
+
+    # Once started, its draft agrees.
+    draft = open_draft(client)
+    shown = next_order(client, DAD)
+    assert shown["draft"] == draft
+    assert (shown["number"], shown["target_date"], shown["decide_by_date"]) == (
+        draft["number"],
+        draft["target_date"],
+        draft["decide_by_date"],
+    )
+
+    # A household that decides three days ahead.
+    session.execute(
+        text("UPDATE household SET decide_by_offset_days = 3 WHERE id = :id"), {"id": CASTLE}
+    )
+    session.commit()
+    decide_by = (target - timedelta(days=3)).isoformat()
+    assert next_order(client)["decide_by_date"] == decide_by
+    assert get_order(client, draft["id"])["decide_by_date"] == decide_by
+    # The first order had nothing before it to decide by.
+    assert get_order(client, first["id"])["decide_by_date"] is None
+
+
+def test_placed_orders_are_listed_from_the_day_they_cover(client: TestClient) -> None:
+    start = tomorrow()
+    first = placed_order(client, start, start + timedelta(days=3))
+    second = placed_order(client, start + timedelta(days=3), start + timedelta(days=5), DAD)
+    open_draft(client)  # the next order: a draft, not listed
+    placed_order(client, start, start + timedelta(days=2), NEIGHBOR)  # another household's
+
+    listed = placed_orders(client, start)
+
+    assert [order["id"] for order in listed] == [first["id"], second["id"]]
+    [meal_id] = second["meal_ids"]
+    [meal] = [m for m in second["jobs"][0]["meals"] if m["id"] == meal_id]
+    assert listed[1] | {"placed_at": None} == {
+        "id": second["id"],
+        "number": 2,
+        "placed_at": None,
+        "placed_by": {"user_id": str(DAD), "name": "Dad"},
+        "delivery_date": second["delivery_date"],
+        "next_delivery_date": second["next_delivery_date"],
+        "meals": [meal],
+    }
+    # An order covers up to the day before its next delivery.
+    last_of_first = start + timedelta(days=2)
+    assert [order["id"] for order in placed_orders(client, last_of_first)] == [
+        first["id"],
+        second["id"],
+    ]
+    assert [order["id"] for order in placed_orders(client, last_of_first + timedelta(days=1))] == [
+        second["id"]
+    ]
+    assert placed_orders(client, start + timedelta(days=5)) == []
 
 
 # Recipes.
@@ -1037,6 +1142,8 @@ INVALID_REQUESTS = {
         {"delivery_date": "2026-13-01", "next_delivery_date": None},
     ),
     "a date missing": ("put", "/v1/grocery-orders/{order}/dates", {"delivery_date": None}),
+    "no covering_from": ("get", "/v1/grocery-orders", None),
+    "covering_from not a date": ("get", "/v1/grocery-orders?covering_from=soon", None),
     "too many log entries": (
         "post",
         "/v1/logs",

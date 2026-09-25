@@ -56,6 +56,8 @@ export interface GroceryOrder {
   created_at: ISODateTime
   /** The previous order's next delivery date; null for the first order. */
   target_date: ISODate | null
+  /** The target date less the household's decide-by offset. */
+  decide_by_date: ISODate | null
   earliest_delivery_date: ISODate
   delivery_date: ISODate | null
   next_delivery_date: ISODate | null
@@ -63,6 +65,31 @@ export interface GroceryOrder {
   jobs: Job[]
   /** The picks. */
   meal_ids: string[]
+}
+
+/** A placed order (`GET /v1/grocery-orders`): it can't change, so it has no suggestions, and its dates are set. */
+export interface PlacedOrder {
+  id: string
+  number: number
+  placed_at: ISODateTime
+  placed_by: Member
+  delivery_date: ISODate
+  /** Its meals cover the days up to the one before this. */
+  next_delivery_date: ISODate
+  /** The picked meals, in the order they were suggested. */
+  meals: MealSummary[]
+}
+
+/** The household's next order (`GET /v1/grocery-orders/next`), whether or not anyone has started it. */
+export interface NextOrder {
+  /** The number it has, or will have once started. */
+  number: number
+  /** The last placed order's next delivery date; null before the first order. */
+  target_date: ISODate | null
+  decide_by_date: ISODate | null
+  earliest_delivery_date: ISODate
+  /** Its draft, once someone has started one. */
+  draft: GroceryOrder | null
 }
 
 /** Body of `PUT /v1/grocery-orders/{id}/dates`: both dates, every time. */

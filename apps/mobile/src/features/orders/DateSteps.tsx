@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { GroceryOrder, ISODate } from '../../lib/api/types'
-import { formatDate, localDate, toLocalDate } from '../../lib/dates'
+import { addDays, dateRange, formatDate, localDate, toLocalDate } from '../../lib/dates'
 import { haptics } from '../../lib/haptics'
 import { useNow } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
@@ -8,9 +8,7 @@ import { DateBar } from '../../ui/DateBar'
 import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import {
-  addDays,
   coveredDays,
-  dateRange,
   datesForDelivery,
   defaultNextDeliveryDate,
   deliveryBar,

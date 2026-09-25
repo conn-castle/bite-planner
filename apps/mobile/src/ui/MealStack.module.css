@@ -1,0 +1,41 @@
+/* spec/mockup.html: .stack-thumbs */
+
+.stack {
+  display: flex;
+  align-items: center;
+}
+
+.meal {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-left: -12px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--cc-fill);
+  box-shadow: 0 0 0 3px var(--cc-bg);
+}
+
+.meal:first-child {
+  margin-left: 0;
+}
+
+.large .meal {
+  width: 46px;
+  height: 46px;
+}
+
+.meal svg {
+  width: 80%;
+  height: 80%;
+}
+
+.more {
+  margin-left: 10px;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--deep, var(--cc-ink-2));
+  white-space: nowrap;
+}

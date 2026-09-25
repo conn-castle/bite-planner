@@ -16,11 +16,11 @@ const MAX_SERVINGS = 24
 const pickedServings = new Map<string, number>()
 
 /** A full recipe, pushed onto a nav: facts, servings, ingredients scaled to them, and the steps. */
-export function MealPage({ mealId }: { mealId: string }) {
+export function MealPage({ mealId, tab }: { mealId: string; tab?: { href: string } }) {
   const meal = useQuery(mealQuery(mealId))
 
   return (
-    <NavPage title={meal.data?.name ?? 'Recipe'}>
+    <NavPage title={meal.data?.name ?? 'Recipe'} tab={tab}>
       {meal.isError && (
         <Notice action={<button onClick={() => void meal.refetch()}>Try again</button>}>
           Couldn't load this recipe: {meal.error.message}

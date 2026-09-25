@@ -1,54 +1,100 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { Icon, type IconName } from './Icon'
 import styles from './OrderCard.module.css'
-import { orderColor } from './orderColor'
+import { orderColors } from './orderColor'
 
-type OrderColors = CSSProperties & { '--c': string; '--soft': string; '--deep': string }
+/**
+ * How an order's card looks: placed (white, its color behind the head); or,
+ * for the next order, not due yet (dashed), ideas being made (white), ready to
+ * act on (accent), due today or tomorrow (accent, raised), or overdue (red).
+ */
+export type OrderCardLook = 'placed' | 'draft' | 'working' | 'ready' | 'soon' | 'late'
 
 interface OrderCardProps {
   number: number
-  /**
-   * A draft not started (dashed), a draft whose ideas are being made (white),
-   * or a draft ready to act on (accent).
-   */
-  look: 'draft' | 'working' | 'ready'
+  look: OrderCardLook
   chip: ReactNode
   title: ReactNode
   subtitle: ReactNode
-  /** The card's body, under its head: lines, then its actions. */
-  children: ReactNode
+  /** Beside the title, e.g. the days left to decide. */
+  aside?: ReactNode
+  /** Makes the head a button, e.g. to open the order. */
+  onOpen?: () => void
+  /** Under the head: a track, bodies, dividers, a fold of meals. */
+  children?: ReactNode
+  /** In a page of its own, e.g. the order's view, rather than in the list on Home. */
+  className?: string
 }
 
-/** An order as a card on the home screen, in its order's color. */
-export function OrderCard({ number, look, chip, title, subtitle, children }: OrderCardProps) {
-  const colors: OrderColors = {
-    '--c': orderColor(number),
-    '--soft': orderColor(number, 'soft'),
-    '--deep': orderColor(number, 'deep'),
-  }
+/** An order as a card, in its order's color. */
+export function OrderCard({ number, look, chip, title, subtitle, aside, onOpen, children, className }: OrderCardProps) {
+  const head = (
+    <>
+      <span className={styles.over}>
+        <span className={styles.order}>
+          <i className={styles.mark} aria-hidden="true" />
+          Order {number}
+        </span>
+        {chip}
+      </span>
+      <span className={styles.titleRow}>
+        <span className={styles.title} role="heading" aria-level={2}>
+          {title}
+        </span>
+        {aside}
+      </span>
+      <span className={styles.subtitle}>{subtitle}</span>
+    </>
+  )
   return (
-    // A working draft is the plain card.
-    <article className={look === 'working' ? styles.card : `${styles.card} ${styles[look]}`} style={colors}>
-      <div className={styles.head}>
-        <div className={styles.over}>
-          <span className={styles.order}>
-            <i className={styles.mark} aria-hidden="true" />
-            Order {number}
-          </span>
-          {chip}
-        </div>
-        <h2 className={styles.title}>{title}</h2>
-        <p className={styles.subtitle}>{subtitle}</p>
-      </div>
-      <div className={styles.body}>{children}</div>
+    <article
+      className={[styles.card, styles[look], className].filter(Boolean).join(' ')}
+      style={orderColors(number)}
+    >
+      {onOpen ? (
+        <button type="button" className={`${styles.head} ${styles.pressable}`} onClick={onOpen}>
+          {head}
+        </button>
+      ) : (
+        <div className={styles.head}>{head}</div>
+      )}
+      {children}
     </article>
   )
 }
 
-/** A line of detail on an order card, after an icon. */
-export function OrderCardLine({ icon, children }: { icon: IconName; children: ReactNode }) {
+/** A section of a card's content, padded like its head. */
+export function OrderCardBody({ children }: { children: ReactNode }) {
+  return <div className={styles.body}>{children}</div>
+}
+
+/** A hairline between a card's sections. */
+export function OrderCardDivider() {
+  return <div className={styles.divider} />
+}
+
+/** A line of detail on an order card, after an icon; red for a warning. */
+export function OrderCardLine({
+  icon,
+  tone = 'default',
+  children,
+}: {
+  icon: IconName
+  tone?: 'default' | 'danger'
+  children: ReactNode
+}) {
   return (
-    <p className={styles.line}>
+    <p className={`${styles.line} ${tone === 'danger' ? styles.danger : ''}`}>
+      <Icon name={icon} />
+      <span>{children}</span>
+    </p>
+  )
+}
+
+/** A note on a placed order's card, after an icon: e.g. when its groceries arrive. */
+export function OrderCardNote({ icon, children }: { icon: IconName; children: ReactNode }) {
+  return (
+    <p className={styles.note}>
       <Icon name={icon} />
       <span>{children}</span>
     </p>

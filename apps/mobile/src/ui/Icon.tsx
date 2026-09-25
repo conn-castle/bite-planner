@@ -25,6 +25,29 @@ const PATHS = {
   plus: <path d="M12 5v14M5 12h14" />,
   chevL: <path d="M15 5l-7 7 7 7" />,
   chevR: <path d="M9 5l7 7-7 7" />,
+  chevD: <path d="M5 9l7 7 7-7" />,
+  truck: (
+    <>
+      <path d="M2.5 6.5h11v9.5h-11zM13.5 9.5h4l3 3.5v3h-7" />
+      <circle cx="6.5" cy="17" r="1.8" />
+      <circle cx="16.8" cy="17" r="1.8" />
+    </>
+  ),
+  bag: <path d="M5 8h14l-1 12H6L5 8zM9 8V6.5a3 3 0 016 0V8" />,
+  bell: <path d="M6 16v-5a6 6 0 0112 0v5l1.5 2h-15L6 16zM10 20.5a2 2 0 004 0" />,
+  alert: <path d="M12 3.5l9.5 16.5h-19zM12 10v4.5M12 17.5v.01" />,
+  cal: (
+    <>
+      <rect x="3.5" y="5" width="17" height="15.5" rx="3" />
+      <path d="M3.5 10h17M8 3v4M16 3v4" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="5" y="10.5" width="14" height="10" rx="2.5" />
+      <path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5" />
+    </>
+  ),
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   spark: (
     <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z" />

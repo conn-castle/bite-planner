@@ -14,8 +14,10 @@ from castle_chef.models import (
     GroceryOrder,
     GroceryOrderMeal,
     GroceryOrderStatus,
+    Household,
     Job,
     Meal,
+    utc_now,
 )
 
 log = logging.getLogger(__name__)
@@ -196,10 +198,12 @@ def set_dates(
     session.commit()
 
 
-def place(session: Session, household_id: UUID, order_id: UUID, today: date) -> GroceryOrder:
-    """Place a draft: check it, send it to the grocery service, and mark it placed.
-    Placing an order that's already placed returns it unchanged, so a retry after
-    a lost response is safe."""
+def place(
+    session: Session, household_id: UUID, order_id: UUID, user_id: UUID, today: date
+) -> GroceryOrder:
+    """Place a draft: check it, send it to the grocery service, and mark it placed
+    by the user, now. Placing an order that's already placed returns it unchanged
+    (who placed it and when included), so a retry after a lost response is safe."""
     order = lock_order(session, household_id, order_id)
     if order is None:
         session.rollback()
@@ -213,6 +217,8 @@ def place(session: Session, household_id: UUID, order_id: UUID, today: date) -> 
         raise NotReady(missing)
     place_with_grocer(order)
     order.status = GroceryOrderStatus.PLACED
+    order.placed_at = utc_now()
+    order.placed_by = user_id
     session.add(order)
     session.commit()
     session.refresh(order)
@@ -237,14 +243,34 @@ def _not_ready(session: Session, order: GroceryOrder, today: date) -> str | None
 # Computed, not stored.
 
 
-def picks(session: Session, order_id: UUID) -> list[UUID]:
+def picked_meals(session: Session, order_id: UUID) -> list[Meal]:
     """The order's picked meals, in the order they were suggested."""
     return list(
         session.exec(
-            select(Meal.id)
+            select(Meal)
             .join(GroceryOrderMeal, col(GroceryOrderMeal.meal_id) == Meal.id)
             .where(GroceryOrderMeal.grocery_order_id == order_id)
             .order_by(col(Meal.created_at), col(Meal.id))
+        ).all()
+    )
+
+
+def picks(session: Session, order_id: UUID) -> list[UUID]:
+    """The ids of the order's picked meals, in the order they were suggested."""
+    return [meal.id for meal in picked_meals(session, order_id)]
+
+
+def placed_orders(session: Session, household_id: UUID, covering_from: date) -> list[GroceryOrder]:
+    """The household's placed orders that cover `covering_from` or a later day, oldest first."""
+    return list(
+        session.exec(
+            select(GroceryOrder)
+            .where(
+                GroceryOrder.household_id == household_id,
+                GroceryOrder.status == GroceryOrderStatus.PLACED,
+                col(GroceryOrder.next_delivery_date) > covering_from,
+            )
+            .order_by(col(GroceryOrder.created_at), col(GroceryOrder.id))
         ).all()
     )
 
@@ -299,3 +325,38 @@ def target_date(session: Session, order: GroceryOrder) -> date | None:
         .order_by(col(GroceryOrder.created_at).desc(), col(GroceryOrder.id).desc())
         .limit(1)
     ).first()
+
+
+def next_number(session: Session, household_id: UUID) -> int:
+    """The number of the household's next order: its draft's, or the one it gets when started."""
+    placed = session.exec(
+        select(func.count())
+        .select_from(GroceryOrder)
+        .where(
+            GroceryOrder.household_id == household_id,
+            GroceryOrder.status == GroceryOrderStatus.PLACED,
+        )
+    ).one()
+    return placed + 1
+
+
+def next_target_date(session: Session, household_id: UUID) -> date | None:
+    """The target date of the household's next order: its last placed order's next
+    delivery date; None before its first order."""
+    return session.exec(
+        select(GroceryOrder.next_delivery_date)
+        .where(
+            GroceryOrder.household_id == household_id,
+            GroceryOrder.status == GroceryOrderStatus.PLACED,
+        )
+        .order_by(col(GroceryOrder.created_at).desc(), col(GroceryOrder.id).desc())
+        .limit(1)
+    ).first()
+
+
+def decide_by_date(session: Session, household_id: UUID, target: date | None) -> date | None:
+    """The day to decide an order by: its target date less the household's offset."""
+    if target is None:
+        return None
+    household = session.get_one(Household, household_id)
+    return target - timedelta(days=household.decide_by_offset_days)

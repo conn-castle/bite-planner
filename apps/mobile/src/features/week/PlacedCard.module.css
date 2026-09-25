@@ -1,0 +1,92 @@
+/* spec/mockup.html: placedCard: the track under the head, .act, .mfold, .pass .rows */
+
+.track {
+  padding: 0 14px 14px;
+}
+
+/* The next step, as the top card says it (.act). */
+.act {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.overline {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cc-ink-3);
+}
+
+.lead {
+  margin-top: 1px;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.more {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--cc-ink-2);
+}
+
+.view {
+  margin-top: 14px;
+}
+
+/* The meals: folded to their pictures, or open as rows (.mfold). */
+.fold {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 18px 14px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fold:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: -2px;
+}
+
+.foldLabel {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cc-ink-2);
+}
+
+.chevron {
+  flex: none;
+  font-size: 16px;
+  color: var(--cc-ink-3);
+  transition: transform 250ms var(--cc-ease);
+}
+
+.open {
+  padding-bottom: 4px;
+}
+
+.open .foldLabel {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--cc-ink-3);
+}
+
+.open .chevron {
+  transform: rotate(180deg);
+}
+
+.rows {
+  padding-bottom: 6px;
+}

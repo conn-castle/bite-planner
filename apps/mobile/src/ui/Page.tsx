@@ -8,8 +8,9 @@ import {
   IonTitle,
   IonToolbar,
   type RefresherEventDetail,
+  useIonRouter,
 } from '@ionic/react'
-import { type ReactNode, type RefObject, useState } from 'react'
+import { type MouseEvent, type ReactNode, type RefObject, useState } from 'react'
 import { IconButton } from './Button'
 import { Icon } from './Icon'
 import styles from './Page.module.css'
@@ -62,39 +63,62 @@ export function Page({ title, overline, actions, onRefresh, pageRef, children }:
 }
 
 interface NavPageProps {
-  /** Shown in the toolbar once the page's own heading scrolls away. */
+  /** Shown in the toolbar once the page's own heading scrolls away (always, with a back label). */
   title: string
+  /**
+   * Pushed in a tab rather than a nav: its content clears the tab bar, and
+   * Back goes to `href` (e.g. Orders at /week) when there's no page to go
+   * back to (it was opened directly). With a `backLabel`, it has the
+   * navigation bar of the mockup's pushed pages (spec/mockup.html: .navbar):
+   * that label on Back, and the title always shown. Otherwise, and in a nav,
+   * a round Back button (.hero-btns).
+   */
+  tab?: { href: string; backLabel?: string }
   children: ReactNode
 }
 
 /**
- * A screen pushed onto an `IonNav` (e.g. a recipe inside the create-order
- * card), with a Back button that pops it. The nav makes the page element and
- * shows it; an `IonPage` here would instead register with the tab bar's
- * router outlet, which then decides whether the page is visible.
+ * A screen pushed on top of another, with a Back button: onto an `IonNav`
+ * (e.g. a recipe inside the create-order card), whose Back pops it; or onto a
+ * tab's route (e.g. an order opened from Orders), whose Back goes back in the
+ * router. The nav makes its page's element; a route's page wraps this in an
+ * `IonPage`, which registers with the tab's router outlet. (An `IonPage` in a
+ * nav would register with the outlet too, which then hides it.)
  */
-export function NavPage({ title, children }: NavPageProps) {
+export function NavPage({ title, tab, children }: NavPageProps) {
+  const bar = tab?.backLabel
   // Once content scrolls under the toolbar, the toolbar shows its glass and title.
   const [scrolled, setScrolled] = useState(false)
+  const router = useIonRouter()
+
+  function back(event: MouseEvent<HTMLElement>) {
+    const nav = event.currentTarget.closest('ion-nav')
+    if (nav) void nav.pop()
+    else if (router.canGoBack()) router.goBack()
+    else router.push(tab?.href ?? '/', 'back')
+  }
 
   return (
     <>
-      <IonHeader translucent className={scrolled ? 'cc-scrolled' : undefined}>
-        <IonToolbar className={styles.navToolbar}>
+      <IonHeader translucent className={bar ? 'cc-bar' : scrolled ? 'cc-scrolled' : undefined}>
+        <IonToolbar className={bar ? styles.barToolbar : styles.navToolbar}>
           <IonButtons slot="start">
-            <IconButton
-              variant="fill"
-              aria-label="Back"
-              onClick={(event) => void event.currentTarget.closest('ion-nav')?.pop()}
-            >
-              <Icon name="chevL" />
-            </IconButton>
+            {bar ? (
+              <button type="button" className={`${styles.back} cc-hit`} onClick={back}>
+                <Icon name="chevL" />
+                <span>{bar}</span>
+              </button>
+            ) : (
+              <IconButton variant="fill" aria-label="Back" onClick={back}>
+                <Icon name="chevL" />
+              </IconButton>
+            )}
           </IonButtons>
-          <IonTitle className="cc-reveal">{title}</IonTitle>
+          <IonTitle className={bar ? undefined : 'cc-reveal'}>{title}</IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent fullscreen scrollEvents onIonScroll={(event) => setScrolled(event.detail.scrollTop > 8)}>
-        <div className={styles.navBody}>{children}</div>
+        <div className={bar ? styles.tabBody : `${styles.navBody} ${tab ? styles.clearTabBar : ''}`}>{children}</div>
       </IonContent>
     </>
   )

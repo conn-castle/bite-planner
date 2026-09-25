@@ -181,9 +181,14 @@
   padding: 8px 6px 6px;
 }
 
+.compact.scroll {
+  scroll-snap-type: x proximity;
+}
+
 .compact.scroll .day {
   flex: none;
   width: 44px;
+  scroll-snap-align: start;
 }
 
 .compact .day {
@@ -256,4 +261,80 @@
   margin-right: 0;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+}
+
+/* Not delivered yet: a dashed bar. */
+.compact .ahead {
+  background: repeating-linear-gradient(90deg, var(--cover) 0 5px, transparent 5px 8px);
+}
+
+/* What happens on the day (.dc .ic): a truck on delivery days, a ring on the decide-by day. */
+.marks {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+
+.truck {
+  display: flex;
+  color: var(--cc-ink-3);
+  font-size: 11px;
+}
+
+.truck svg {
+  stroke-width: 2.4;
+}
+
+.decide {
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--cc-accent);
+}
+
+.decide.late {
+  border-color: var(--cc-danger);
+  background: var(--cc-danger);
+}
+
+.decided {
+  box-sizing: border-box;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--cc-ink-3);
+}
+
+/* The line under the strip (.strip-cap). */
+.caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  margin: 0;
+  padding: 9px 14px 10px;
+  border-top: 0.5px solid var(--cc-hairline);
+  font-size: 13px;
+  color: var(--cc-ink-2);
+}
+
+.caption b {
+  font-weight: 650;
+  color: var(--cc-ink);
+  white-space: nowrap;
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.captionText {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

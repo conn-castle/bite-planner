@@ -144,6 +144,10 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
             name="grocery_order_placed_has_dates",
         ),
         CheckConstraint(
+            "(status = 'placed') = (placed_at IS NOT NULL AND placed_by IS NOT NULL)",
+            name="grocery_order_placed_when_and_by",
+        ),
+        CheckConstraint(
             "next_delivery_date > delivery_date", name="grocery_order_next_after_delivery"
         ),
     )
@@ -158,6 +162,10 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
     )
     delivery_date: date | None = None
     next_delivery_date: date | None = None
+    # When it was placed, and the Neon Auth user who placed it (anyone in the
+    # household can finish a draft). Both null while it's a draft.
+    placed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    placed_by: UUID | None = None
 
 
 class GroceryOrderMeal(SQLModel, table=True):
@@ -175,9 +183,15 @@ class Household(TimestampMixin, SQLModel, table=True):
     """A group of people who share orders and meals. Each household sees only its own."""
 
     __tablename__ = "household"
+    __table_args__ = (
+        # The earliest delivery is tomorrow, so the decision comes at least a day before.
+        CheckConstraint("decide_by_offset_days >= 1", name="household_decide_by_offset_min"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
+    # Days before an order's target date that the household decides by.
+    decide_by_offset_days: int = Field(default=1, sa_column_kwargs={"server_default": "1"})
 
 
 class HouseholdMember(SQLModel, table=True):

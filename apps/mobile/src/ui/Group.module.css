@@ -1,4 +1,4 @@
-/* spec/mockup.html: .gh, .group, .row, .group .list-row, .foot-note */
+/* spec/mockup.html: .gh, .group, .row, .list-row, .group .list-row, .foot-note */
 
 .title {
   margin: 0;
@@ -16,10 +16,19 @@
 }
 
 .footer {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   margin: 0;
   padding: 8px 4px 0;
   font-size: 13px;
   color: var(--cc-ink-3);
+}
+
+.footer svg {
+  flex: none;
+  margin-top: 2px;
+  font-size: 14px;
 }
 
 .row,
@@ -47,8 +56,9 @@
   border-top: 0.5px solid var(--cc-hairline);
 }
 
+/* On a card (.list-row); a group's are inset less (.group .list-row). */
 .listRow {
-  padding: 11px 14px;
+  padding: 10px 18px;
 }
 
 .listRow + .listRow::before {
@@ -56,8 +66,16 @@
   position: absolute;
   top: 0;
   right: 0;
-  left: 66px;
+  left: 70px;
   border-top: 0.5px solid var(--cc-hairline);
+}
+
+.card .listRow {
+  padding: 11px 14px;
+}
+
+.card .listRow + .listRow::before {
+  left: 66px;
 }
 
 .pressable {

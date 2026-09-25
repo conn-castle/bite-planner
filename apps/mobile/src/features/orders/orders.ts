@@ -9,26 +9,44 @@ import {
 } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api/client'
 import { ApiError, isRetryable } from '../../lib/api/errors'
-import type { GroceryOrder, Job } from '../../lib/api/types'
+import type { GroceryOrder, ISODate, Job, NextOrder, PlacedOrder } from '../../lib/api/types'
 import { logger } from '../../lib/log'
 import { hasRunningBatch } from './batches'
 import { applyEdits, isOrderEdit, type SetDates, type SetMeal } from './edits'
 
-/** Grocery orders: the household's draft, and everything the create-order flow changes on it. */
+/**
+ * Grocery orders: the household's next order and its draft, everything the
+ * create-order flow changes on it, and the placed orders.
+ */
 
 // How often an open order is checked while a batch of suggestions is being made.
 const POLL_MS = 3_000
 
-export const draftQuery = queryOptions({
-  queryKey: ['draft-order'],
-  queryFn: () => apiRequest<GroceryOrder | null>('GET', '/v1/grocery-orders/draft'),
+export const nextQuery = queryOptions({
+  queryKey: ['next-order'],
+  queryFn: () => apiRequest<NextOrder>('GET', '/v1/grocery-orders/next'),
 })
+
+const PLACED_KEY = ['placed-orders']
+
+/** The household's placed orders whose meals cover `coveringFrom` or a later day, oldest first. */
+export const placedQuery = (coveringFrom: ISODate) =>
+  queryOptions({
+    queryKey: [...PLACED_KEY, coveringFrom],
+    queryFn: () =>
+      apiRequest<PlacedOrder[]>('GET', `/v1/grocery-orders?covering_from=${encodeURIComponent(coveringFrom)}`),
+  })
 
 const orderKey = (orderId: string) => ['grocery-order', orderId]
 
-/** The household's draft, or null. */
-export function useDraft() {
-  return useQuery(draftQuery)
+/** The household's next order, with its draft once someone has started one. */
+export function useNextOrder() {
+  return useQuery(nextQuery)
+}
+
+/** The household's placed orders whose meals cover `coveringFrom` or a later day. */
+export function usePlacedOrders(coveringFrom: ISODate) {
+  return useQuery(placedQuery(coveringFrom))
 }
 
 /**
@@ -57,7 +75,7 @@ export function useEditsPending(): boolean {
 }
 
 /**
- * Stops fetches of an order (and the draft) that are already on their way:
+ * Stops fetches of an order (and the next order) that are already on their way:
  * they started before a change, so their answer is older than its result.
  * Cancelling reverts to the data from before the fetch, so it comes before
  * the result is stored.
@@ -65,15 +83,24 @@ export function useEditsPending(): boolean {
 async function cancelFetches(queryClient: QueryClient, orderId: string) {
   await Promise.all([
     queryClient.cancelQueries({ queryKey: orderKey(orderId) }),
-    queryClient.cancelQueries({ queryKey: draftQuery.queryKey }),
+    queryClient.cancelQueries({ queryKey: nextQuery.queryKey }),
   ])
 }
 
-/** Keeps both views of an order current: the order itself, and the draft (null once it is placed). */
+/**
+ * Keeps both views of a draft current: the order itself, and the next order,
+ * which is the draft (its number and dates are the draft's own).
+ */
 async function storeOrder(queryClient: QueryClient, order: GroceryOrder) {
   await cancelFetches(queryClient, order.id)
   queryClient.setQueryData<GroceryOrder>(orderKey(order.id), order)
-  queryClient.setQueryData(draftQuery.queryKey, order.status === 'draft' ? order : null)
+  queryClient.setQueryData<NextOrder>(nextQuery.queryKey, {
+    number: order.number,
+    target_date: order.target_date,
+    decide_by_date: order.decide_by_date,
+    earliest_delivery_date: order.earliest_delivery_date,
+    draft: order,
+  })
 }
 
 const OPEN = ['orders', 'open']
@@ -179,7 +206,15 @@ export function registerOrderMutations(queryClient: QueryClient) {
     scope: EDITS,
     onSuccess: async (order: GroceryOrder) => {
       logger.info('orders.placed', { orderId: order.id, number: order.number, meals: order.meal_ids.length })
-      await storeOrder(queryClient, order)
+      await cancelFetches(queryClient, order.id)
+      queryClient.setQueryData<GroceryOrder>(orderKey(order.id), order)
+      // It's now a placed order, and the next order is the one after it. The
+      // cached next order was this draft, so it's dropped (not kept until the
+      // refetch) and fetched again.
+      await Promise.all([
+        queryClient.resetQueries({ queryKey: nextQuery.queryKey }),
+        queryClient.invalidateQueries({ queryKey: PLACED_KEY }),
+      ])
     },
     // Refused (e.g. the delivery date is no longer available): show the order as it is now.
     onError: (_error: Error, { orderId }: OrderAction) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
@@ -192,10 +227,14 @@ export function registerOrderMutations(queryClient: QueryClient) {
       logger.info('orders.discarded', { orderId })
       await cancelFetches(queryClient, orderId)
       queryClient.removeQueries({ queryKey: orderKey(orderId) })
-      queryClient.setQueryData(draftQuery.queryKey, null)
+      queryClient.setQueryData<NextOrder>(nextQuery.queryKey, (next) => next && { ...next, draft: null })
     },
     // A 409 means someone placed it meanwhile.
-    onError: () => queryClient.invalidateQueries({ queryKey: draftQuery.queryKey }),
+    onError: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: nextQuery.queryKey }),
+        queryClient.invalidateQueries({ queryKey: PLACED_KEY }),
+      ]),
   })
 }
 

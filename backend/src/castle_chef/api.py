@@ -95,6 +95,8 @@ class GroceryOrderOut(BaseModel):
     created_at: datetime
     # The previous order's next delivery date; none for the first order.
     target_date: date | None
+    # The target date less the household's decide-by offset.
+    decide_by_date: date | None
     earliest_delivery_date: date
     delivery_date: date | None
     next_delivery_date: date | None
@@ -102,6 +104,32 @@ class GroceryOrderOut(BaseModel):
     jobs: list[JobOut]
     # The picks.
     meal_ids: list[UUID]
+
+
+class PlacedOrderOut(BaseModel):
+    """A placed order. It can't change, so it has no suggestions, and its dates are set."""
+
+    id: UUID
+    number: int
+    placed_at: datetime
+    placed_by: MemberOut
+    delivery_date: date
+    next_delivery_date: date
+    # The picked meals, in the order they were suggested.
+    meals: list[MealSummaryOut]
+
+
+class NextOrderOut(BaseModel):
+    """The household's next order, whether or not anyone has started its draft."""
+
+    # "Order 4": the number it has, or will have once started.
+    number: int
+    # The last placed order's next delivery date; none before the first order.
+    target_date: date | None
+    decide_by_date: date | None
+    earliest_delivery_date: date
+    # Its draft, once someone has started one.
+    draft: GroceryOrderOut | None
 
 
 class IngredientOut(BaseModel):
@@ -201,6 +229,8 @@ def today(time_zone: Annotated[str | None, Header(alias="Time-Zone")] = None) ->
 
 def names(session: Session, user_ids: set[UUID]) -> dict[UUID, str | None]:
     """Neon Auth display names, by user id."""
+    if not user_ids:
+        return {}  # an empty IN list doesn't compare with uuid in Postgres
     rows = session.execute(
         text('SELECT id, name FROM neon_auth."user" WHERE id IN :ids').bindparams(
             bindparam("ids", expanding=True)
@@ -233,18 +263,43 @@ def order_out(session: Session, order: GroceryOrder, today: date) -> GroceryOrde
     meals = orders.job_meals(session, [job.id for job in jobs])
     people = names(session, {order.created_by, *(job.requested_by for job in jobs)})
 
+    target = orders.target_date(session, order)
     return GroceryOrderOut(
         id=order.id,
         number=orders.number(session, order),
         status=order.status,
         created_by=MemberOut(user_id=order.created_by, name=people[order.created_by]),
         created_at=order.created_at,
-        target_date=orders.target_date(session, order),
+        target_date=target,
+        decide_by_date=orders.decide_by_date(session, order.household_id, target),
         earliest_delivery_date=orders.earliest_delivery_date(today),
         delivery_date=order.delivery_date,
         next_delivery_date=order.next_delivery_date,
         jobs=[job_out(job, meals[job.id], people) for job in jobs],
         meal_ids=orders.picks(session, order.id),
+    )
+
+
+def placed_order_out(
+    session: Session, order: GroceryOrder, people: dict[UUID, str | None]
+) -> PlacedOrderOut:
+    """A placed order as the app sees it."""
+    placed_at, placed_by = order.placed_at, order.placed_by
+    delivery, next_delivery = order.delivery_date, order.next_delivery_date
+    # Set when it's placed; the table's checks guarantee it.
+    if placed_at is None or placed_by is None or delivery is None or next_delivery is None:
+        raise RuntimeError(f"Placed order {order.id} is missing its placement details or dates.")
+    return PlacedOrderOut(
+        id=order.id,
+        number=orders.number(session, order),
+        placed_at=placed_at,
+        placed_by=MemberOut(user_id=placed_by, name=people[placed_by]),
+        delivery_date=delivery,
+        next_delivery_date=next_delivery,
+        meals=[
+            MealSummaryOut.model_validate(meal, from_attributes=True)
+            for meal in orders.picked_meals(session, order.id)
+        ],
     )
 
 
@@ -398,15 +453,33 @@ def create_app() -> FastAPI:
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
 
-    @api.get("/v1/grocery-orders/draft")
-    def get_draft(
+    @api.get("/v1/grocery-orders")
+    def list_placed(
+        covering_from: date,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> list[PlacedOrderOut]:
+        """The household's placed orders that cover `covering_from` or a later day, oldest first."""
+        placed = orders.placed_orders(session, caller.household_id, covering_from)
+        people = names(session, {order.placed_by for order in placed if order.placed_by})
+        return [placed_order_out(session, order, people) for order in placed]
+
+    @api.get("/v1/grocery-orders/next")
+    def get_next(
         caller: Annotated[Member, Depends(member)],
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
-    ) -> GroceryOrderOut | None:
-        """The household's draft, if it has one."""
+    ) -> NextOrderOut:
+        """The household's next order, and its draft if someone has started one."""
         draft = orders.get_draft(session, caller.household_id)
-        return order_out(session, draft, day) if draft else None
+        target = orders.next_target_date(session, caller.household_id)
+        return NextOrderOut(
+            number=orders.next_number(session, caller.household_id),
+            target_date=target,
+            decide_by_date=orders.decide_by_date(session, caller.household_id, target),
+            earliest_delivery_date=orders.earliest_delivery_date(day),
+            draft=order_out(session, draft, day) if draft else None,
+        )
 
     @api.post("/v1/grocery-orders", status_code=status.HTTP_201_CREATED)
     def open_draft(
@@ -510,7 +583,8 @@ def create_app() -> FastAPI:
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
-        return order_out(session, orders.place(session, caller.household_id, order_id, day), day)
+        placed = orders.place(session, caller.household_id, order_id, caller.user_id, day)
+        return order_out(session, placed, day)
 
     @api.get("/v1/meals/{meal_id}")
     def get_meal(

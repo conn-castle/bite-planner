@@ -20,7 +20,7 @@ The mockup predates two requirements: it has no meal ratings (thumbs up, thumbs 
 One piece at a time, each through the UI with real data:
 
 1. Create-order flow (done).
-2. Home (Orders): placed orders as cards, the days they cover in the day strip, and the next order with its target and decide-by dates. Adds the household's decide-by offset (default 1 day); its screen comes with Settings.
+2. Home (Orders): placed orders as cards, the days they cover in the day strip, and the next order with its target and decide-by dates. Adds the household's decide-by offset (default 1 day); its screen comes with Settings. (done)
 3. History and ratings: past orders and all meals with search and filters; thumbs up, thumbs down, and favorite; the prompt to rate last week's meals; and "don't show meals like this" while picking (a household meal preference, like ratings).
 4. Settings: household (decide-by offset, reminder lead) and personal (notification time).
 5. Notifications: the daily reminders and "ideas ready". Needs an APNs key from the Apple Developer site.

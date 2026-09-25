@@ -1,40 +1,12 @@
 import type { GroceryOrder, ISODate, OrderDates } from '../../lib/api/types'
+import { addDays, dateRange, daysBetween } from '../../lib/dates'
 import type { BarDay } from '../../ui/DateBar'
 
-/**
- * An order's dates. Delivery dates are calendar days ("2026-09-28") with no
- * time of day, so the arithmetic here is on whole days in UTC, where every
- * day is 24 hours; a phone's time zone never shifts them.
- */
+/** An order's dates: calendar days ("2026-09-28"), with the arithmetic in lib/dates.ts. */
 
-const DAY_MS = 24 * 60 * 60 * 1000
 // Delivery days offered past the default, so there is a choice either way.
 const DELIVERY_CHOICES = 14
 const NEXT_DELIVERY_CHOICES_PAST_DEFAULT = 7
-
-function toUtcMs(date: ISODate): number {
-  const [year, month, day] = date.split('-').map(Number)
-  return Date.UTC(year, month - 1, day)
-}
-
-function fromUtcMs(ms: number): ISODate {
-  return new Date(ms).toISOString().slice(0, 10)
-}
-
-export function addDays(date: ISODate, days: number): ISODate {
-  return fromUtcMs(toUtcMs(date) + days * DAY_MS)
-}
-
-/** Whole days from `from` to `to` (negative when `to` is earlier). */
-export function daysBetween(from: ISODate, to: ISODate): number {
-  return Math.round((toUtcMs(to) - toUtcMs(from)) / DAY_MS)
-}
-
-/** Every day from `first` through `last`, inclusive. */
-export function dateRange(first: ISODate, last: ISODate): ISODate[] {
-  const count = daysBetween(first, last) + 1
-  return Array.from({ length: Math.max(0, count) }, (_, index) => addDays(first, index))
-}
 
 type DeliveryLimits = Pick<GroceryOrder, 'target_date' | 'earliest_delivery_date'>
 
@@ -85,8 +57,6 @@ export function coveredDays(delivery: ISODate, next: ISODate): ISODate[] {
 export function deliveryGap(target: ISODate | null, delivery: ISODate): number | null {
   return target === null ? null : daysBetween(target, delivery)
 }
-
-/** The phone's calendar day at `now`: "today" where the user is. */
 
 function latest(first: ISODate, ...others: (ISODate | null)[]): ISODate {
   return others.reduce<ISODate>((last, date) => (date !== null && date > last ? date : last), first)
