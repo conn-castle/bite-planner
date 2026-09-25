@@ -92,6 +92,7 @@ api = [
     { name = "boto3" },
     { name = "fastapi" },
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "tzdata" },
     { name = "uvicorn" },
 ]
 dev = [
@@ -114,6 +115,7 @@ api = [
     { name = "boto3", specifier = ">=1.43.101" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.0" },
+    { name = "tzdata", specifier = ">=2026.4" },
     { name = "uvicorn", specifier = ">=0.53.0" },
 ]
 dev = [

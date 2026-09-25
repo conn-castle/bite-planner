@@ -1,0 +1,121 @@
+/* The date steps (spec/mockup.html: .lab, .rec). The day chips are DateBar's. */
+
+.label {
+  display: flex;
+  justify-content: space-between;
+  margin: 24px 0 10px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--cc-ink-3);
+}
+
+.label span {
+  color: var(--cc-ink-2);
+}
+
+/* The chosen date, under the date bar. */
+.choice {
+  margin-top: 20px;
+  padding: 18px;
+  border-radius: 22px;
+  background: var(--cc-bg);
+  outline: 1.5px solid var(--cc-hairline);
+  outline-offset: -1.5px;
+}
+
+.recommended {
+  background: var(--cc-accent-soft);
+  outline-color: var(--cc-accent);
+}
+
+.choiceLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cc-accent);
+}
+
+.choiceDate {
+  margin-top: 6px;
+  font-family: var(--cc-font-display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* What the delivery date means; two lines' room whatever it says, so nothing moves. */
+.why {
+  margin: 4px 0 0;
+  min-height: calc(2 * 1.4em);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--cc-ink-2);
+}
+
+/* What the next delivery date means: the same rows whichever day is chosen. */
+.facts {
+  margin: 12px 0 0;
+  padding: 10px 0 0;
+  border-top: 0.5px solid var(--cc-hairline);
+  display: grid;
+  row-gap: 4px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.facts div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.facts dt {
+  color: var(--cc-ink-2);
+}
+
+.facts dd {
+  margin: 0;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.fit {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--cc-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fit::before {
+  content: '';
+  display: inline-block;
+  margin-right: 7px;
+  vertical-align: 1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cc-success);
+}
+
+.short::before {
+  background: var(--cc-accent);
+}
+
+.extra::before {
+  background: var(--cc-ink-3);
+}
+
+.notice {
+  margin-top: 14px;
+}

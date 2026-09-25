@@ -5,6 +5,7 @@ import threading
 import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
 from uuid import uuid4
 
 import jwt
@@ -18,7 +19,7 @@ SIGNING_KEY = Ed25519PrivateKey.generate()
 KID = "test-key"
 
 
-def jwks_for(private_key: Ed25519PrivateKey, kid: str) -> dict:
+def jwks_for(private_key: Ed25519PrivateKey, kid: str) -> dict[str, Any]:
     jwk = json.loads(OKPAlgorithm.to_jwk(private_key.public_key()))
     return {"keys": [jwk | {"kid": kid, "alg": "EdDSA", "use": "sig"}]}
 
@@ -51,7 +52,9 @@ def origin(auth_url: str) -> str:
     return auth_url.removesuffix("/neondb/auth")
 
 
-def token(auth_url: str, key=SIGNING_KEY, kid: str = KID, **claims) -> str:
+def token(
+    auth_url: str, key: Ed25519PrivateKey = SIGNING_KEY, kid: str = KID, **claims: object
+) -> str:
     now = int(time.time())
     payload = {
         "sub": str(uuid4()),
@@ -81,7 +84,7 @@ def test_valid_token_identifies_the_user(auth_url: str) -> None:
     ],
     ids=["expired", "wrong-issuer", "wrong-audience", "bad-subject"],
 )
-def test_token_with_bad_claims_is_rejected(auth_url: str, claims: dict) -> None:
+def test_token_with_bad_claims_is_rejected(auth_url: str, claims: dict[str, object]) -> None:
     with pytest.raises(AuthError):
         NeonAuthVerifier(auth_url).verify(token(auth_url, **claims))
 

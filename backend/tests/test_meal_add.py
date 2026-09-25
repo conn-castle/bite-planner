@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from castle_chef.cli import app
 
@@ -25,7 +25,7 @@ MEAL_JSON = {
 }
 
 
-def add(job_dir: Path, meal: dict) -> object:
+def add(job_dir: Path, meal: dict[str, object]) -> Result:
     return runner.invoke(
         app, ["meal", "add"], input=json.dumps(meal), env={"CASTLE_CHEF_JOB_DIR": str(job_dir)}
     )

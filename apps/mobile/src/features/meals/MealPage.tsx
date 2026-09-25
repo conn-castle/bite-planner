@@ -1,14 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
 import type { Meal } from '../../lib/api/types'
 import { Notice } from '../../ui/Notice'
-import { Page } from '../../ui/Page'
+import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { Stepper } from '../../ui/Stepper'
 import { formatMinutes } from './facts'
 import styles from './MealPage.module.css'
-import { jobMealsQuery } from './meals'
+import { mealQuery } from './meals'
 import { formatQuantity, formatUnit, scaleIngredient } from './servings'
 
 const MAX_SERVINGS = 24
@@ -16,20 +15,18 @@ const MAX_SERVINGS = 24
 // Servings picked per meal, kept while the app is open so going back and forth doesn't reset them.
 const pickedServings = new Map<string, number>()
 
-/** A full recipe: facts, servings, ingredients scaled to them, and the method. */
-export function MealPage() {
-  const { jobId = '', mealId = '' } = useParams()
-  const meals = useQuery(jobMealsQuery(jobId))
-  const meal = meals.data?.find((candidate) => candidate.id === mealId)
+/** A full recipe, pushed onto a nav: facts, servings, ingredients scaled to them, and the method. */
+export function MealPage({ mealId }: { mealId: string }) {
+  const meal = useQuery(mealQuery(mealId))
 
   return (
-    <Page title={meal?.name ?? 'Recipe'} backHref={`/history/${jobId}`}>
-      {meals.isError && (
-        <Notice action={<button onClick={() => void meals.refetch()}>Try again</button>}>
-          Couldn't load this recipe: {meals.error.message}
+    <NavPage title={meal.data?.name ?? 'Recipe'}>
+      {meal.isError && (
+        <Notice action={<button onClick={() => void meal.refetch()}>Try again</button>}>
+          Couldn't load this recipe: {meal.error.message}
         </Notice>
       )}
-      {meals.isPending && !meals.isError && (
+      {meal.isPending && !meal.isError && (
         <div className={styles.loading}>
           <Skeleton height={44} width="80%" radius={10} />
           <Skeleton height={20} width="95%" radius={8} />
@@ -37,9 +34,8 @@ export function MealPage() {
           <Skeleton height={220} />
         </div>
       )}
-      {meals.isSuccess && !meal && <p className={styles.text}>This recipe isn't in that request.</p>}
-      {meal && <Recipe meal={meal} />}
-    </Page>
+      {meal.data && <Recipe meal={meal.data} />}
+    </NavPage>
   )
 }
 
@@ -49,7 +45,7 @@ function Recipe({ meal }: { meal: Meal }) {
     pickedServings.set(meal.id, value)
     setServingsState(value)
   }
-  const ingredients = [...meal.meal_ingredient].sort((a, b) => a.position - b.position)
+  const ingredients = meal.ingredients
   const facts = [
     meal.active_time_minutes != null && { label: 'Active', value: formatMinutes(meal.active_time_minutes) },
     meal.total_time_minutes != null && { label: 'Total', value: formatMinutes(meal.total_time_minutes) },
@@ -84,13 +80,14 @@ function Recipe({ meal }: { meal: Meal }) {
 
       <h2 className={styles.heading}>Ingredients</h2>
       <ul className={styles.ingredients}>
-        {ingredients.map((ingredient) => {
+        {ingredients.map((ingredient, index) => {
           const quantity =
             ingredient.quantity != null
               ? scaleIngredient(ingredient.quantity, ingredient.unit, meal.servings, servings)
               : null
           return (
-            <li key={ingredient.id} className={styles.ingredient}>
+            // Ingredients have no id; their order is fixed.
+            <li key={index} className={styles.ingredient}>
               <span className={styles.amount}>
                 {quantity != null && formatQuantity(quantity)}
                 {ingredient.unit && ` ${formatUnit(ingredient.unit, quantity ?? 1)}`}

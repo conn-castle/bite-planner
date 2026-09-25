@@ -13,10 +13,10 @@ import typer
 from pydantic import ValidationError
 from sqlmodel import Session
 
-from castle_chef import household, jobs, worker
+from castle_chef import household, worker
 from castle_chef import log as logging_config
 from castle_chef.db import get_session
-from castle_chef.dispatch import JOB_ID_ENV, get_dispatcher
+from castle_chef.dispatch import JOB_ID_ENV
 from castle_chef.meals import MealInput, save_meal
 from castle_chef.settings import get_settings
 
@@ -78,20 +78,6 @@ def meal_add(
     typer.echo(json.dumps({"saved": path.name, "meal": meal_input.name}))
 
 
-@job_app.command("create")
-def job_create(
-    count: Annotated[int, typer.Option(min=1, max=14)], household_name: HouseholdOption
-) -> None:
-    """Create a household's meal generation job and start it (SQS or a local
-    worker, per CASTLE_CHEF_JOB_DISPATCH). Prints the job id."""
-    params = jobs.GenerateMealsParams(count=count).model_dump()
-    with household_session() as session:
-        household_id = household.get(session, household_name).id
-        job = jobs.create_job(session, jobs.GENERATE_MEALS, params, household_id)
-    get_dispatcher().dispatch(job.id)
-    typer.echo(json.dumps({"job_id": str(job.id)}))
-
-
 @job_app.command("run")
 def job_run(
     job_id: Annotated[
@@ -105,10 +91,6 @@ def job_run(
         log.error("schema.behind", extra={"error": str(error)})
         typer.echo(str(error), err=True)
         raise typer.Exit(worker.SCHEMA_BEHIND_EXIT_CODE) from error
-    except LookupError as error:
-        log.error("job.not_found", extra={"job_id": str(job_id)})
-        typer.echo(str(error), err=True)
-        raise typer.Exit(1) from error
 
 
 @app.command("agent-login")
@@ -128,7 +110,7 @@ def household_create(name: str) -> None:
 
 @household_app.command("list")
 def household_list() -> None:
-    """List households: name, member count, job count."""
+    """List households: name, member count, order count."""
     with household_session() as session:
         for name, member_count, job_count in household.households(session):
             typer.echo(f"{name}\t{member_count}\t{job_count}")

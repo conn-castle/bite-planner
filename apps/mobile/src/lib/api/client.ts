@@ -9,8 +9,18 @@ function baseUrl(): string {
   return url.replace(/\/+$/, '')
 }
 
+// The phone's IANA time zone (e.g. `America/New_York`), sent with every request:
+// the API uses it wherever it needs "today" (e.g. the earliest delivery date).
+function timeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone
+}
+
 /** Sends a request with a fresh token; on 401 (e.g. an expired token), retries once. */
-export async function apiRequest<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+export async function apiRequest<T>(
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     const token = await auth.getToken()
     if (!token) throw new ApiError(401, 'Sign in first.')
@@ -18,6 +28,7 @@ export async function apiRequest<T>(method: 'GET' | 'POST', path: string, body?:
       method,
       headers: {
         Authorization: `Bearer ${token}`,
+        'Time-Zone': timeZone(),
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),

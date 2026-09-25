@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { daysOfWeek, formatWeekRange, isSameDay } from './week'
+import { daysOfWeek, formatWeekRange, weekBar } from './week'
 
 describe('daysOfWeek', () => {
   it('runs Sunday to Saturday around the given day', () => {
@@ -26,13 +26,6 @@ describe('daysOfWeek', () => {
   })
 })
 
-describe('isSameDay', () => {
-  it('ignores the time of day', () => {
-    expect(isSameDay(new Date(2026, 8, 24, 0, 1), new Date(2026, 8, 24, 23, 59))).toBe(true)
-    expect(isSameDay(new Date(2026, 8, 24), new Date(2026, 8, 25))).toBe(false)
-  })
-})
-
 describe('formatWeekRange', () => {
   it('names the month once within a month', () => {
     expect(formatWeekRange(daysOfWeek(new Date(2026, 8, 24)), 'en-US')).toBe('Sep 20 – 26')
@@ -40,5 +33,20 @@ describe('formatWeekRange', () => {
 
   it('names both months across months', () => {
     expect(formatWeekRange(daysOfWeek(new Date(2026, 8, 30)), 'en-US')).toBe('Sep 27 – Oct 3')
+  })
+})
+
+describe('weekBar', () => {
+  it('tags today and greys out the days already past', () => {
+    const days = weekBar(new Date(2026, 8, 24, 18, 30)) // Thursday, Sep 24
+    expect(days.map(({ date, selectable, tag }) => [date, selectable, tag])).toEqual([
+      ['2026-09-20', false, null],
+      ['2026-09-21', false, null],
+      ['2026-09-22', false, null],
+      ['2026-09-23', false, null],
+      ['2026-09-24', true, 'today'],
+      ['2026-09-25', true, null],
+      ['2026-09-26', true, null],
+    ])
   })
 })

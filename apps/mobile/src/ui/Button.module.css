@@ -60,6 +60,11 @@
   color: var(--cc-on-ink);
 }
 
+.accent {
+  background: var(--cc-accent);
+  color: var(--cc-on-ink);
+}
+
 .secondary {
   background: var(--cc-fill);
   color: var(--cc-ink);

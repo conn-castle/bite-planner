@@ -5,18 +5,15 @@ import re
 import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from uuid import UUID
+from typing import Any
 
 import pytest
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlmodel import Session, select
 from typer.testing import CliRunner
 
 from castle_chef.cli import app
 from castle_chef.db import get_engine
-from castle_chef.jobs import GENERATE_MEALS, create_job
 from castle_chef.models import Job, JobStatus
 from tests.conftest import BACKEND_DIR
 from tests.test_worker import use_fake_agent
@@ -31,7 +28,7 @@ def git(*args: str) -> str:
     ).stdout.strip()
 
 
-def log_events(logs_dir: Path) -> list[dict]:
+def log_events(logs_dir: Path) -> list[dict[str, Any]]:
     """The worker's own events (not those of libraries such as Alembic)."""
     entries = [
         json.loads(line) for line in (logs_dir / "castle-chef.jsonl").read_text().splitlines()
@@ -45,12 +42,17 @@ def job_status(session: Session, job: Job) -> JobStatus:
 
 
 @pytest.fixture
-def database_revision() -> Iterator[Callable[[str], None]]:
-    """Set the database's recorded migration revision; restored afterwards."""
+def database_revision() -> Iterator[Callable[[str | None], None]]:
+    """Set the database's recorded migration revision (None: no migration has
+    run); restored afterwards."""
 
-    def set_revision(revision: str) -> None:
+    def set_revision(revision: str | None) -> None:
         with get_engine().begin() as connection:
-            connection.execute(text("UPDATE alembic_version SET version_num = :r"), {"r": revision})
+            connection.execute(text("DELETE FROM alembic_version"))
+            if revision is not None:
+                connection.execute(
+                    text("INSERT INTO alembic_version (version_num) VALUES (:r)"), {"r": revision}
+                )
 
     with get_engine().connect() as connection:
         original = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
@@ -59,13 +61,10 @@ def database_revision() -> Iterator[Callable[[str], None]]:
 
 
 def test_worker_refuses_to_run_when_the_database_is_behind(
-    session: Session, household_id: UUID, database_revision: Callable[[str], None], tmp_path: Path
+    session: Session, job: Job, database_revision: Callable[[str | None], None], tmp_path: Path
 ) -> None:
-    # The revision before the newest migration: this code expects a migration that has not run.
-    script = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini"))
-    [head] = script.get_heads()
-    database_revision(script.get_revision(head).down_revision)
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
+    # No migration recorded: this code expects migrations that have not run.
+    database_revision(None)
 
     result = runner.invoke(app, ["job", "run", "--job-id", str(job.id)])
 
@@ -77,15 +76,14 @@ def test_worker_refuses_to_run_when_the_database_is_behind(
 
 def test_worker_runs_when_the_database_is_newer_than_the_code(
     session: Session,
-    household_id: UUID,
-    database_revision: Callable[[str], None],
+    job: Job,
+    database_revision: Callable[[str | None], None],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     # A revision this code does not know: an older release is running.
     database_revision("f00dfeedf00d")
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     result = runner.invoke(app, ["job", "run", "--job-id", str(job.id)])
 
@@ -98,10 +96,9 @@ def test_worker_runs_when_the_database_is_newer_than_the_code(
 
 
 def test_worker_logs_the_checkout_it_runs(
-    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     runner.invoke(app, ["job", "run", "--job-id", str(job.id)])
 
@@ -118,13 +115,12 @@ def test_worker_logs_the_checkout_it_runs(
 
 
 def test_worker_in_an_image_logs_the_release_it_was_built_from(
-    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Images have no git checkout; the build sets these.
     monkeypatch.setenv("CASTLE_CHEF_RELEASE", "r42")
     monkeypatch.setenv("CASTLE_CHEF_COMMIT", "abc123")
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     runner.invoke(app, ["job", "run", "--job-id", str(job.id)])
 

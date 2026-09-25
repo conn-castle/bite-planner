@@ -1,5 +1,10 @@
 // Shapes returned by the Castle Chef API (backend/src/castle_chef/api.py).
 
+/** A calendar date with no time of day or time zone: "2026-09-27". */
+export type ISODate = string
+/** A UTC timestamp: "2026-09-24T20:41:00Z". */
+export type ISODateTime = string
+
 export interface Household {
   id: string
   name: string
@@ -14,43 +19,68 @@ export interface Me {
   household: Household | null
 }
 
-export type JobStatus = 'pending' | 'running' | 'succeeded' | 'failed'
-
-/** A meal request: the agent generating `params.count` meals. */
-export interface Job {
-  id: string
-  kind: string
-  params: { count: number }
-  status: JobStatus
-  error: string | null
-  created_at: string
-  finished_at: string | null
-  /** The meals it produced, in order (empty until it succeeds). */
-  meals: MealSummary[]
+export interface Member {
+  user_id: string
+  name: string | null
 }
 
+export type JobStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+
+/** A suggestion card: a meal without its recipe. */
 export interface MealSummary {
   id: string
   name: string
+  description: string | null
+  active_time_minutes: number | null
+  total_time_minutes: number | null
+}
+
+/** One batch of suggestions: the agent generating 20 meals for an order. */
+export interface Job {
+  id: string
+  kind: 'generate_meals'
+  status: JobStatus
+  error: string | null
+  requested_by: Member
+  created_at: ISODateTime
+  /** Empty until it succeeds; in a fixed order. */
+  meals: MealSummary[]
+}
+
+export interface GroceryOrder {
+  id: string
+  /** "Order 3" */
+  number: number
+  status: 'draft' | 'placed'
+  created_by: Member
+  created_at: ISODateTime
+  /** The previous order's next delivery date; null for the first order. */
+  target_date: ISODate | null
+  earliest_delivery_date: ISODate
+  delivery_date: ISODate | null
+  next_delivery_date: ISODate | null
+  /** Its batches of suggestions, oldest first; the suggestions are their meals. */
+  jobs: Job[]
+  /** The picks. */
+  meal_ids: string[]
+}
+
+/** Body of `PUT /v1/grocery-orders/{id}/dates`: both dates, every time. */
+export interface OrderDates {
+  delivery_date: ISODate | null
+  next_delivery_date: ISODate | null
 }
 
 export interface MealIngredient {
-  id: string
-  position: number
   name: string
   quantity: number | null
   unit: string | null
   preparation: string | null
 }
 
-export interface Meal {
-  id: string
-  name: string
-  description: string | null
+/** The full recipe. */
+export interface Meal extends MealSummary {
   servings: number
-  active_time_minutes: number | null
-  total_time_minutes: number | null
   steps: string[]
-  created_at: string
-  meal_ingredient: MealIngredient[]
+  ingredients: MealIngredient[]
 }

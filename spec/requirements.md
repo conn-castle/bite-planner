@@ -4,30 +4,30 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 
 ## Orders
 
-- [ ] An order is N meals covering M days; meals are not assigned to specific days.
-- [ ] Anyone in the household can create and place an order.
-- [ ] Creating an order walks the user through picking the meals, the delivery date, and the next delivery date.
-- [ ] The delivery date defaults to the order's target date (the previous order's next delivery date); the user can change it.
-- [ ] The earliest selectable delivery date comes from a function (later: the grocery service's soonest slot); for now it returns tomorrow.
-- [ ] The next delivery date defaults to the delivery date plus one day per meal; the user can change it.
-- [ ] The next delivery date becomes the target date of the household's next order.
+- [x] An order is N meals covering M days; meals are not assigned to specific days.
+- [x] Anyone in the household can create and place an order.
+- [x] Creating an order walks the user through picking the meals, the delivery date, and the next delivery date.
+- [x] The delivery date defaults to the order's target date (the previous order's next delivery date); the user can change it.
+- [x] The earliest selectable delivery date comes from a function (later: the grocery service's soonest slot); for now it returns tomorrow.
+- [x] The next delivery date defaults to the delivery date plus one day per meal; the user can change it.
+- [x] The next delivery date becomes the target date of the household's next order.
 - [ ] Each order's decide-by date is its target date minus the household's decide-by offset.
-- [ ] Delivery dates that overlap or leave a gap with the previous order are allowed.
-- [ ] Orders cannot be edited once placed.
+- [x] Delivery dates that overlap or leave a gap with the previous order are allowed.
+- [x] Orders cannot be edited once placed.
 
 ## Draft order
 
 - [ ] An unplaced order is a household draft: its suggestions, picks, and dismissals are kept when the flow is closed.
-- [ ] Any household member can resume the draft.
-- [ ] A household member can discard the draft.
+- [x] Any household member can resume the draft.
+- [x] A household member can discard the draft.
 
 ## Picking meals
 
-- [ ] The user picks meals from 20 suggestions by default.
-- [ ] The user can add a suggestion to the order, and toggle it back off.
+- [x] The user picks meals from 20 suggestions by default.
+- [x] The user can add a suggestion to the order, and toggle it back off.
 - [ ] The user can mark a suggestion as "don't show meals like this", and toggle it back off. This is offered only while picking suggestions.
 - [ ] Future suggestions avoid meals like the ones marked "don't show meals like this"; these preferences belong to the household.
-- [ ] The user can generate 20 more suggestions, added below the current ones.
+- [x] The user can generate 20 more suggestions, added below the current ones.
 - [ ] The user can leave while suggestions are generating and gets a notification when they're ready.
 - [ ] Each meal shows an icon.
 
@@ -52,9 +52,9 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 
 ## Placing and status
 
-- [ ] Placing an order calls the API, which saves the order and its status in the database.
-- [ ] The call to the grocery service is a stub that does nothing and returns success.
-- [ ] An order's status is saved and shown; for now it is always "order placed".
+- [x] Placing an order calls the API, which saves the order and its status in the database.
+- [x] The call to the grocery service is a stub that does nothing and returns success.
+- [x] An order's status is saved and shown; for now it is always "order placed".
 
 ## Calendar and tasks
 
@@ -83,7 +83,7 @@ Personal settings:
 - [ ] History shows every past order and all of its meals, grouped by order.
 - [ ] History's meals can be searched by name and filtered, including by rating.
 - [ ] Order view: an order's dates, status, meals, and shopping list.
-- [ ] Meal view: a meal's recipe (servings, ingredients, facts).
+- [x] Meal view: a meal's recipe (servings, ingredients, facts).
 - [ ] Instructions view: a meal's cooking steps.
 
 ## Deferred

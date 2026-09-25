@@ -1,13 +1,13 @@
 # Castle Chef
 
-An agent-driven meal service for the family. The iOS app talks to a small API on AWS; meal requests go through a queue to a one-off container that runs an AI agent (Grok, through Agent Layer) and saves its meals in Neon Postgres. Nothing runs while nobody is using it.
+An agent-driven meal service for the family. A household makes grocery orders: the agent suggests meals, a member picks some and the delivery dates, and places the order. The iOS app talks to a small API on AWS; agent work goes through a queue to a one-off container that runs an AI agent (Grok, through Agent Layer) and saves its meals in Neon Postgres. Nothing runs while nobody is using it. What ordering must do is in [`spec/`](spec/).
 
 ```text
 iOS app (Capacitor) ── Neon Auth (sign-in, emailed code) ── JWT
         │
         ▼
-API: FastAPI on AWS Lambda (Function URL) ──► Neon Postgres (meals, jobs, members)
-        │ POST /v1/jobs
+API: FastAPI on AWS Lambda (Function URL) ──► Neon Postgres (orders, jobs, meals, members)
+        │ POST /v1/grocery-orders/{id}/jobs
         ▼
 SQS jobs queue ──► EventBridge Pipe ──► one Fargate task per job
                                           `castle-chef job run`
@@ -16,13 +16,14 @@ Failures (dead-letter queue, task stopped) ──► failure-handler Lambda ─�
 Error log lines, Lambda and Pipe failures ──► CloudWatch alarms ──► email
 ```
 
-1. The app asks the API for N meals (`POST /v1/jobs` with a job id it generates, so retries are safe). The API checks the person is in a household, allows at most 3 open requests each, stores a `pending` job for their household, and sends its id to the queue.
-2. The Pipe starts one Fargate task per message. The worker claims the job and runs Grok with a prompt asking for N low-effort meals.
-3. Grok calls `castle-chef meal add` once per meal. The CLI validates the meal and saves it as JSON in the job directory; the agent never touches the database.
-4. After Grok exits, the worker checks that exactly N meals were saved, then stores them (linked through `job_meal`) and marks the job `succeeded` in one transaction. Otherwise the job is `failed` with an error and nothing is stored. The task then exits.
-5. The app polls the job, shows its meals, and lets you rescale servings.
+1. A member opens the create-order flow: the API gets or creates the household's draft `grocery_order` (one per household).
+2. The app asks for a batch of suggestions (`POST /v1/grocery-orders/{id}/jobs` with a job id it generates, so retries are safe). The API stores a `pending` `generate_meals` job for the draft (one batch at a time per draft) and sends its id to the queue.
+3. The Pipe starts one Fargate task per message. The worker claims the job and runs Grok with a prompt asking for 20 low-effort meals (`meals_per_batch`).
+4. Grok calls `castle-chef meal add` once per meal. The CLI validates the meal and saves it as JSON in the job directory; the agent never touches the database.
+5. After Grok exits, the worker checks that exactly that many meals were saved, then stores them (each with its `job_id`) and marks the job `succeeded` in one transaction. Otherwise the job is `failed` with an error and nothing is stored. The task then exits.
+6. The app polls the draft and shows the suggestions. The member picks meals (more batches if they like), chooses the delivery date and the next delivery date, and places the order, which calls the grocery-service stub (it does nothing yet) and marks the order `placed`.
 
-A request takes one to two minutes: about 30 s to start the task (mostly Fargate provisioning), the rest is Grok.
+A batch takes one to two minutes: about 30 s to start the task (mostly Fargate provisioning), the rest is Grok.
 
 ## Layout
 
@@ -52,7 +53,7 @@ make review      # the same, for a UI review with comments from another device (
 
 `make dev` runs the API (each request starts `castle-chef job run`) and the app's dev server, which proxies `/api` to it, until you press `Ctrl+C` or either one exits. For phones, open port 5173 once: `sudo ufw allow from 192.168.1.0/24 to any port 5173 proto tcp`.
 
-**Try it:** open `https://<this machine's LAN IP>:5173` (e.g. `https://192.168.1.252:5173`) on a phone or computer and accept the certificate warning (Safari: Show Details → visit this website). Sign in with your email and the emailed code, then request meals. Grok takes 30–60 s. Local jobs use your own Grok login (`al grok`) and Grok's sandbox ([Worker](#worker)).
+**Try it:** open `https://<this machine's LAN IP>:5173` (e.g. `https://192.168.1.252:5173`) on a phone or computer and accept the certificate warning (Safari: Show Details → visit this website). Sign in with your email and the emailed code, then start an order. A batch of suggestions takes Grok a minute or two. Local jobs use your own Grok login (`al grok`) and Grok's sandbox ([Worker](#worker)).
 
 **Stop:** `Ctrl+C`. A job already started keeps running to the end.
 
@@ -82,6 +83,8 @@ The API is tested through FastAPI's test client with a test token verifier (real
 
 ### Migrations
 
+**Pre-release:** there are no real users yet, so these rules don't apply: the schema can change freely, and on 2026-09-24 it started over with one new migration. They apply from the first real user on.
+
 Neon `main` is migrated only by the release workflow ([Releases](#releases)), before the new code is deployed. Migrations must be **backward-compatible** (expand/contract): the previous release keeps running against the migrated database until the deploy finishes, and a code rollback runs against it too.
 
 - Adding tables, nullable (or defaulted) columns, and indexes is fine; so is replacing a constraint or index.
@@ -98,19 +101,18 @@ make migrate                      # apply to dev
 ### Worker
 
 ```sh
-uv run castle-chef job create --count 3 --household "Conn Castle"   # queue a job for the household and run it (locally, or on AWS with CASTLE_CHEF_JOB_DISPATCH=sqs)
 CASTLE_CHEF_JOB_ID=<id> uv run castle-chef job run   # run one pending job; what each Fargate task does
 ```
 
 Each job gets a directory (locally `~/.local/state/castle-chef/jobs/<job-id>/`, in the container `/tmp/jobs/`) with the prompt, Grok's JSON output, and its stderr.
 
-`job run` logs `worker.started` with its release (`YYYY.M.D.N`, or `dev-<sha>` for an untagged checkout) and commit. It refuses to run (`schema.behind`, exit status 78) if the database's migrations are older than the code. A database that is *newer* than the code (after a rollback) is fine. A job someone else already claimed is left alone (exit 0); a job that doesn't exist exits 1.
+`job run` logs `worker.started` with its release (`YYYY.M.D.N`, or `dev-<sha>` for an untagged checkout) and commit. It refuses to run (`schema.behind`, exit status 78) if the database's migrations are older than the code. A database that is *newer* than the code (after a rollback) is fine. A job someone else already claimed is left alone, and a job that no longer exists (discarded with its draft) ends quietly (both exit 0).
 
 The worker runs `al -q grok`, so Grok uses Agent Layer's model settings (`.agent-layer/config.toml`). Grok's headless mode auto-approves every tool call, so the run is contained by construction:
 
 - The working directory is the job directory (no project instructions); the only tool is the shell; subagents are disabled.
 - The agent gets a minimal environment (`HOME`, `PATH`, `CASTLE_CHEF_JOB_DIR`, and the Grok settings it needs): no database credentials.
-- The prompt contains only the validated meal count, so there is no prompt-injection channel. Keep it that way: a free-text job parameter would become input to an auto-approving shell agent.
+- The prompt contains only the configured meal count, so there is no prompt-injection channel. Keep it that way: a free-text job parameter would become input to an auto-approving shell agent.
 - **Locally**, Grok's own sandbox (profile `castle-chef-agent`, extending `strict`) lets commands read only the job directory, system paths, `backend/.venv`, `backend/src`, and Grok's home; write only the job directory and `/tmp`; and blocks network access for commands.
 - **In the container**, which is the sandbox there: the worker runs as root and starts the agent as the unprivileged user `agent` (uid 65532) with no other groups and no inherited files, so it can't read the worker's environment (`DATABASE_URL`). The root filesystem is read-only; only `/tmp` and the Grok login on EFS are writable. Because `al` writes into its project on every launch, each task gets its own copy of `.agent-layer` in `/tmp/agent-project`. The agent can read Grok's login (it needs it to run), so a misbehaving agent could copy it into a meal; sign out of that session from the Grok account if that ever happens.
 - Parallel jobs take turns running the agent (a lock file next to the login on EFS), because two agents refreshing one login at once can invalidate it. Each Fargate task is capped at 20 minutes (the agent at 15).
@@ -174,12 +176,12 @@ A new stack has its own EFS, so run the agent login for it once. `cd infra && uv
 
 `apps/mobile/` is the Capacitor project and `src/` is the app's only source: `make dev` serves it directly, `make build` compiles it to `dist/`, and Capacitor copies `dist/` into the iOS project (`ios/App/App/public/`, gitignored). Both are build output.
 
-The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on every platform) with `IonReactRouter` (react-router 6, which Ionic 9 requires): three tabs, **This week** (`/week`), **History** (`/history`, a request at `/history/:jobId`, a recipe at `/history/:jobId/meals/:mealId`), and **Settings** (`/settings`), each with its own navigation stack. Sign-in and "not in a household" are shown instead of the tabs. `src/` is organized by feature:
+The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on every platform) with `IonReactRouter` (react-router 6, which Ionic 9 requires): three tabs, **This week** (`/week`: start an order, or continue or discard the household's draft), **History** (`/history`, empty until past orders are built), and **Settings** (`/settings`), each with its own navigation stack. The create-order flow is a card over the page (pick meals, with a recipe view inside it; delivery date; next delivery; review; place). Sign-in and "not in a household" are shown instead of the tabs. `src/` is organized by feature:
 
 | Path | What |
 | --- | --- |
 | `app/` | The shell: providers, session gate, tabs and routes, error boundary, offline banner, native launch |
-| `features/<feature>/` | One folder per feature (`session`, `week`, `history`, `meals`, `settings`): its screens, API calls and queries, and pure logic with its tests |
+| `features/<feature>/` | One folder per feature (`session`, `week`, `orders`, `history`, `meals`, `settings`): its screens, API calls and queries, and pure logic with its tests |
 | `ui/` | Shared components (page frame, buttons, stepper, grouped rows, empty states, illustrations) |
 | `lib/` | Infrastructure: API client, auth (`auth.ts`, `neonAuth.ts`), query client, logging, haptics |
 | `theme/` | Design tokens (`tokens.css`: every color, radius, shadow, and font) and the styling of Ionic's structural components (`app.css`) |
@@ -197,9 +199,8 @@ Data handling (`src/lib/query/queryClient.ts` and each feature's queries):
 - Server data lives in TanStack Query: shown from cache immediately, refreshed in the background (stale-while-revalidate).
 - The cache is persisted on the device (Capacitor Preferences) for 7 days, so a relaunch shows the last data instantly. Sign-out deletes it.
 - Refreshes when the app returns to the foreground (`@capacitor/app`) and pauses while offline (`@capacitor/network`), with an offline banner. Requests made offline are sent when the connection returns.
-- History refreshes every 5 s while any request is pending or running.
-- Requesting meals is optimistic: the request appears at once and reconciles with the server.
-- Meals of recent finished requests are prefetched, so opening one is instant.
+- An order refreshes every 3 s while a batch of suggestions is pending or running.
+- Every request sends the phone's time zone (`Time-Zone` header); the API uses it for "today".
 - Render errors show a recovery screen and are logged.
 
 On iOS, Neon Auth requests go through Capacitor's native HTTP with the trusted origin `https://app.example.test`, because the WebView's `capacitor://localhost` origin can't be trusted and its cookies would be third-party. See `src/lib/auth/neonAuth.ts`, the Neon Auth implementation of `src/lib/auth/auth.ts` (the app's only dependency on the auth provider). `src/lib/api/client.ts` calls the API with a fresh token per request.
@@ -306,22 +307,22 @@ Security model:
 
 - The app signs in with Neon Auth using an emailed one-time code (no passwords, no social providers) and gets a 15-minute JWT (EdDSA). The API verifies it against the branch's published keys (`castle_chef/auth.py`, behind an `AuthVerifier` interface so the provider can be swapped).
 - Invite-only: the API serves only accounts in a household (a `household_member` row with a `household_id`); anyone else gets 403. Sign-up is disabled in Neon Auth, but only for passwords: Neon's setting doesn't cover emailed codes, so anyone can request a code for any address, and entering it creates an empty account (tested on `dev`, 2026-09-24). Such accounts get no data (403). Accepted for the private TestFlight app. To close it, use Neon Auth's `send.otp` and `user.before_create` webhooks to email codes only to invited people, or wait for Neon to apply disable-sign-up to emailed codes.
-- Households are separate: `GET /v1/jobs` lists only the caller's household's 50 newest requests (everyone's in it, each with its meals' ids and names), a new request belongs to the requester's household, and another household's request is 404 like a missing one. `GET /v1/me` reports the caller's `household` (`id`, `name`, or null).
-- The API enforces the request rules: counts from 1 to 14, at most 3 pending or running per person, and client-generated job ids that can't be reused by someone else or with different parameters.
+- Households are separate: every order, job, and meal belongs to a household through its order, members see only their household's, and another household's is 404 like a missing one. `GET /v1/me` reports the caller's `household` (`id`, `name`, or null).
+- The API enforces the ordering rules: one draft per household, one batch of suggestions at a time per draft, client-generated job ids that can't be reused for another order or by someone else, picks only from the draft's suggestions, valid dates, and no changes once placed.
 - The API and worker use the owner role through Neon's pooled endpoint; the agent has no database access. Local tools use the direct endpoint.
 - Trusted auth origin: `https://app.example.test`, presented by the iOS app and the dev server's auth proxy. Keep this domain under your control. Localhost is not trusted.
 - The app doesn't use the Neon Data API. The `remove Data API access` migration removed its grants, row-level security, policies, and `client_log_batch`, so its roles (`authenticated`, `anonymous`, which Neon keeps while Neon Auth is on) can't read or write any table (`tests/test_data_api_access.py`), and the Data API itself is deleted per branch with `neonctl data-api delete --project-id example-project --branch <branch> --database neondb` (done on `dev` and `main`).
 
 ### Households (invite-only)
 
-Each account belongs to at most one household and sees only that household's requests and meals. The family is `Conn Castle` (the `households` migration put every earlier member and request there). Keep testing in a household of its own so its accounts and requests never show up in the family's: on `dev` that is `Test Kitchen`, with the account `operator@example.com` (its codes arrive in the owner's Gmail). `make dev-reset` replaces `dev` with production, which has neither; create them again with the commands below.
+Each account belongs to at most one household and sees only that household's orders and meals. The family is `Conn Castle`. Keep testing in a household of its own so its accounts and orders never show up in the family's: on `dev` that is `Test Kitchen`, with the account `operator@example.com` (its codes arrive in the owner's Gmail). `make dev-reset` replaces `dev` with production, which has neither; create them again with the commands below.
 
 From your checkout these act on `dev` (`backend/.env`). For production, run them with `main`'s credentials from SSM (nothing is written to disk):
 
 ```sh
 cd backend
 uv run castle-chef household create "Test Household"   # a new, empty household
-uv run castle-chef household list                       # names, member and job counts
+uv run castle-chef household list                       # names, member and order counts
 uv run castle-chef household invite mom@example.com --name "Mom" --household "Conn Castle"
                                                         # create the account if needed and add it
 uv run castle-chef household members "Conn Castle"      # its members' emails and names
@@ -342,4 +343,4 @@ Production runs on AWS (since release `r6`; now date-versioned, e.g. `2026.9.24.
 
 1. Product: give the agent meal history so it avoids repeats, and iterate on the app.
 2. Invite the family ([Households](#households-invite-only)), as App Store Connect users (internal testers) or external testers (Apple reviews the first build).
-3. Contract step for households, in a later release: make `household_id` on `household_member` and `job` NOT NULL. It is nullable only because the release before it (and a rollback to it) inserts rows without one; first assign any such rows (a job to its requester's household).
+3. Build the ordering spec one piece at a time ([`spec/`](spec/)): the create-order flow is first.

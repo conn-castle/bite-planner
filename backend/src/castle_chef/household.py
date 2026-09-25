@@ -14,7 +14,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlmodel import Session, col, func, select
 
-from castle_chef.models import Household, HouseholdMember, Job
+from castle_chef.models import GroceryOrder, Household, HouseholdMember
 from castle_chef.settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -78,18 +78,22 @@ def get(session: Session, name: str) -> Household:
 
 
 def households(session: Session) -> list[tuple[str, int, int]]:
-    """(name, member count, job count) of every household, by name."""
+    """(name, member count, order count) of every household, by name."""
     members = (
         select(func.count())
         .select_from(HouseholdMember)
         .where(HouseholdMember.household_id == Household.id)
         .scalar_subquery()
     )
-    jobs = (
-        select(func.count()).select_from(Job).where(Job.household_id == Household.id)
+    grocery_orders = (
+        select(func.count())
+        .select_from(GroceryOrder)
+        .where(GroceryOrder.household_id == Household.id)
     ).scalar_subquery()
-    rows = session.exec(select(Household.name, members, jobs).order_by(col(Household.name))).all()
-    return [(name, member_count, job_count) for name, member_count, job_count in rows]
+    rows = session.exec(
+        select(Household.name, members, grocery_orders).order_by(col(Household.name))
+    ).all()
+    return [(name, member_count, order_count) for name, member_count, order_count in rows]
 
 
 def invite(session: Session, email: str, name: str, household_name: str) -> UUID:
@@ -98,7 +102,7 @@ def invite(session: Session, email: str, name: str, household_name: str) -> UUID
     household = get(session, household_name)
     user_id = _auth_user_id(session, email)
     membership = session.get(HouseholdMember, user_id) if user_id is not None else None
-    if membership is not None and membership.household_id not in (None, household.id):
+    if membership is not None and membership.household_id != household.id:
         other = session.exec(
             select(Household.name).where(Household.id == membership.household_id)
         ).one()
@@ -112,9 +116,6 @@ def invite(session: Session, email: str, name: str, household_name: str) -> UUID
         user_id = UUID(json.loads(output)["id"])
     if membership is None:
         session.add(HouseholdMember(user_id=user_id, household_id=household.id))
-    else:  # already in it, or a membership without a household (made by an older release)
-        membership.household_id = household.id
-        session.add(membership)
     session.commit()
     log.info(
         "household.invited",

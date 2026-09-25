@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session
 
-from castle_chef.models import JobMeal, Meal, MealIngredient
+from castle_chef.models import Meal, MealIngredient
 
 
 class IngredientInput(BaseModel):
@@ -75,6 +75,7 @@ def add_meals(session: Session, job_id: UUID, meal_inputs: list[MealInput]) -> N
     """Stage meals linked to their job; the caller commits."""
     for meal_input in meal_inputs:
         meal = Meal(
+            job_id=job_id,
             **meal_input.model_dump(exclude={"ingredients"}),
             ingredients=[
                 MealIngredient(position=position, **ingredient.model_dump())
@@ -82,5 +83,3 @@ def add_meals(session: Session, job_id: UUID, meal_inputs: list[MealInput]) -> N
             ],
         )
         session.add(meal)
-        session.flush()  # JobMeal has no relationship to order its insert after the meal.
-        session.add(JobMeal(job_id=job_id, meal_id=meal.id))

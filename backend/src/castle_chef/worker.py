@@ -21,11 +21,12 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
 from pydantic import ValidationError
+from sqlmodel import select
 
 from castle_chef.db import get_engine, get_session
-from castle_chef.jobs import GENERATE_MEALS, GenerateMealsParams, claim_job, finish_job
+from castle_chef.jobs import claim_job, finish_job
 from castle_chef.meals import MealInput, add_meals, load_meals
-from castle_chef.models import Job
+from castle_chef.models import Job, JobKind
 from castle_chef.settings import REPO_ROOT, get_settings
 
 log = logging.getLogger(__name__)
@@ -70,18 +71,23 @@ class SchemaBehindError(Exception):
 def run_job(job_id: UUID) -> None:
     """Run one job: claim it, run the agent, and save its meals (or its failure).
 
-    Raises LookupError if the job doesn't exist and SchemaBehindError if the
-    database is behind this code; a job someone else already claimed is left alone.
+    Raises SchemaBehindError if the database is behind this code. A job someone
+    else already claimed is left alone, and a job that no longer exists was
+    discarded with its draft, which is not an error.
     """
     check_schema()
     fields = {"job_id": str(job_id)}
     log.info("worker.started", extra=current_release() | fields)
-    with get_session() as session:
-        job = claim_job(session, job_id)
+    try:
+        with get_session() as session:
+            job = claim_job(session, job_id)
+    except LookupError:
+        log.info("job.discarded", extra=fields)
+        return
     if job is None:
         log.warning("job.already_claimed", extra=fields)
         return
-    log.info("job.claimed", extra=fields | {"kind": job.kind, "params": job.params})
+    log.info("job.claimed", extra=fields | {"kind": job.kind})
     try:
         meals = process_job(job)
     except (AgentRunError, ValidationError) as error:
@@ -94,6 +100,11 @@ def run_job(job_id: UUID) -> None:
         return
     try:
         with get_session() as session:
+            # Locking the job keeps its draft from being discarded mid-save; a job
+            # already gone was discarded with its draft, which is not an error.
+            if session.exec(select(Job).where(Job.id == job_id).with_for_update()).first() is None:
+                log.info("job.discarded", extra=fields | {"meal_count": len(meals)})
+                return
             # The meals and the job's success are committed together, and only if
             # the job is still running (not failed as stale meanwhile).
             add_meals(session, job_id, meals)
@@ -111,7 +122,11 @@ def run_job(job_id: UUID) -> None:
 
 def _finish(job_id: UUID, error: str) -> None:
     with get_session() as session:
-        if not finish_job(session, job_id, error=error):
+        if finish_job(session, job_id, error=error):
+            return
+        if session.get(Job, job_id) is None:
+            log.info("job.discarded", extra={"job_id": str(job_id)})
+        else:
             log.error("job.no_longer_running", extra={"job_id": str(job_id)})
 
 
@@ -172,20 +187,20 @@ def current_release() -> dict[str, str]:
 
 
 def process_job(job: Job) -> list[MealInput]:
-    if job.kind != GENERATE_MEALS:
+    if job.kind != JobKind.GENERATE_MEALS:
         raise AgentRunError(f"Unknown job kind {job.kind!r}.")
-    params = GenerateMealsParams.model_validate(job.params)
 
+    count = get_settings().meals_per_batch
     prompt = Template(PROMPTS_DIR.joinpath("generate_meals.md").read_text()).substitute(
-        count=params.count,
+        count=count,
         meal_schema=json.dumps(MealInput.model_json_schema(), indent=2),
     )
     job_dir = get_settings().jobs_dir / str(job.id)
     run_agent(job_dir, prompt)
 
     meals = load_meals(job_dir)
-    if len(meals) != params.count:
-        raise AgentRunError(f"Requested {params.count} meals, but the agent added {len(meals)}.")
+    if len(meals) != count:
+        raise AgentRunError(f"Requested {count} meals, but the agent added {len(meals)}.")
     return meals
 
 

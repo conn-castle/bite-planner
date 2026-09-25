@@ -29,6 +29,7 @@ api = [
     "boto3>=1.43.101",
     "fastapi>=0.141.1",
     "pyjwt[crypto]>=2.15.0",
+    "tzdata>=2026.4",
     "uvicorn>=0.53.0",
 ]
 dev = [

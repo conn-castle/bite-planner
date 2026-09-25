@@ -1,17 +1,15 @@
 import { queryOptions } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api/client'
+import { isRetryable } from '../../lib/api/errors'
 import type { Meal } from '../../lib/api/types'
-import { logger } from '../../lib/log'
 
-/** The meals one request produced, with full recipes. */
-export const jobMealsQuery = (jobId: string) =>
+/** One meal's full recipe. */
+export const mealQuery = (mealId: string) =>
   queryOptions({
-    queryKey: ['meals', jobId],
-    queryFn: async () => {
-      const meals = await apiRequest<Meal[]>('GET', `/v1/jobs/${jobId}/meals`)
-      logger.debug('meals.loaded', { jobId, count: meals.length })
-      return meals
-    },
-    // A finished request's meals never change.
+    queryKey: ['meal', mealId],
+    queryFn: () => apiRequest<Meal>('GET', `/v1/meals/${mealId}`),
+    // A recipe never changes.
     staleTime: Infinity,
+    // A 404 (not one of the household's meals) won't change on a retry.
+    retry: (failureCount, error) => isRetryable(error, failureCount),
   })

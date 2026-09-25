@@ -9,8 +9,6 @@ import {
 } from 'ionicons/icons'
 import { Navigate, Route, useLocation } from 'react-router-dom'
 import { HistoryPage } from '../features/history/HistoryPage'
-import { RequestPage } from '../features/history/RequestPage'
-import { MealPage } from '../features/meals/MealPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { WeekPage } from '../features/week/WeekPage'
 
@@ -29,8 +27,6 @@ export function Tabs() {
       <IonRouterOutlet>
         <Route path="/week" element={<WeekPage />} />
         <Route path="/history" element={<HistoryPage />} />
-        <Route path="/history/:jobId" element={<RequestPage />} />
-        <Route path="/history/:jobId/meals/:mealId" element={<MealPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/week" replace />} />
       </IonRouterOutlet>

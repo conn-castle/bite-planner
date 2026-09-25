@@ -1,0 +1,125 @@
+.header ion-toolbar {
+  --min-height: 56px;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.back {
+  appearance: none;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 8px 0 0;
+  background: none;
+  font: inherit;
+  font-size: 17px;
+  color: var(--cc-ink);
+  cursor: pointer;
+}
+
+.back ion-icon {
+  font-size: 22px;
+}
+
+/* Keeps the dots centered when there is no Back button. */
+.spacer {
+  width: 36px;
+}
+
+.dots {
+  display: flex;
+  gap: 5px;
+}
+
+.dots i {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--cc-fill-strong);
+  transition: background-color 300ms var(--cc-ease);
+}
+
+.dots i.on {
+  background: var(--cc-ink);
+}
+
+.close {
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  color: var(--cc-ink-2);
+}
+
+.body {
+  padding: 4px var(--cc-page-x) 32px;
+  animation: enter 380ms var(--cc-ease) both;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+.title {
+  font-family: var(--cc-font-display);
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin: 6px 0 0;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--cc-ink-2);
+}
+
+.lede b {
+  color: var(--cc-ink);
+  font-weight: 650;
+}
+
+.footer {
+  box-shadow: none;
+}
+
+.footerBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px var(--cc-page-x) calc(var(--ion-safe-area-bottom, 0px) + 12px);
+  background: var(--cc-glass);
+  backdrop-filter: var(--cc-glass-blur);
+  -webkit-backdrop-filter: var(--cc-glass-blur);
+  border-top: 0.5px solid var(--cc-hairline);
+}
+
+.summary {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--cc-ink-2);
+}
+
+.summary b {
+  display: block;
+  font-size: 15px;
+  color: var(--cc-ink);
+}
+
+.notice {
+  margin-bottom: 16px;
+}

@@ -1,0 +1,152 @@
+/* Every row of days in the app (spec/mockup.html: .dchips, .dchip, .legend). */
+
+.days {
+  position: relative; /* the chips' offsetParent, for scrolling the chosen one into view */
+  /* Room below for the tags, which hang 9px under the chips. */
+  padding-top: 2px;
+  padding-bottom: 10px;
+}
+
+/* Scrolls sideways, edge to edge. */
+.scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  margin: 0 calc(-1 * var(--cc-page-x));
+  padding-left: var(--cc-page-x);
+  padding-right: var(--cc-page-x);
+  scrollbar-width: none;
+}
+
+.scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll .day {
+  flex: none;
+  width: 58px;
+}
+
+/* Every day fits across the width (the columns are set inline). */
+.fit {
+  display: grid;
+  gap: 6px;
+}
+
+.day {
+  appearance: none;
+  border: 0;
+  position: relative;
+  padding: 9px 0 10px;
+  border-radius: 16px;
+  background: var(--cc-fill);
+  font: inherit;
+  color: var(--cc-ink);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background-color 200ms var(--cc-ease),
+    transform var(--cc-press) var(--cc-ease);
+}
+
+.day:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.day small {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--cc-ink-2);
+}
+
+.day b {
+  display: block;
+  font-family: var(--cc-font-display);
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.selected {
+  background: var(--cc-ink);
+  color: var(--cc-on-ink);
+}
+
+.selected small {
+  color: var(--cc-on-ink-2);
+}
+
+/* A day shown, not chosen. */
+.static {
+  cursor: default;
+}
+
+.static:active {
+  transform: none;
+}
+
+/* Shown for orientation only, e.g. today, or a past day. */
+.unavailable {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The day has meals: a bar in the color of the order they come from, clear of the tag below. */
+.cover {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 7px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--cover);
+  opacity: 0.75;
+}
+
+.selected .cover {
+  opacity: 1;
+  box-shadow: 0 0 0 1.5px var(--cc-ink);
+}
+
+.tag {
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  transform: translateX(-50%);
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--cc-accent);
+  color: var(--cc-on-ink);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Tags that orient (today, the delivery day) rather than recommend. */
+.quiet {
+  background: var(--cc-ink);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--cc-ink-3);
+}
+
+.legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend i {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+}

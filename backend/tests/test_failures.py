@@ -5,14 +5,14 @@ events, trimmed to the fields that matter."""
 import json
 import logging
 from collections.abc import Iterator
-from uuid import UUID, uuid4
+from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from castle_chef.api import create_app
-from castle_chef.jobs import GENERATE_MEALS, create_job
 from castle_chef.models import Job, JobStatus
 from castle_chef.settings import get_settings
 
@@ -29,11 +29,11 @@ def reload(session: Session, job: Job) -> Job:
     return session.exec(select(Job).where(Job.id == job.id)).one()
 
 
-def task_stopped(job_id: str, exit_code: int | None, reason: str | None = None) -> dict:
-    container = {"name": "worker", "lastStatus": "STOPPED"}
+def task_stopped(job_id: str, exit_code: int | None, reason: str | None = None) -> dict[str, Any]:
+    container: dict[str, Any] = {"name": "worker", "lastStatus": "STOPPED"}
     if exit_code is not None:
         container["exitCode"] = exit_code
-    detail = {
+    detail: dict[str, Any] = {
         "clusterArn": "arn:aws:ecs:us-east-1:123456789012:cluster/castle-chef",
         "taskArn": "arn:aws:ecs:us-east-1:123456789012:task/castle-chef/abc",
         "lastStatus": "STOPPED",
@@ -54,9 +54,8 @@ def test_the_public_api_has_no_events_route() -> None:
 
 
 def test_crashed_worker_fails_its_job(
-    events: TestClient, session: Session, household_id: UUID, caplog: pytest.LogCaptureFixture
+    events: TestClient, session: Session, job: Job, caplog: pytest.LogCaptureFixture
 ) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     job.status = JobStatus.RUNNING
     session.add(job)
     session.commit()
@@ -72,9 +71,8 @@ def test_crashed_worker_fails_its_job(
 
 
 def test_worker_that_never_launched_fails_its_job(
-    events: TestClient, session: Session, household_id: UUID
+    events: TestClient, session: Session, job: Job
 ) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     reason = "CannotPullContainerError: pull image manifest has been retried 1 time(s)"
 
     events.post("/events", json=task_stopped(str(job.id), exit_code=None, reason=reason))
@@ -85,9 +83,8 @@ def test_worker_that_never_launched_fails_its_job(
 
 
 def test_worker_that_finished_the_job_itself_is_left_alone(
-    events: TestClient, session: Session, household_id: UUID, caplog: pytest.LogCaptureFixture
+    events: TestClient, session: Session, job: Job, caplog: pytest.LogCaptureFixture
 ) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     job.status = JobStatus.SUCCEEDED
     session.add(job)
     session.commit()
@@ -102,9 +99,8 @@ def test_worker_that_finished_the_job_itself_is_left_alone(
 
 
 def test_a_finished_job_is_never_overwritten(
-    events: TestClient, session: Session, household_id: UUID
+    events: TestClient, session: Session, job: Job
 ) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     job.status = JobStatus.SUCCEEDED
     session.add(job)
     session.commit()
@@ -115,9 +111,8 @@ def test_a_finished_job_is_never_overwritten(
 
 
 def test_dead_lettered_request_fails_its_job(
-    events: TestClient, session: Session, household_id: UUID
+    events: TestClient, session: Session, job: Job
 ) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     record = {
         "messageId": "1",
         "eventSource": "aws:sqs",

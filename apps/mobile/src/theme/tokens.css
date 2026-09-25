@@ -17,6 +17,7 @@
   --cc-ink-2: #62605b;
   --cc-ink-3: #9d9a94;
   --cc-on-ink: #ffffff;
+  --cc-on-ink-2: #cfcbc4; /* secondary text on ink */
 
   /* One warm accent, used sparingly: activity, highlights, the brand mark. */
   --cc-accent: #ef5a2f;
@@ -25,6 +26,13 @@
   --cc-success-soft: #e8f5ee;
   --cc-danger: #d23b2c;
   --cc-danger-soft: #fcecea;
+
+  /* Each order's color, in turn by order number: the days its meals cover. */
+  --cc-order-1: #6f9a78;
+  --cc-order-2: #6a8bb5;
+  --cc-order-3: #9a78b0;
+  --cc-order-4: #3f9795;
+  --cc-order-5: #c8903a;
 
   /* Type */
   /* Text: SF Pro on Apple devices, Inter (with optical sizes) elsewhere.

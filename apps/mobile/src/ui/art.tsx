@@ -67,3 +67,13 @@ export function PotArt() {
     </svg>
   )
 }
+
+/** A neutral plate standing in for a meal's picture until meals have icons. */
+export function MealArt() {
+  return (
+    <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <circle cx="32" cy="32" r="24" fill="var(--cc-bg)" stroke="var(--cc-hairline)" strokeWidth="1" />
+      <circle cx="32" cy="32" r="16" stroke="var(--cc-fill-strong)" strokeWidth="1.5" />
+    </svg>
+  )
+}

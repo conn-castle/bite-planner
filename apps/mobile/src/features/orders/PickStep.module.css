@@ -1,0 +1,202 @@
+.note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--cc-ink-3);
+}
+
+.note ion-icon {
+  flex: none;
+  font-size: 15px;
+  margin-top: 1px;
+}
+
+.notice {
+  margin-top: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--cc-radius-md);
+  background: var(--cc-bg);
+  outline: 1.5px solid var(--cc-hairline);
+  outline-offset: -1.5px;
+  animation: appear 380ms var(--cc-ease) both;
+  transition: outline-color 200ms var(--cc-ease);
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.added {
+  outline-color: var(--cc-ink);
+}
+
+/* The picture and name: opens the recipe. */
+.open {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: opacity var(--cc-press) var(--cc-ease);
+}
+
+.open:active {
+  opacity: 0.7;
+}
+
+.art {
+  display: grid;
+  place-items: center;
+  height: 104px;
+  background: var(--cc-fill);
+}
+
+.art svg {
+  width: 72px;
+  height: 72px;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 0;
+}
+
+.name {
+  font-size: 13.5px;
+  font-weight: 650;
+  line-height: 1.25;
+  min-height: 34px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.time {
+  font-size: 12px;
+  color: var(--cc-ink-2);
+}
+
+.add {
+  appearance: none;
+  border: 0;
+  margin: 8px 10px 10px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-fill);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--cc-ink);
+  cursor: pointer;
+  transition:
+    background-color 200ms var(--cc-ease),
+    color 200ms var(--cc-ease),
+    transform var(--cc-press) var(--cc-ease);
+}
+
+.add:active {
+  transform: scale(0.96);
+}
+
+.add ion-icon {
+  font-size: 15px;
+}
+
+.added .add {
+  background: var(--cc-ink);
+  color: var(--cc-on-ink);
+}
+
+.placeholder .art,
+.placeholder .line,
+.placeholder .add {
+  background: var(--cc-fill-strong);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.line {
+  display: block;
+  height: 13px;
+  width: 80%;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.short {
+  width: 50%;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.more {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.hint {
+  margin: 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--cc-ink-3);
+}
+
+.hint b {
+  color: var(--cc-ink-2);
+}
+
+/* An indeterminate progress line. */
+.progress {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, transparent, var(--cc-accent), transparent) no-repeat var(--cc-fill-strong);
+  background-size: 40% 100%;
+  animation: sweep 1.6s var(--cc-ease) infinite;
+}
+
+@keyframes sweep {
+  from {
+    background-position: -70% 0;
+  }
+  to {
+    background-position: 170% 0;
+  }
+}

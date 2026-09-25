@@ -42,8 +42,8 @@ class Settings(BaseSettings):
     # `castle-chef job run` subprocess, for development).
     job_dispatch: Literal["sqs", "local"] = "local"
     jobs_queue_url: str | None = None
-    # At most this many pending or running requests per person.
-    max_active_jobs_per_member: int = 3
+    # Suggestions per batch (a `generate_meals` job).
+    meals_per_batch: int = 20
     # A pending job whose task never started is failed after this long.
     pending_timeout_seconds: int = 600
 

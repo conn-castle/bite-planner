@@ -5,10 +5,6 @@
   padding-top: 16px;
 }
 
-.text {
-  color: var(--cc-ink-2);
-}
-
 .recipe {
   padding-top: 12px;
   animation: rise 460ms var(--cc-ease) both;

@@ -1,11 +1,10 @@
 """Database tables. Alembic migrations are generated from these models."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
-from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, func, text
+from sqlalchemy import CheckConstraint, DateTime, Enum, Index, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -65,6 +64,10 @@ class Meal(TimestampMixin, SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
 
+    # The run that created it: the suggestion batch it belongs to. Null once that
+    # job is deleted with its discarded draft; the meal itself is kept.
+    job_id: UUID | None = Field(default=None, foreign_key="job.id", ondelete="SET NULL", index=True)
+
     name: str
     description: str | None = None
 
@@ -82,6 +85,15 @@ class Meal(TimestampMixin, SQLModel, table=True):
     )
 
 
+def _values(enum: type[StrEnum]) -> list[str]:
+    """Store an enum's lowercase values (what the app sees), not its member names."""
+    return [member.value for member in enum]
+
+
+class JobKind(StrEnum):
+    GENERATE_MEALS = "generate_meals"
+
+
 class JobStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -90,70 +102,81 @@ class JobStatus(StrEnum):
 
 
 class Job(TimestampMixin, SQLModel, table=True):
-    """A unit of agent work, queued by the app and processed by the worker."""
+    """One run of the agent, for an order, processed by the worker. The app picks
+    the id, so a retried request can't start a second run."""
 
     __tablename__ = "job"
-    # The app inserts jobs directly, so the database enforces the params shape.
-    __table_args__ = (
-        # COALESCE: a missing count makes the expression NULL, which a CHECK accepts.
-        CheckConstraint(
-            "kind <> 'generate_meals' OR coalesce("
-            "jsonb_typeof(params->'count') = 'number' "
-            "AND (params->>'count')::numeric BETWEEN 1 AND 14 "
-            "AND (params->>'count')::numeric = trunc((params->>'count')::numeric) "
-            "AND params - 'count' = '{}'::jsonb, false)",
-            name="job_generate_meals_params",
-        ),
-    )
 
-    id: UUID = Field(
-        default_factory=uuid4,
-        primary_key=True,
-        sa_column_kwargs={"server_default": text("gen_random_uuid()")},
-    )
-    kind: str
-    params: dict[str, Any] = Field(default_factory=dict, sa_type=JSONB)
+    id: UUID = Field(primary_key=True)
+    grocery_order_id: UUID = Field(foreign_key="grocery_order.id", ondelete="CASCADE", index=True)
+    kind: JobKind = Field(sa_type=Enum(JobKind, name="job_kind", values_callable=_values))
     status: JobStatus = Field(
         default=JobStatus.PENDING,
         index=True,
-        # Store the lowercase values (what the app sees), not the member names.
-        sa_type=Enum(
-            JobStatus,
-            name="job_status",
-            values_callable=lambda members: [member.value for member in members],
-        ),
+        sa_type=Enum(JobStatus, name="job_status", values_callable=_values),
         sa_column_kwargs={"server_default": JobStatus.PENDING.value},
     )
-    # Neon Auth user id of the requester (set by the API; none for `job create`).
-    requested_by: UUID | None = None
-    # Whose job it is: only this household's members see it. Nullable only while
-    # the previous release still inserts jobs without it; a later release makes it
-    # NOT NULL. New code always sets it.
-    household_id: UUID | None = Field(default=None, foreign_key="household.id", index=True)
+    # The Neon Auth user who asked for it.
+    requested_by: UUID
     error: str | None = None
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
 
-class JobMeal(SQLModel, table=True):
-    """Links a job to the meals its agent created."""
+class GroceryOrderStatus(StrEnum):
+    DRAFT = "draft"
+    PLACED = "placed"
 
-    __tablename__ = "job_meal"
 
-    job_id: UUID = Field(foreign_key="job.id", ondelete="CASCADE", primary_key=True)
-    meal_id: UUID = Field(foreign_key="meal.id", ondelete="CASCADE", primary_key=True)
+class GroceryOrder(TimestampMixin, SQLModel, table=True):
+    """A household's order: its draft while it's being made, then the placed order."""
+
+    __tablename__ = "grocery_order"
+    __table_args__ = (
+        Index(
+            "grocery_order_one_draft",
+            "household_id",
+            unique=True,
+            postgresql_where=text("status = 'draft'"),
+        ),
+        CheckConstraint(
+            "status <> 'placed' OR (delivery_date IS NOT NULL AND next_delivery_date IS NOT NULL)",
+            name="grocery_order_placed_has_dates",
+        ),
+        CheckConstraint(
+            "next_delivery_date > delivery_date", name="grocery_order_next_after_delivery"
+        ),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    household_id: UUID = Field(foreign_key="household.id", index=True)
+    # The Neon Auth user who started it.
+    created_by: UUID
+    status: GroceryOrderStatus = Field(
+        default=GroceryOrderStatus.DRAFT,
+        sa_type=Enum(GroceryOrderStatus, name="grocery_order_status", values_callable=_values),
+    )
+    delivery_date: date | None = None
+    next_delivery_date: date | None = None
+
+
+class GroceryOrderMeal(SQLModel, table=True):
+    """A meal picked for an order."""
+
+    __tablename__ = "grocery_order_meal"
+
+    grocery_order_id: UUID = Field(
+        foreign_key="grocery_order.id", ondelete="CASCADE", primary_key=True
+    )
+    meal_id: UUID = Field(foreign_key="meal.id", primary_key=True)
 
 
 class Household(TimestampMixin, SQLModel, table=True):
-    """A group of people who share jobs and meals. Each household sees only its own."""
+    """A group of people who share orders and meals. Each household sees only its own."""
 
     __tablename__ = "household"
 
-    id: UUID = Field(
-        default_factory=uuid4,
-        primary_key=True,
-        sa_column_kwargs={"server_default": text("gen_random_uuid()")},
-    )
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
 
 
@@ -165,10 +188,7 @@ class HouseholdMember(SQLModel, table=True):
 
     # One household per user.
     user_id: UUID = Field(primary_key=True)
-    # A row without a household is not a member. Nullable only while the previous
-    # release still inserts members without it; a later release makes it NOT NULL.
-    # New code always sets it.
-    household_id: UUID | None = Field(default=None, foreign_key="household.id", index=True)
+    household_id: UUID = Field(foreign_key="household.id", index=True)
     invited_at: datetime = Field(
         default_factory=utc_now,
         sa_type=DateTime(timezone=True),

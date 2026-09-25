@@ -4,109 +4,58 @@ import logging
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session, col, func, select, update
 
-from castle_chef.models import HouseholdMember, Job, JobStatus
+from castle_chef.models import GroceryOrder, Job, JobKind, JobStatus
 
 log = logging.getLogger(__name__)
 
-GENERATE_MEALS = "generate_meals"
 ACTIVE = (JobStatus.PENDING, JobStatus.RUNNING)
 
 
-class GenerateMealsParams(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    count: int = Field(ge=1, le=14)
-
-
-class TooManyActiveJobs(Exception):
-    pass
+class BatchRunning(Exception):
+    """The order already has a job waiting or running."""
 
 
 class JobIdTaken(Exception):
-    """The client's job id already belongs to another job (someone else's, or
-    a different request)."""
+    """The client's job id already belongs to another job (another order's, or
+    someone else's request)."""
 
 
-class NotAMember(Exception):
-    pass
-
-
-def create_job(
+def submit_generate_meals(
     session: Session,
-    kind: str,
-    params: dict,
-    household_id: UUID,
-    requested_by: UUID | None = None,
-) -> Job:
-    """Insert and commit a household's pending job (no limits; for the CLI and tests)."""
-    job = Job(kind=kind, params=params, household_id=household_id, requested_by=requested_by)
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    log.info(
-        "job.created",
-        extra={
-            "job_id": str(job.id),
-            "kind": kind,
-            "params": params,
-            "household_id": str(household_id),
-        },
-    )
-    return job
-
-
-def submit_job(
-    session: Session,
+    order: GroceryOrder,
     member_id: UUID,
-    household_id: UUID,
     job_id: UUID,
-    params: GenerateMealsParams,
-    max_active: int,
     stale_after: tuple[timedelta, timedelta],
 ) -> tuple[Job, bool]:
-    """Record a member's meal request for their household and commit it.
-    Returns (job, created).
+    """Record a member's request for a batch of suggestions for a draft order,
+    and commit it. Returns (job, created).
 
-    The client picks the job id, so a retried request returns the same job
-    instead of creating another. Locking the member's row serializes that
-    member's submissions, so two at once can't both pass the limit. Stale jobs
-    are failed first, so a crashed task can't hold one of the member's slots.
+    The caller holds the order's row lock, which serializes the order's
+    requests, so two at once can't both start a batch. The client picks the job
+    id, so a retried request returns the same job instead of starting another.
+    Overdue jobs are failed first, so a lost worker can't block the order.
     """
-    locked = session.exec(
-        select(HouseholdMember)
-        .where(HouseholdMember.user_id == member_id, HouseholdMember.household_id == household_id)
-        .with_for_update()
-    ).first()
-    if locked is None:  # removed from the household since the membership check
-        session.rollback()
-        raise NotAMember(f"{member_id} is not in household {household_id}.")
     existing = session.get(Job, job_id)
     if existing is not None:
         session.rollback()
-        if (existing.requested_by, existing.household_id, existing.params) != (
-            member_id,
-            household_id,
-            params.model_dump(),
-        ):
+        if (existing.grocery_order_id, existing.requested_by) != (order.id, member_id):
             raise JobIdTaken(f"Job id {job_id} is taken.")
         return existing, False
-    fail_stale_jobs(session, member_id, *stale_after)
+    fail_stale_jobs(session, order.id, *stale_after)
     active = session.exec(
         select(func.count())
         .select_from(Job)
-        .where(Job.requested_by == member_id, col(Job.status).in_(ACTIVE))
+        .where(Job.grocery_order_id == order.id, col(Job.status).in_(ACTIVE))
     ).one()
-    if active >= max_active:
+    if active:
         session.rollback()
-        raise TooManyActiveJobs(f"At most {max_active} requests can be waiting at a time.")
+        raise BatchRunning("A batch of suggestions is already being made.")
     job = Job(
         id=job_id,
-        kind=GENERATE_MEALS,
-        params=params.model_dump(),
-        household_id=household_id,
+        grocery_order_id=order.id,
+        kind=JobKind.GENERATE_MEALS,
         requested_by=member_id,
     )
     session.add(job)
@@ -114,7 +63,7 @@ def submit_job(
     session.refresh(job)
     log.info(
         "job.created",
-        extra={"job_id": str(job.id), "params": job.params, "household_id": str(household_id)},
+        extra={"job_id": str(job.id), "kind": job.kind, "grocery_order_id": str(order.id)},
     )
     return job, True
 
@@ -188,14 +137,14 @@ def is_stale(job: Job, now: datetime, pending_after: timedelta, running_after: t
 
 
 def fail_stale_jobs(
-    session: Session, member_id: UUID, pending_after: timedelta, running_after: timedelta
+    session: Session, grocery_order_id: UUID, pending_after: timedelta, running_after: timedelta
 ) -> int:
-    """Fail a member's overdue jobs (a backstop for lost events), so they don't
-    hold the member's slots. Only that member's rows: the caller holds only that
-    member's lock. Stages the update; the caller commits."""
+    """Fail an order's overdue jobs (a backstop for lost events), so they don't
+    block its next batch. Only that order's rows: the caller holds only that
+    order's lock. Stages the update; the caller commits."""
     stale = session.execute(
         update(Job)
-        .where(col(Job.requested_by) == member_id)
+        .where(col(Job.grocery_order_id) == grocery_order_id)
         .where(
             (
                 (col(Job.status) == JobStatus.PENDING)

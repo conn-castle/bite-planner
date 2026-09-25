@@ -1,0 +1,128 @@
+.notice {
+  margin-top: 14px;
+}
+
+.meal {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: transparent;
+  font: inherit;
+  color: var(--cc-ink);
+  text-align: left;
+  position: relative;
+  cursor: pointer;
+  transition: background-color 160ms var(--cc-ease);
+}
+
+.meal:active {
+  background: var(--cc-fill);
+}
+
+.meal + .meal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 66px;
+  border-top: 0.5px solid var(--cc-hairline);
+}
+
+.art {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--cc-radius-sm);
+  background: var(--cc-fill);
+}
+
+.art svg {
+  width: 32px;
+  height: 32px;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name small {
+  display: block;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--cc-ink-2);
+}
+
+.chevron {
+  flex: none;
+  font-size: 16px;
+  color: var(--cc-ink-3);
+}
+
+.placed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-top: 48px;
+  animation: rise 460ms var(--cc-ease) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+
+.check {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--cc-success-soft);
+  color: var(--cc-success);
+  font-size: 44px;
+}
+
+.status {
+  margin-top: 22px;
+  padding: 4px 10px;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-success-soft);
+  color: var(--cc-success);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.title {
+  font-family: var(--cc-font-display);
+  margin: 12px 0 0;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.text {
+  margin: 10px 0 0;
+  max-width: 320px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--cc-ink-2);
+  text-wrap: pretty;
+}

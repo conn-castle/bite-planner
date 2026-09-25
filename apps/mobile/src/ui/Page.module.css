@@ -1,3 +1,8 @@
 .body {
   padding: 4px var(--cc-page-x) var(--cc-tab-bar-clearance);
 }
+
+/* A page pushed onto a nav in a card: no tab bar to clear. */
+.navBody {
+  padding: 4px var(--cc-page-x) calc(var(--ion-safe-area-bottom, 0px) + 32px);
+}
