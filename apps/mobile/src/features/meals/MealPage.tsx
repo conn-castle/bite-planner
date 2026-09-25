@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import type { Meal } from '../../lib/api/types'
+import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { Stepper } from '../../ui/Stepper'
-import { formatMinutes } from './facts'
 import styles from './MealPage.module.css'
 import { mealQuery } from './meals'
 import { formatQuantity, formatUnit, scaleIngredient } from './servings'
@@ -15,7 +15,7 @@ const MAX_SERVINGS = 24
 // Servings picked per meal, kept while the app is open so going back and forth doesn't reset them.
 const pickedServings = new Map<string, number>()
 
-/** A full recipe, pushed onto a nav: facts, servings, ingredients scaled to them, and the method. */
+/** A full recipe, pushed onto a nav: facts, servings, ingredients scaled to them, and the steps. */
 export function MealPage({ mealId }: { mealId: string }) {
   const meal = useQuery(mealQuery(mealId))
 
@@ -47,9 +47,9 @@ function Recipe({ meal }: { meal: Meal }) {
   }
   const ingredients = meal.ingredients
   const facts = [
-    meal.active_time_minutes != null && { label: 'Active', value: formatMinutes(meal.active_time_minutes) },
-    meal.total_time_minutes != null && { label: 'Total', value: formatMinutes(meal.total_time_minutes) },
-    { label: 'Ingredients', value: String(ingredients.length) },
+    meal.total_time_minutes != null && { label: 'min total', value: meal.total_time_minutes },
+    meal.active_time_minutes != null && { label: 'hands-on', value: meal.active_time_minutes },
+    { label: 'ingredients', value: ingredients.length },
   ].filter((fact) => fact !== false)
 
   return (
@@ -68,12 +68,15 @@ function Recipe({ meal }: { meal: Meal }) {
 
       <div className={styles.servings}>
         <span className={styles.servingsLabel}>
-          Servings
-          {servings !== meal.servings && (
-            <button type="button" className={styles.reset} onClick={() => setServings(meal.servings)}>
-              Reset to {meal.servings}
-            </button>
-          )}
+          <Icon name="users" />
+          <span>
+            Servings
+            {servings !== meal.servings && (
+              <button type="button" className={styles.reset} onClick={() => setServings(meal.servings)}>
+                Reset to {meal.servings}
+              </button>
+            )}
+          </span>
         </span>
         <Stepper value={servings} min={1} max={MAX_SERVINGS} onChange={setServings} label="Servings" />
       </div>
@@ -92,23 +95,22 @@ function Recipe({ meal }: { meal: Meal }) {
                 {quantity != null && formatQuantity(quantity)}
                 {ingredient.unit && ` ${formatUnit(ingredient.unit, quantity ?? 1)}`}
               </span>
-              <span className={styles.item}>
+              <span>
                 {ingredient.name}
-                {ingredient.preparation && <span className={styles.prep}>, {ingredient.preparation}</span>}
+                {ingredient.preparation && `, ${ingredient.preparation}`}
               </span>
             </li>
           )
         })}
       </ul>
 
-      <h2 className={styles.heading}>Method</h2>
-      <ol className={styles.steps}>
+      <h2 className={styles.heading}>Steps</h2>
+      <ol className={styles.ingredients}>
         {meal.steps.map((step, index) => (
-          <li key={index} className={styles.step}>
-            <span className={styles.number} aria-hidden="true">
-              {index + 1}
-            </span>
-            <p>{step}</p>
+          <li key={index} className={styles.ingredient}>
+            {/* Not aria-hidden: without list markers (list-style: none), VoiceOver announces no step numbers of its own. */}
+            <span className={styles.number}>{index + 1}</span>
+            <span>{step}</span>
           </li>
         ))}
       </ol>

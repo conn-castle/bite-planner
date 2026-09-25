@@ -1,12 +1,11 @@
-import { IonIcon } from '@ionic/react'
-import { chevronForward } from 'ionicons/icons'
 import type { ReactNode } from 'react'
 import styles from './Group.module.css'
+import { Icon } from './Icon'
 
 /** A titled card of related rows. */
 export function Group({ title, footer, children }: { title?: string; footer?: ReactNode; children: ReactNode }) {
   return (
-    <section className={styles.group}>
+    <section>
       {title && <h2 className={styles.title}>{title}</h2>}
       <div className={styles.card}>{children}</div>
       {footer && <p className={styles.footer}>{footer}</p>}
@@ -15,8 +14,10 @@ export function Group({ title, footer, children }: { title?: string; footer?: Re
 }
 
 interface RowProps {
-  icon?: string
   label: ReactNode
+  /** A quieter line under the label. */
+  sub?: ReactNode
+  /** A value at the end of the row. */
   detail?: ReactNode
   /** Makes the row a button. */
   onClick?: () => void
@@ -26,17 +27,16 @@ interface RowProps {
   chevron?: boolean
 }
 
-export function Row({ icon, label, detail, onClick, disabled, tone = 'default', chevron }: RowProps) {
+/** A row of a group: a label (and a line under it), then a value. */
+export function Row({ label, sub, detail, onClick, disabled, tone = 'default', chevron }: RowProps) {
   const content = (
     <>
-      {icon && (
-        <span className={styles.iconTile} aria-hidden="true">
-          <IonIcon icon={icon} />
-        </span>
-      )}
-      <span className={styles.label}>{label}</span>
+      <span className={styles.label}>
+        <span className={styles.text}>{label}</span>
+        {sub != null && <span className={styles.sub}>{sub}</span>}
+      </span>
       {detail != null && <span className={styles.detail}>{detail}</span>}
-      {chevron && <IonIcon icon={chevronForward} className={styles.chevron} aria-hidden="true" />}
+      {chevron && <Icon name="chevR" className={styles.chevron} />}
     </>
   )
   const className = `${styles.row} ${tone === 'danger' ? styles.danger : ''}`
@@ -46,5 +46,28 @@ export function Row({ icon, label, detail, onClick, disabled, tone = 'default', 
     </button>
   ) : (
     <div className={className}>{content}</div>
+  )
+}
+
+interface ListRowProps {
+  /** A 40px picture at the start, e.g. the meal's. */
+  art: ReactNode
+  /** A small line over the name, e.g. "35 min". */
+  overline?: ReactNode
+  label: ReactNode
+  onClick: () => void
+}
+
+/** A row that opens something, with a picture: e.g. a meal in a list of meals. */
+export function ListRow({ art, overline, label, onClick }: ListRowProps) {
+  return (
+    <button type="button" className={`${styles.listRow} ${styles.pressable}`} onClick={onClick}>
+      <span className={styles.art}>{art}</span>
+      <span className={styles.label}>
+        {overline != null && <span className={styles.overline}>{overline}</span>}
+        <span className={styles.name}>{label}</span>
+      </span>
+      <Icon name="chevR" className={styles.chevron} />
+    </button>
   )
 }

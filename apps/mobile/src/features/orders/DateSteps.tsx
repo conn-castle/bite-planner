@@ -1,5 +1,3 @@
-import { IonIcon } from '@ionic/react'
-import { sparkles } from 'ionicons/icons'
 import type { ReactNode } from 'react'
 import type { GroceryOrder, ISODate } from '../../lib/api/types'
 import { formatDate, localDate, toLocalDate } from '../../lib/dates'
@@ -7,6 +5,7 @@ import { haptics } from '../../lib/haptics'
 import { useNow } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { DateBar } from '../../ui/DateBar'
+import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import {
   addDays,
@@ -104,7 +103,7 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DateStepProps) 
             title={shown ? formatDate(shown, 'medium') : 'No date yet'}
             detail={shown ? 'Delivery date' : 'Pick a delivery date'}
           />
-          <Button size="medium" onClick={next} disabled={shown === null || saving}>
+          <Button large onClick={next} disabled={shown === null || saving}>
             Next
           </Button>
         </>
@@ -175,14 +174,14 @@ export function NextDeliveryStep({ order, delivery, onBack, onNext, onClose }: D
       title="Next delivery"
       lede={
         <>
-          This order's meals cover you from <b>{formatDate(delivery, 'medium')}</b> until the next delivery. When
-          should Order {order.number + 1} arrive?
+          This order's meals cover you from {formatDate(delivery, 'medium')} until the next delivery. When should
+          Order {order.number + 1} arrive?
         </>
       }
       footer={
         <>
           <FooterSummary title={formatDate(shown, 'medium')} detail={`Next delivery · covers ${plural(days, 'day')}`} />
-          <Button size="medium" onClick={next} disabled={saving}>
+          <Button large onClick={next} disabled={saving}>
             Next
           </Button>
         </>
@@ -246,7 +245,7 @@ function ChoiceCard({ label, recommended, date, children }: ChoiceCardProps) {
   return (
     <div className={`${styles.choice} ${recommended ? styles.recommended : ''}`}>
       <div className={styles.choiceLabel}>
-        {recommended && <IonIcon icon={sparkles} aria-hidden="true" />}
+        {recommended && <Icon name="spark" />}
         {label}
       </div>
       <div className={styles.choiceDate}>{date}</div>

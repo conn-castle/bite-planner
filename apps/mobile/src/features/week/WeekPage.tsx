@@ -4,9 +4,10 @@ import type { GroceryOrder } from '../../lib/api/types'
 import { localDate, toLocalDate } from '../../lib/dates'
 import { useNow } from '../../lib/useNow'
 import { PlateArt } from '../../ui/art'
-import { Button } from '../../ui/Button'
+import { Button, IconButton } from '../../ui/Button'
 import { DateBar } from '../../ui/DateBar'
 import { EmptyState } from '../../ui/EmptyState'
+import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import { Page } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
@@ -16,18 +17,17 @@ import { plural } from '../orders/format'
 import { OrderFlowModal } from '../orders/OrderFlow'
 import { useDiscardOrder, useDraft } from '../orders/orders'
 import { useSession } from '../session/session'
-import { daysOfWeek, formatWeekRange, weekBar } from './week'
+import { weekBar } from './week'
 import styles from './WeekPage.module.css'
 
 // How often the page checks whether the phone's calendar day has changed.
 const DAY_CHECK_MS = 60_000
 
-/** This week, and the way into ordering: start an order, or continue or discard the household's draft. */
+/** Orders: this week's days, and the way into ordering: start an order, or continue or discard the household's draft. */
 export function WeekPage() {
   // Checked every minute, so the week moves on at midnight while the tab stays open.
   const day = localDate(useNow(DAY_CHECK_MS))
   const today = useMemo(() => toLocalDate(day), [day])
-  const days = useMemo(() => daysOfWeek(today), [today])
   const bar = useMemo(() => weekBar(today), [today])
   const page = useRef<HTMLElement>(null)
   const [presentingElement, setPresentingElement] = useState<HTMLElement>()
@@ -60,9 +60,19 @@ export function WeekPage() {
   }
 
   return (
-    <Page title="This week" largeTitle pageRef={page} onRefresh={() => draft.refetch()}>
-      <p className={styles.range}>{formatWeekRange(days)}</p>
-      <DateBar days={bar} selected={day} label="This week" scrollable={false} />
+    <Page
+      title="Orders"
+      overline={today.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+      actions={
+        // Opens the flow, which continues the household's draft or starts one.
+        <IconButton variant="white" aria-label={draft.data ? 'Continue order' : 'Start an order'} onClick={openFlow}>
+          <Icon name="plus" />
+        </IconButton>
+      }
+      pageRef={page}
+      onRefresh={() => draft.refetch()}
+    >
+      <DateBar days={bar} selected={day} label="This week" scrollable={false} compact />
 
       {draft.isError && (
         <div className={styles.notice}>
@@ -79,7 +89,7 @@ export function WeekPage() {
 
       {draft.isPending && !draft.isError && (
         <div className={styles.notice}>
-          <Skeleton height={220} />
+          <Skeleton height={220} radius={26} />
         </div>
       )}
       {draft.data === null && (
@@ -92,13 +102,15 @@ export function WeekPage() {
         </EmptyState>
       )}
       {draft.data && (
-        <DraftCard
-          order={draft.data}
-          userId={userId}
-          onContinue={openFlow}
-          onDiscard={() => draft.data && confirmDiscard(draft.data)}
-          discarding={discard.isPending}
-        />
+        <div className={styles.stack}>
+          <DraftCard
+            order={draft.data}
+            userId={userId}
+            onContinue={openFlow}
+            onDiscard={() => draft.data && confirmDiscard(draft.data)}
+            discarding={discard.isPending}
+          />
+        </div>
       )}
 
       <OrderFlowModal isOpen={flowOpen} onDismiss={() => setFlowOpen(false)} presentingElement={presentingElement} />

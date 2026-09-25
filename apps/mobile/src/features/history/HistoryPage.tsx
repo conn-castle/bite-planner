@@ -1,14 +1,11 @@
-import { PotArt } from '../../ui/art'
-import { EmptyState } from '../../ui/EmptyState'
 import { Page } from '../../ui/Page'
+import styles from './HistoryPage.module.css'
 
 /** Past orders. Placed orders aren't listed yet, so this is always empty for now. */
 export function HistoryPage() {
   return (
-    <Page title="History" largeTitle>
-      <EmptyState art={<PotArt />} title="No past orders yet">
-        Past orders and their meals will show here.
-      </EmptyState>
+    <Page title="History">
+      <h2 className={styles.empty}>Past orders and their meals will show here.</h2>
     </Page>
   )
 }

@@ -1,27 +1,18 @@
-import { IonIcon, IonLabel, IonRouterOutlet, IonTabBar, IonTabButton, IonTabs } from '@ionic/react'
-import {
-  calendarClear,
-  calendarClearOutline,
-  settings,
-  settingsOutline,
-  time,
-  timeOutline,
-} from 'ionicons/icons'
-import { Navigate, Route, useLocation } from 'react-router-dom'
+import { IonLabel, IonRouterOutlet, IonTabBar, IonTabButton, IonTabs } from '@ionic/react'
+import { Navigate, Route } from 'react-router-dom'
 import { HistoryPage } from '../features/history/HistoryPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { WeekPage } from '../features/week/WeekPage'
+import { Icon, type IconName } from '../ui/Icon'
 
-const TABS = [
-  { tab: 'week', label: 'This week', icon: calendarClearOutline, selectedIcon: calendarClear },
-  { tab: 'history', label: 'History', icon: timeOutline, selectedIcon: time },
-  { tab: 'settings', label: 'Settings', icon: settingsOutline, selectedIcon: settings },
+const TABS: { tab: string; label: string; icon: IconName }[] = [
+  { tab: 'week', label: 'Orders', icon: 'stack' },
+  { tab: 'history', label: 'History', icon: 'clock' },
+  { tab: 'settings', label: 'Settings', icon: 'sliders' },
 ]
 
 /** The signed-in app: three tabs, each with its own navigation stack. */
 export function Tabs() {
-  const current = useLocation().pathname.split('/')[1]
-
   return (
     <IonTabs>
       <IonRouterOutlet>
@@ -31,9 +22,9 @@ export function Tabs() {
         <Route path="*" element={<Navigate to="/week" replace />} />
       </IonRouterOutlet>
       <IonTabBar slot="bottom">
-        {TABS.map(({ tab, label, icon, selectedIcon }) => (
+        {TABS.map(({ tab, label, icon }) => (
           <IonTabButton key={tab} tab={tab} href={`/${tab}`}>
-            <IonIcon aria-hidden="true" icon={current === tab ? selectedIcon : icon} />
+            <Icon name={icon} />
             <IonLabel>{label}</IonLabel>
           </IonTabButton>
         ))}

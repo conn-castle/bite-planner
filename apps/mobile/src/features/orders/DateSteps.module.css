@@ -1,4 +1,4 @@
-/* The date steps (spec/mockup.html: .lab, .rec). The day chips are DateBar's. */
+/* The date steps (spec/mockup.html: .rec, .lab). The day chips are DateBar's. */
 
 .label {
   display: flex;
@@ -19,13 +19,12 @@
   padding: 18px;
   border-radius: 22px;
   background: var(--cc-bg);
-  outline: 1.5px solid var(--cc-hairline);
-  outline-offset: -1.5px;
+  border: 1.5px solid var(--cc-hairline);
 }
 
 .recommended {
   background: var(--cc-accent-soft);
-  outline-color: var(--cc-accent);
+  border-color: var(--cc-accent);
 }
 
 .choiceLabel {
@@ -53,9 +52,8 @@
 /* What the delivery date means; two lines' room whatever it says, so nothing moves. */
 .why {
   margin: 4px 0 0;
-  min-height: calc(2 * 1.4em);
+  min-height: calc(2 * 1.35em);
   font-size: 14px;
-  line-height: 1.4;
   color: var(--cc-ink-2);
 }
 
@@ -67,7 +65,6 @@
   display: grid;
   row-gap: 4px;
   font-size: 14px;
-  line-height: 1.4;
 }
 
 .facts div {
@@ -90,7 +87,6 @@
 .fit {
   margin: 8px 0 0;
   font-size: 13px;
-  line-height: 1.4;
   color: var(--cc-ink-2);
   white-space: nowrap;
   overflow: hidden;

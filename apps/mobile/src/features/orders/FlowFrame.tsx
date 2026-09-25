@@ -1,7 +1,7 @@
-import { IonContent, IonFooter, IonHeader, IonIcon, IonToolbar } from '@ionic/react'
-import { chevronBack, close } from 'ionicons/icons'
+import { IonContent, IonFooter, IonHeader, IonToolbar } from '@ionic/react'
 import { type ReactNode, useContext } from 'react'
 import { IconButton } from '../../ui/Button'
+import { Icon } from '../../ui/Icon'
 import { FlowNotice } from './flowNotice'
 import styles from './FlowFrame.module.css'
 
@@ -26,11 +26,13 @@ export function FlowFrame({ step, onBack, onClose, title, lede, footer, children
   return (
     <>
       <IonHeader className={styles.header}>
+        {/* The card closes with a swipe down, too. */}
+        <div className={styles.grab} aria-hidden="true" />
         <IonToolbar>
           <div className={styles.bar}>
             {onBack ? (
-              <button type="button" className={styles.back} onClick={onBack}>
-                <IonIcon icon={chevronBack} aria-hidden="true" />
+              <button type="button" className={`${styles.back} cc-hit`} onClick={onBack}>
+                <Icon name="chevL" />
                 Back
               </button>
             ) : (
@@ -43,13 +45,14 @@ export function FlowFrame({ step, onBack, onClose, title, lede, footer, children
                 ))}
               </div>
             )}
-            <IconButton aria-label="Close" onClick={onClose} className={styles.close}>
-              <IonIcon icon={close} aria-hidden="true" />
+            <IconButton variant="fill" aria-label="Close" onClick={onClose}>
+              <Icon name="x" />
             </IconButton>
           </div>
         </IonToolbar>
       </IonHeader>
-      <IonContent>
+      {/* Content scrolls on under the glass footer. */}
+      <IonContent fullscreen>
         <div className={styles.body}>
           {notice && <div className={styles.notice}>{notice}</div>}
           {title && <h2 className={styles.title}>{title}</h2>}

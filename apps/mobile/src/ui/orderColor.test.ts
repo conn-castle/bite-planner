@@ -8,4 +8,9 @@ describe('orderColor', () => {
     expect(orderColor(5)).toBe('var(--cc-order-5)')
     expect(orderColor(6)).toBe('var(--cc-order-1)')
   })
+
+  it("gives the order's soft and deep tones of the same color", () => {
+    expect(orderColor(2, 'soft')).toBe('var(--cc-order-2-soft)')
+    expect(orderColor(7, 'deep')).toBe('var(--cc-order-2-deep)')
+  })
 })

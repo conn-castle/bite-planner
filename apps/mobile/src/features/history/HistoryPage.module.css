@@ -1,0 +1,11 @@
+/* spec/mockup.html: History with no orders yet */
+/* The screen's heading (its only content), in the look of the mockup's plain empty text. */
+.empty {
+  margin: 0;
+  padding: 80px 30px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--cc-ink-3);
+}

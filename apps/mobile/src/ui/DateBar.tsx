@@ -38,6 +38,12 @@ interface DateBarProps {
   label: string
   /** Scroll sideways (the default), or fit every day across the width. */
   scrollable?: boolean
+  /**
+   * The small calendar strip in a card (home), instead of large chips: a
+   * letter for the weekday, and today in a filled circle. It shows no other
+   * tags and no legend.
+   */
+  compact?: boolean
 }
 
 /**
@@ -45,88 +51,120 @@ interface DateBarProps {
  * color, days that can't be chosen are greyed out, and a tag under a date
  * marks today, the target, or the recommended day.
  */
-export function DateBar({ days, selected, onChoose, label, scrollable = true }: DateBarProps) {
+export function DateBar({ days, selected, onChoose, label, scrollable = true, compact = false }: DateBarProps) {
   const strip = useRef<HTMLDivElement>(null)
 
-  // Show the highlighted day, even when it is far along a scrolling bar.
+  // Keep the highlighted day in view, from the start and whenever it changes;
+  // a day already in view stays put.
   useLayoutEffect(() => {
-    const element = strip.current
-    const chosen = element?.querySelector<HTMLElement>('[data-selected="true"]')
-    if (!scrollable || !element || !chosen) return
-    if (chosen.offsetLeft + chosen.offsetWidth > element.clientWidth) {
-      element.scrollLeft = chosen.offsetLeft - parseFloat(getComputedStyle(element).paddingLeft)
-    }
-  }, [scrollable])
+    if (!scrollable) return
+    strip.current
+      ?.querySelector<HTMLElement>('[data-selected="true"]')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [scrollable, selected])
 
   const orders = [...new Set(days.flatMap((day) => (day.coveredBy === null ? [] : [day.coveredBy])))]
   const fit: CSSProperties = scrollable ? {} : { gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }
 
+  const bar = (
+    <div
+      ref={strip}
+      className={`${compact ? styles.compact : styles.chips} ${scrollable ? styles.scroll : styles.fit}`}
+      style={fit}
+      role={onChoose ? 'radiogroup' : 'list'}
+      aria-label={label}
+    >
+      {days.map(({ date, coveredBy, selectable, tag }, index) => {
+        const isSelected = date === selected
+        const cover: CSSProperties & { '--cover'?: string } =
+          coveredBy === null ? {} : { '--cover': orderColor(coveredBy) }
+        const className = [
+          styles.day,
+          isSelected && styles.selected,
+          !selectable && styles.unavailable,
+          compact && tag === 'today' && styles.today,
+        ]
+          .filter(Boolean)
+          .join(' ')
+        const description = [
+          formatDate(date, 'long'),
+          tag && TAG_TEXT[tag],
+          coveredBy !== null && `meals from Order ${coveredBy}`,
+          onChoose && !selectable && 'not available',
+        ]
+          .filter(Boolean)
+          .join(', ')
+        const day = toLocalDate(date)
+        // The compact strip names the month on its first day, and joins the bars of days an order covers.
+        const firstOfMonth = compact && day.getDate() === 1
+        const joined = (neighbor: BarDay | undefined) => coveredBy !== null && neighbor?.coveredBy === coveredBy
+        const content = compact ? (
+          <>
+            <small className={firstOfMonth ? styles.month : undefined}>
+              {firstOfMonth
+                ? day.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()
+                : day.toLocaleDateString(undefined, { weekday: 'narrow' })}
+            </small>
+            <b>{day.getDate()}</b>
+            <i
+              className={[
+                styles.cover,
+                joined(days[index - 1]) && styles.joinStart,
+                joined(days[index + 1]) && styles.joinEnd,
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              aria-hidden="true"
+            />
+          </>
+        ) : (
+          <>
+            <small>{day.toLocaleDateString(undefined, { weekday: 'short' })}</small>
+            <b>{day.getDate()}</b>
+            {coveredBy !== null && <i className={styles.cover} aria-hidden="true" />}
+            {tag && (
+              <span className={`${styles.tag} ${QUIET_TAGS.has(tag) ? styles.quiet : ''}`} aria-hidden="true">
+                {TAG_TEXT[tag]}
+              </span>
+            )}
+          </>
+        )
+        return onChoose ? (
+          <button
+            key={date}
+            type="button"
+            role="radio"
+            aria-checked={isSelected}
+            aria-label={description}
+            data-selected={isSelected}
+            disabled={!selectable}
+            className={className}
+            style={cover}
+            onClick={() => !isSelected && onChoose(date)}
+          >
+            {content}
+          </button>
+        ) : (
+          <div
+            key={date}
+            role="listitem"
+            aria-label={description}
+            aria-current={isSelected ? 'date' : undefined}
+            data-selected={isSelected}
+            className={`${className} ${styles.static}`}
+            style={cover}
+          >
+            {content}
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  if (compact) return <div className={styles.box}>{bar}</div>
   return (
     <>
-      <div
-        ref={strip}
-        className={`${styles.days} ${scrollable ? styles.scroll : styles.fit}`}
-        style={fit}
-        role={onChoose ? 'radiogroup' : 'list'}
-        aria-label={label}
-      >
-        {days.map(({ date, coveredBy, selectable, tag }) => {
-          const isSelected = date === selected
-          const cover: CSSProperties & { '--cover'?: string } =
-            coveredBy === null ? {} : { '--cover': orderColor(coveredBy) }
-          const className = [styles.day, isSelected && styles.selected, !selectable && styles.unavailable]
-            .filter(Boolean)
-            .join(' ')
-          const description = [
-            formatDate(date, 'long'),
-            tag && TAG_TEXT[tag],
-            coveredBy !== null && `meals from Order ${coveredBy}`,
-            onChoose && !selectable && 'not available',
-          ]
-            .filter(Boolean)
-            .join(', ')
-          const content = (
-            <>
-              <small>{toLocalDate(date).toLocaleDateString(undefined, { weekday: 'short' })}</small>
-              <b>{toLocalDate(date).getDate()}</b>
-              {coveredBy !== null && <i className={styles.cover} aria-hidden="true" />}
-              {tag && (
-                <span className={`${styles.tag} ${QUIET_TAGS.has(tag) ? styles.quiet : ''}`} aria-hidden="true">
-                  {TAG_TEXT[tag]}
-                </span>
-              )}
-            </>
-          )
-          return onChoose ? (
-            <button
-              key={date}
-              type="button"
-              role="radio"
-              aria-checked={isSelected}
-              aria-label={description}
-              data-selected={isSelected}
-              disabled={!selectable}
-              className={className}
-              style={cover}
-              onClick={() => !isSelected && onChoose(date)}
-            >
-              {content}
-            </button>
-          ) : (
-            <div
-              key={date}
-              role="listitem"
-              aria-label={description}
-              aria-current={isSelected ? 'date' : undefined}
-              data-selected={isSelected}
-              className={`${className} ${styles.static}`}
-              style={cover}
-            >
-              {content}
-            </div>
-          )
-        })}
-      </div>
+      {bar}
       {orders.length > 0 && (
         <div className={styles.legend}>
           {orders.map((order) => (

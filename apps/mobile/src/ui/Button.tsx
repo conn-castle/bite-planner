@@ -2,32 +2,37 @@ import type { ButtonHTMLAttributes } from 'react'
 import styles from './Button.module.css'
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'accent' | 'secondary' | 'plain' | 'danger'
-  size?: 'large' | 'medium'
-  /** Stretches across its container. */
+  variant?: 'primary' | 'accent' | 'secondary' | 'plain'
+  /** Stretches across its container, as a rounded rectangle; always the large size. */
   block?: boolean
+  /** The large size, e.g. a sheet footer's main action. */
+  large?: boolean
 }
 
 /** The app's buttons: an ink pill for the main action (accent for committing, e.g. placing an order), a soft fill for the rest. */
 export function Button({
   variant = 'primary',
-  size = 'large',
   block = false,
+  large = false,
   className,
   type = 'button',
   ...props
 }: ButtonProps) {
-  const classes = [styles.button, styles[variant], styles[size], block && styles.block, className]
+  const classes = [styles.button, styles[variant], (block || large) && styles.large, block && styles.block, 'cc-hit', className]
   return <button type={type} className={classes.filter(Boolean).join(' ')} {...props} />
 }
 
-/** A round icon button for toolbars. */
+/**
+ * A round icon button: a soft fill (e.g. a sheet's Close, or Back), or white
+ * on the warm page (e.g. New order beside a title). It takes taps across at
+ * least 44×44, whatever its drawn size.
+ */
 export function IconButton({
   className,
   type = 'button',
-  variant = 'secondary',
+  variant,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' }) {
-  const classes = [styles.icon, styles[variant], className]
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant: 'fill' | 'white' }) {
+  const classes = [styles.icon, styles[variant], 'cc-hit', className]
   return <button type={type} className={classes.filter(Boolean).join(' ')} {...props} />
 }

@@ -1,10 +1,9 @@
-import { IonIcon } from '@ionic/react'
-import { add, checkmark, peopleOutline, sparkles } from 'ionicons/icons'
 import type { GroceryOrder, Job, MealSummary } from '../../lib/api/types'
 import { haptics } from '../../lib/haptics'
 import { useNow } from '../../lib/useNow'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
+import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import { formatMinutes } from '../meals/facts'
 import { newestBatchState, suggestions } from './batches'
@@ -49,14 +48,14 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
             title={count ? `${plural(count, 'meal')} added` : 'No meals added yet'}
             detail={count ? `Covers about ${plural(count, 'day')}` : 'Tap Add on the meals you want'}
           />
-          <Button size="medium" onClick={onNext} disabled={count === 0 || saving}>
+          <Button large onClick={onNext} disabled={count === 0 || saving}>
             Next
           </Button>
         </>
       }
     >
       <p className={styles.note}>
-        <IonIcon icon={peopleOutline} aria-hidden="true" />
+        <Icon name="users" />
         Your picks are saved for the household as you go.
       </p>
       {setMeal.isError && (
@@ -118,7 +117,7 @@ function MealCard({ meal, added, onToggle, onOpen }: MealCardProps) {
         aria-pressed={added}
         aria-label={added ? `Remove ${meal.name}` : `Add ${meal.name}`}
       >
-        <IonIcon icon={added ? checkmark : add} aria-hidden="true" />
+        <Icon name={added ? 'check' : 'plus'} />
         {added ? 'Added' : 'Add'}
       </button>
     </div>
@@ -145,7 +144,7 @@ function MoreMeals({ order }: { order: GroceryOrder }) {
       {batch.status !== 'failed' && (
         <>
           <Button variant="secondary" block onClick={start} disabled={generate.isPending}>
-            <IonIcon icon={sparkles} aria-hidden="true" />
+            <Icon name="spark" />
             Generate more
           </Button>
           <p className={styles.hint}>20 more ideas below · takes a minute or two</p>

@@ -1,3 +1,5 @@
+/* spec/mockup.html: .btn, .btn.block, .sh-foot .btn, .sh-top .x, .round-btn */
+
 .button,
 .icon {
   appearance: none;
@@ -6,10 +8,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
   font: inherit;
-  font-weight: 600;
-  letter-spacing: -0.01em;
   cursor: pointer;
   user-select: none;
   transition:
@@ -21,12 +20,12 @@
 /* Feedback on press, not on release. */
 .button:active:not(:disabled),
 .icon:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: scale(0.96);
 }
 
 .button:disabled,
 .icon:disabled {
-  opacity: 0.38;
+  opacity: 0.35;
   cursor: default;
 }
 
@@ -36,23 +35,31 @@
   outline-offset: 2px;
 }
 
-.large {
-  height: 56px;
-  padding: 0 28px;
-  font-size: 17px;
+.button {
+  gap: 6px;
+  /* The mockup's 40px; taps reach 44px through .cc-hit. */
+  height: 40px;
+  padding: 0 16px;
   border-radius: var(--cc-radius-pill);
+  font-size: 15px;
+  font-weight: 650;
+  white-space: nowrap;
 }
 
-.medium {
-  height: 44px;
-  padding: 0 20px;
-  font-size: 15px;
-  border-radius: var(--cc-radius-pill);
+.large {
+  height: 50px;
+  padding: 0 26px;
+  font-size: 16.5px;
+}
+
+.button svg {
+  font-size: 17px;
 }
 
 .block {
   display: flex;
   width: 100%;
+  border-radius: 16px;
 }
 
 .primary {
@@ -77,19 +84,31 @@
 .plain {
   background: transparent;
   color: var(--cc-ink-2);
-  height: auto;
-  padding: 10px 12px;
-}
-
-.danger {
-  background: var(--cc-danger-soft);
-  color: var(--cc-danger);
+  padding: 0 12px;
 }
 
 .icon {
-  width: 36px;
-  height: 36px;
   padding: 0;
-  border-radius: var(--cc-radius-pill);
-  font-size: 20px;
+  border-radius: 50%;
+}
+
+.fill {
+  width: 32px;
+  height: 32px;
+  background: var(--cc-fill);
+  color: var(--cc-ink-2);
+  font-size: 16px;
+}
+
+.fill svg {
+  stroke-width: 2.6;
+}
+
+.white {
+  width: 38px;
+  height: 38px;
+  background: var(--cc-bg);
+  box-shadow: var(--cc-shadow-card);
+  color: var(--cc-ink);
+  font-size: 19px;
 }

@@ -1,20 +1,13 @@
-/* Every row of days in the app (spec/mockup.html: .dchips, .dchip, .legend). */
+/*
+ * Every row of days in the app. Two looks of the same days:
+ * chips (spec/mockup.html: .dchips, .dchip, .legend) and the compact strip
+ * in a card (.strip-box, .strip, .dc).
+ */
 
-.days {
-  position: relative; /* the chips' offsetParent, for scrolling the chosen one into view */
-  /* Room below for the tags, which hang 9px under the chips. */
-  padding-top: 2px;
-  padding-bottom: 10px;
-}
-
-/* Scrolls sideways, edge to edge. */
+/* Scrolls sideways. */
 .scroll {
   display: flex;
-  gap: 8px;
   overflow-x: auto;
-  margin: 0 calc(-1 * var(--cc-page-x));
-  padding-left: var(--cc-page-x);
-  padding-right: var(--cc-page-x);
   scrollbar-width: none;
 }
 
@@ -22,59 +15,20 @@
   display: none;
 }
 
-.scroll .day {
-  flex: none;
-  width: 58px;
-}
-
 /* Every day fits across the width (the columns are set inline). */
 .fit {
   display: grid;
-  gap: 6px;
 }
 
 .day {
   appearance: none;
   border: 0;
+  margin: 0;
   position: relative;
-  padding: 9px 0 10px;
-  border-radius: 16px;
-  background: var(--cc-fill);
   font: inherit;
   color: var(--cc-ink);
   text-align: center;
   cursor: pointer;
-  transition:
-    background-color 200ms var(--cc-ease),
-    transform var(--cc-press) var(--cc-ease);
-}
-
-.day:active:not(:disabled) {
-  transform: scale(0.95);
-}
-
-.day small {
-  display: block;
-  font-size: 11.5px;
-  font-weight: 650;
-  color: var(--cc-ink-2);
-}
-
-.day b {
-  display: block;
-  font-family: var(--cc-font-display);
-  font-size: 21px;
-  font-weight: 700;
-  line-height: 1.15;
-}
-
-.selected {
-  background: var(--cc-ink);
-  color: var(--cc-on-ink);
-}
-
-.selected small {
-  color: var(--cc-on-ink-2);
 }
 
 /* A day shown, not chosen. */
@@ -82,29 +36,88 @@
   cursor: default;
 }
 
-.static:active {
-  transform: none;
+/* ---- Chips ---- */
+
+.chips {
+  gap: 8px;
+  /* The mockup's 4px clips the tags that hang 7px under the chips; 8px shows them whole. */
+  padding-top: 2px;
+  padding-bottom: 8px;
+}
+
+.chips.scroll {
+  margin: 0 calc(-1 * var(--cc-page-x));
+  padding-left: var(--cc-page-x);
+  padding-right: var(--cc-page-x);
+  /* A day scrolled into view stops at the page's margin, not the screen's edge. */
+  scroll-padding-inline: var(--cc-page-x);
+}
+
+.chips.fit {
+  gap: 6px;
+}
+
+.chips.scroll .day {
+  flex: none;
+  width: 58px;
+}
+
+.chips .day {
+  padding: 9px 0 10px;
+  border-radius: 16px;
+  background: var(--cc-fill);
+  transition:
+    background-color 200ms var(--cc-ease),
+    transform var(--cc-press) var(--cc-ease);
+}
+
+.chips .day:active:not(:disabled):not(.static) {
+  transform: scale(0.95);
+}
+
+.chips .day small {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--cc-ink-2);
+}
+
+.chips .day b {
+  display: block;
+  font-family: var(--cc-font-display);
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.chips .selected {
+  background: var(--cc-ink);
+  color: var(--cc-on-ink);
+}
+
+.chips .selected small {
+  color: var(--cc-on-ink-2);
 }
 
 /* Shown for orientation only, e.g. today, or a past day. */
-.unavailable {
+.chips .unavailable {
   opacity: 0.45;
   cursor: default;
 }
 
-/* The day has meals: a bar in the color of the order they come from, clear of the tag below. */
-.cover {
+/* The day has meals: a bar in the color of the order they come from. */
+.chips .cover {
   position: absolute;
   left: 10px;
   right: 10px;
-  bottom: 7px;
+  bottom: 5px;
   height: 4px;
   border-radius: 2px;
   background: var(--cover);
   opacity: 0.75;
 }
 
-.selected .cover {
+.chips .selected .cover {
   opacity: 1;
   box-shadow: 0 0 0 1.5px var(--cc-ink);
 }
@@ -112,7 +125,7 @@
 .tag {
   position: absolute;
   left: 50%;
-  bottom: -9px;
+  bottom: -7px;
   transform: translateX(-50%);
   padding: 1px 5px;
   border-radius: 6px;
@@ -120,6 +133,7 @@
   color: var(--cc-on-ink);
   font-size: 9.5px;
   font-weight: 700;
+  line-height: 1.35;
   letter-spacing: 0.02em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -130,11 +144,12 @@
   background: var(--cc-ink);
 }
 
+/* 12px under the chips, as in the mockup (its 4px padding + 12px margin). */
 .legend {
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 12px;
   color: var(--cc-ink-3);
 }
@@ -149,4 +164,96 @@
   width: 14px;
   height: 4px;
   border-radius: 2px;
+}
+
+/* ---- Compact strip ---- */
+
+.box {
+  margin-top: 2px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--cc-bg);
+  border: 0.5px solid var(--cc-hairline);
+  box-shadow: 0 1px 2px rgba(20, 19, 17, 0.04);
+}
+
+.compact {
+  padding: 8px 6px 6px;
+}
+
+.compact.scroll .day {
+  flex: none;
+  width: 44px;
+}
+
+.compact .day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 0 3px;
+  border-radius: 12px;
+  background: none;
+}
+
+.compact .day small {
+  height: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 12px;
+  letter-spacing: 0.02em;
+  color: var(--cc-ink-3);
+}
+
+.compact .day small.month {
+  color: var(--cc-ink);
+}
+
+.compact .day b {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 200ms var(--cc-ease);
+}
+
+.compact .unavailable b {
+  color: var(--cc-ink-3);
+}
+
+.compact .today b {
+  background: var(--cc-ink);
+  color: var(--cc-on-ink);
+}
+
+.compact .selected:not(.today) b {
+  background: var(--cc-fill-strong);
+}
+
+.compact .cover {
+  align-self: stretch;
+  height: 5px;
+  margin: 0 9px;
+  border-radius: 3px;
+  background: var(--cover, transparent);
+}
+
+.compact .unavailable .cover {
+  opacity: 0.4;
+}
+
+.compact .joinStart {
+  margin-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.compact .joinEnd {
+  margin-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }

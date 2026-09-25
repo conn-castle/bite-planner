@@ -1,0 +1,34 @@
+/* spec/mockup.html: .chip, .chip.acc, .chip.ok */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--cc-radius-pill);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.chip svg {
+  font-size: 13px;
+}
+
+.default {
+  background: var(--cc-bg);
+  box-shadow: inset 0 0 0 1px rgba(20, 19, 17, 0.14);
+  color: var(--cc-ink);
+}
+
+.accent {
+  background: var(--cc-accent);
+  color: var(--cc-on-ink);
+}
+
+.success {
+  background: var(--cc-success-soft);
+  color: var(--cc-success);
+}

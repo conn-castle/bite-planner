@@ -1,11 +1,11 @@
-import { IonIcon } from '@ionic/react'
-import { checkmark, chevronForward } from 'ionicons/icons'
 import type { GroceryOrder, ISODate } from '../../lib/api/types'
 import { formatDate } from '../../lib/dates'
 import { haptics } from '../../lib/haptics'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
-import { Group, Row } from '../../ui/Group'
+import { Chip } from '../../ui/Chip'
+import { Group, ListRow, Row } from '../../ui/Group'
+import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import { formatMinutes } from '../meals/facts'
 import { pickedMeals } from './batches'
@@ -47,7 +47,7 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onBack, onClose 
       footer={
         <>
           <FooterSummary title={plural(meals.length, 'meal')} detail={`Arrives ${formatDate(delivery, 'medium')}`} />
-          <Button size="medium" variant="accent" onClick={placeOrder} disabled={saving || meals.length === 0}>
+          <Button variant="accent" large onClick={placeOrder} disabled={saving || meals.length === 0}>
             {place.isPending ? 'Placing…' : 'Place order'}
           </Button>
         </>
@@ -58,31 +58,31 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onBack, onClose 
           <Notice>Couldn't place the order: {place.error.message}</Notice>
         </div>
       )}
-      <Group title="Dates">
-        <Row label="Delivery" detail={formatDate(delivery, 'medium')} />
-        <Row label="Next delivery" detail={formatDate(next, 'medium')} />
-        <Row
-          label="Covers"
-          detail={`${formatDate(delivery, 'short')} – ${formatDate(addDays(next, -1), 'short')} · ${plural(days, 'day')}`}
-        />
-      </Group>
-      <Group title="Meals">
-        {meals.map((meal) => {
-          const minutes = meal.total_time_minutes ?? meal.active_time_minutes
-          return (
-            <button key={meal.id} type="button" className={styles.meal} onClick={() => onOpenMeal(meal.id)}>
-              <span className={styles.art}>
-                <MealArt />
-              </span>
-              <span className={styles.name}>
-                {meal.name}
-                {minutes != null && <small>{formatMinutes(minutes)}</small>}
-              </span>
-              <IonIcon icon={chevronForward} className={styles.chevron} aria-hidden="true" />
-            </button>
-          )
-        })}
-      </Group>
+      {/* Groups are cards at the tab screens' inset, not the flow's text inset. */}
+      <div className={styles.groups}>
+        <Group title="Dates">
+          <Row label="Delivery" detail={formatDate(delivery, 'medium')} />
+          <Row label="Next delivery" detail={formatDate(next, 'medium')} />
+          <Row
+            label="Covers"
+            detail={`${formatDate(delivery, 'short')} – ${formatDate(addDays(next, -1), 'short')} · ${plural(days, 'day')}`}
+          />
+        </Group>
+        <Group title="Meals">
+          {meals.map((meal) => {
+            const minutes = meal.total_time_minutes ?? meal.active_time_minutes
+            return (
+              <ListRow
+                key={meal.id}
+                art={<MealArt />}
+                overline={minutes != null ? formatMinutes(minutes) : undefined}
+                label={meal.name}
+                onClick={() => onOpenMeal(meal.id)}
+              />
+            )
+          })}
+        </Group>
+      </div>
     </FlowFrame>
   )
 }
@@ -107,9 +107,11 @@ export function PlacedStep({ order, onClose }: PlacedStepProps) {
     >
       <div className={styles.placed}>
         <span className={styles.check} aria-hidden="true">
-          <IonIcon icon={checkmark} />
+          <Icon name="check" />
         </span>
-        <span className={styles.status}>Order placed</span>
+        <div className={styles.status}>
+          <Chip tone="success">Order placed</Chip>
+        </div>
         <h2 className={styles.title}>Order {order.number} is on its way</h2>
         {delivery && next && (
           <p className={styles.text}>

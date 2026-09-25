@@ -1,15 +1,15 @@
+/* The pick step (spec/mockup.html: .pick-note, .pgrid, .pc, .more). */
+
 .note {
   display: flex;
   gap: 8px;
   align-items: flex-start;
   margin: 10px 0 0;
   font-size: 13px;
-  line-height: 1.4;
   color: var(--cc-ink-3);
 }
 
-.note ion-icon {
-  flex: none;
+.note svg {
   font-size: 15px;
   margin-top: 1px;
 }
@@ -32,10 +32,11 @@
   overflow: hidden;
   border-radius: var(--cc-radius-md);
   background: var(--cc-bg);
-  outline: 1.5px solid var(--cc-hairline);
-  outline-offset: -1.5px;
+  border: 1.5px solid var(--cc-hairline);
   animation: appear 380ms var(--cc-ease) both;
-  transition: outline-color 200ms var(--cc-ease);
+  transition:
+    border-color 200ms var(--cc-ease),
+    background-color 200ms var(--cc-ease);
 }
 
 @keyframes appear {
@@ -46,7 +47,8 @@
 }
 
 .added {
-  outline-color: var(--cc-ink);
+  border-color: var(--cc-ink);
+  background: #fbfaf8;
 }
 
 /* The picture and name: opens the recipe. */
@@ -131,8 +133,9 @@
   transform: scale(0.96);
 }
 
-.add ion-icon {
+.add svg {
   font-size: 15px;
+  stroke-width: 2.6;
 }
 
 .added .add {

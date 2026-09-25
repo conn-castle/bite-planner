@@ -45,29 +45,6 @@ export function PlateArt() {
   )
 }
 
-export function PotArt() {
-  return (
-    <svg viewBox="0 0 148 148" fill="none">
-      <circle cx="74" cy="74" r="70" fill="var(--cc-fill)" />
-      <path
-        d="M58 38c-4 5 4 8 0 14M74 32c-4 6 4 10 0 17M90 38c-4 5 4 8 0 14"
-        stroke="var(--cc-ink-3)"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-      <path d="M38 66h72v28a16 16 0 0 1-16 16H54a16 16 0 0 1-16-16z" fill="#fff" />
-      <path
-        d="M38 66h72v28a16 16 0 0 1-16 16H54a16 16 0 0 1-16-16zM28 70h10M110 70h10"
-        stroke="var(--cc-ink)"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <rect x="36" y="58" width="76" height="8" rx="4" fill="var(--cc-accent)" />
-    </svg>
-  )
-}
-
 /** A neutral plate standing in for a meal's picture until meals have icons. */
 export function MealArt() {
   return (

@@ -1,5 +1,4 @@
 import {
-  IonBackButton,
   IonButtons,
   IonContent,
   IonHeader,
@@ -10,16 +9,17 @@ import {
   IonToolbar,
   type RefresherEventDetail,
 } from '@ionic/react'
-import { chevronBack } from 'ionicons/icons'
 import { type ReactNode, type RefObject, useState } from 'react'
+import { IconButton } from './Button'
+import { Icon } from './Icon'
 import styles from './Page.module.css'
 
 interface PageProps {
-  /** Shown as the collapsing large title on tab roots, or in the toolbar once scrolled. */
+  /** The large title at the top. */
   title: string
-  /** Tab roots get the large title; pushed pages put their own heading in the body. */
-  largeTitle?: boolean
-  /** Toolbar buttons at the end (e.g. "new request"). */
+  /** A small line over the title, e.g. today's date. */
+  overline?: string
+  /** Controls at the end of the title's line, e.g. a round New order button. */
   actions?: ReactNode
   /** Enables pull to refresh. */
   onRefresh?: () => Promise<unknown>
@@ -28,11 +28,35 @@ interface PageProps {
   children: ReactNode
 }
 
-/** The frame of every tab's screen: glass toolbar, optional large title, content that clears the tab bar. */
-export function Page({ pageRef, ...frame }: PageProps) {
+/** The frame of every tab's screen: a large title on the warm page, content that clears the tab bar. */
+export function Page({ title, overline, actions, onRefresh, pageRef, children }: PageProps) {
+  async function refresh(event: CustomEvent<RefresherEventDetail>) {
+    try {
+      await onRefresh?.()
+    } finally {
+      event.detail.complete()
+    }
+  }
+
   return (
     <IonPage ref={pageRef}>
-      <PageFrame {...frame} back={false} bodyClassName={styles.body} />
+      <IonContent className={styles.content}>
+        {onRefresh && (
+          <IonRefresher slot="fixed" onIonRefresh={(event) => void refresh(event)}>
+            <IonRefresherContent />
+          </IonRefresher>
+        )}
+        {/* Content fades out under the status bar. */}
+        <div slot="fixed" className={styles.fade} aria-hidden="true" />
+        <header className={styles.header}>
+          {overline && <p className={styles.overline}>{overline}</p>}
+          <div className={styles.titleRow}>
+            <h1 className={styles.title}>{title}</h1>
+            {actions}
+          </div>
+        </header>
+        <div className={styles.body}>{children}</div>
+      </IonContent>
     </IonPage>
   )
 }
@@ -50,59 +74,27 @@ interface NavPageProps {
  * router outlet, which then decides whether the page is visible.
  */
 export function NavPage({ title, children }: NavPageProps) {
-  return <PageFrame title={title} back bodyClassName={styles.navBody}>{children}</PageFrame>
-}
-
-interface PageFrameProps extends Omit<PageProps, 'pageRef'> {
-  /** Shows a Back button, which goes back in the nearest nav. */
-  back: boolean
-  bodyClassName: string
-}
-
-function PageFrame({ title, largeTitle = false, back, actions, onRefresh, bodyClassName, children }: PageFrameProps) {
-  // Once content scrolls under the toolbar, the toolbar shows its edge (and, on
-  // pushed pages, its title; tab roots hand the title over from the large one).
+  // Once content scrolls under the toolbar, the toolbar shows its glass and title.
   const [scrolled, setScrolled] = useState(false)
-
-  async function refresh(event: CustomEvent<RefresherEventDetail>) {
-    try {
-      await onRefresh?.()
-    } finally {
-      event.detail.complete()
-    }
-  }
 
   return (
     <>
       <IonHeader translucent className={scrolled ? 'cc-scrolled' : undefined}>
-        <IonToolbar>
-          {back && (
-            <IonButtons slot="start">
-              <IonBackButton text="" icon={chevronBack} aria-label="Back" />
-            </IonButtons>
-          )}
-          <IonTitle className={largeTitle ? undefined : 'cc-reveal'}>{title}</IonTitle>
-          {actions && <IonButtons slot="end">{actions}</IonButtons>}
+        <IonToolbar className={styles.navToolbar}>
+          <IonButtons slot="start">
+            <IconButton
+              variant="fill"
+              aria-label="Back"
+              onClick={(event) => void event.currentTarget.closest('ion-nav')?.pop()}
+            >
+              <Icon name="chevL" />
+            </IconButton>
+          </IonButtons>
+          <IonTitle className="cc-reveal">{title}</IonTitle>
         </IonToolbar>
       </IonHeader>
-      <IonContent
-        fullscreen
-        scrollEvents
-        onIonScroll={(event) => setScrolled(event.detail.scrollTop > 8)}
-      >
-        {onRefresh && (
-          <IonRefresher slot="fixed" onIonRefresh={(event) => void refresh(event)}>
-            <IonRefresherContent />
-          </IonRefresher>
-        )}
-        {largeTitle && (
-          <IonHeader collapse="condense">
-            <IonToolbar>
-              <IonTitle size="large">{title}</IonTitle>
-            </IonToolbar>
-          </IonHeader>
-        )}
-        <div className={bodyClassName}>{children}</div>
+      <IonContent fullscreen scrollEvents onIonScroll={(event) => setScrolled(event.detail.scrollTop > 8)}>
+        <div className={styles.navBody}>{children}</div>
       </IonContent>
     </>
   )

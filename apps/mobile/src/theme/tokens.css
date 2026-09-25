@@ -8,6 +8,7 @@
 
   /* Surfaces */
   --cc-bg: #ffffff;
+  --cc-home-bg: #eceae5; /* the warm page behind the tab screens' cards */
   --cc-fill: #f5f4f1; /* warm off-white: inputs, chips, pressed rows */
   --cc-fill-strong: #ecebe7;
   --cc-hairline: rgba(20, 19, 17, 0.08);
@@ -27,12 +28,23 @@
   --cc-danger: #d23b2c;
   --cc-danger-soft: #fcecea;
 
-  /* Each order's color, in turn by order number: the days its meals cover. */
+  /* Each order's color, in turn by order number: the days its meals cover.
+     -soft is its card's tinted head, -deep its text on that tint. */
   --cc-order-1: #6f9a78;
+  --cc-order-1-soft: #eef4ef;
+  --cc-order-1-deep: #4c7456;
   --cc-order-2: #6a8bb5;
+  --cc-order-2-soft: #eef2f8;
+  --cc-order-2-deep: #46668f;
   --cc-order-3: #9a78b0;
+  --cc-order-3-soft: #f4eff7;
+  --cc-order-3-deep: #74558a;
   --cc-order-4: #3f9795;
+  --cc-order-4-soft: #e8f3f3;
+  --cc-order-4-deep: #2c7371;
   --cc-order-5: #c8903a;
+  --cc-order-5-soft: #f8f1e3;
+  --cc-order-5-deep: #94661f;
 
   /* Type */
   /* Text: SF Pro on Apple devices, Inter (with optical sizes) elsewhere.
@@ -50,16 +62,23 @@
   --cc-shadow-card: 0 1px 2px rgba(20, 19, 17, 0.04), 0 10px 28px -14px rgba(20, 19, 17, 0.14);
   --cc-shadow-float: 0 18px 44px -16px rgba(20, 19, 17, 0.3), 0 2px 8px rgba(20, 19, 17, 0.06);
   --cc-glass: rgba(255, 255, 255, 0.74);
+  --cc-glass-strong: rgba(255, 255, 255, 0.86); /* glass that text sits on, e.g. a sheet's footer */
   --cc-glass-blur: blur(24px) saturate(180%);
 
   /* Layout */
-  --cc-page-x: 20px;
+  --cc-page-x: 20px; /* text and headings */
+  --cc-card-x: 16px; /* cards on the tab screens */
   --cc-tab-bar-height: 64px;
-  --cc-tab-bar-gap: 10px;
+  --cc-tab-bar-width: 292px;
+  /* From the screen's bottom edge; never lower than the home indicator's safe area. */
+  --cc-tab-bar-bottom: max(28px, var(--ion-safe-area-bottom, 0px));
   /* Space kept free at the bottom of every tab page for the floating tab bar. */
-  --cc-tab-bar-clearance: calc(
-    var(--cc-tab-bar-height) + var(--cc-tab-bar-gap) + var(--ion-safe-area-bottom, 0px) + 24px
-  );
+  --cc-tab-bar-clearance: calc(var(--cc-tab-bar-height) + var(--cc-tab-bar-bottom) + 40px);
+
+  /* Space the offline banner takes at the top of the tab screens while it shows (app/OfflineBanner). */
+  --cc-offline-space: 0px;
+  /* The smallest area a control takes taps across, however small it's drawn. */
+  --cc-hit-min: 44px;
 
   /* Motion: critically damped ease for UI; springs where a gesture is involved. */
   --cc-ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -89,6 +108,7 @@
 @media (prefers-reduced-transparency: reduce) {
   :root {
     --cc-glass: #ffffff;
+    --cc-glass-strong: #ffffff;
     --cc-glass-blur: none;
   }
 }

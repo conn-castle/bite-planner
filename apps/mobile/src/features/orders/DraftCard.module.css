@@ -1,67 +1,13 @@
-.card {
-  margin-top: 20px;
-  padding: 16px 18px 12px;
-  border-radius: var(--cc-radius-lg);
-  background: var(--cc-bg);
-  box-shadow: var(--cc-shadow-card);
-  outline: 1.5px dashed var(--cc-fill-strong);
-  outline-offset: -1.5px;
-  animation: appear 420ms var(--cc-ease) both;
-}
-
-@keyframes appear {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
-
-.over {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--cc-ink-3);
-}
-
-.chip {
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 9px;
-  border-radius: var(--cc-radius-pill);
-  box-shadow: inset 0 0 0 1px var(--cc-fill-strong);
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--cc-ink);
-}
-
-.title {
-  font-family: var(--cc-font-display);
-  margin: 10px 0 0;
-  font-size: 23px;
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.015em;
-}
-
-.text {
-  margin: 6px 0 16px;
-  font-size: 14px;
-  line-height: 1.4;
-  color: var(--cc-ink-2);
+/* spec/mockup.html: the draft card's actions (.btn.block, .linkbtn) */
+.actions {
+  margin-top: 2px;
 }
 
 .discard {
   appearance: none;
   border: 0;
   display: block;
-  margin: 6px auto 0;
+  margin: 8px auto 0;
   height: 36px;
   padding: 0 14px;
   background: none;
@@ -70,6 +16,11 @@
   font-weight: 600;
   color: var(--cc-ink-2);
   cursor: pointer;
+}
+
+.discard:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
 }
 
 .discard:disabled {

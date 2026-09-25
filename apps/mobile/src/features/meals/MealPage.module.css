@@ -1,3 +1,5 @@
+/* A recipe (spec/mockup.html: .mv, .facts, .serv, .h3, .ing). */
+
 .loading {
   display: flex;
   flex-direction: column;
@@ -6,7 +8,7 @@
 }
 
 .recipe {
-  padding-top: 12px;
+  padding-top: 18px;
   animation: rise 460ms var(--cc-ease) both;
 }
 
@@ -20,72 +22,73 @@
 .title {
   font-family: var(--cc-font-display);
   margin: 0;
-  font-size: 30px;
-  font-weight: 750;
-  line-height: 1.04;
-  letter-spacing: -0.024em;
-  text-wrap: balance;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
 }
 
 .description {
-  margin: 12px 0 0;
-  font-size: 17px;
-  line-height: 1.5;
+  margin: 6px 0 0;
+  font-size: 15px;
   color: var(--cc-ink-2);
   text-wrap: pretty;
 }
 
 .facts {
-  margin: 24px 0 0;
+  margin: 18px 0 0;
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  border-radius: var(--cc-radius-lg);
-  background: var(--cc-fill);
-  padding: 16px 0;
+  gap: 8px;
 }
 
+/* The value over its label. */
 .fact {
-  padding: 0 16px;
-}
-
-.fact + .fact {
-  border-left: 1px solid var(--cc-fill-strong);
+  display: flex;
+  flex-direction: column-reverse;
+  padding: 10px 8px;
+  border-radius: 14px;
+  background: var(--cc-fill);
+  text-align: center;
 }
 
 .fact dt {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--cc-ink-3);
+  color: var(--cc-ink-2);
 }
 
 .fact dd {
-  margin: 4px 0 0;
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  margin: 0;
+  font-family: var(--cc-font-display);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.1;
 }
 
 .servings {
-  margin-top: 12px;
+  margin-top: 22px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 12px 12px 18px;
-  border-radius: var(--cc-radius-lg);
-  outline: 0.5px solid var(--cc-hairline);
-  box-shadow: var(--cc-shadow-card);
+  padding: 10px 10px 10px 14px;
+  border-radius: 16px;
+  background: var(--cc-fill);
 }
 
 .servingsLabel {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.servingsLabel > span {
+  display: flex;
   flex-direction: column;
   align-items: flex-start;
-  font-size: 16px;
-  font-weight: 600;
 }
 
 .reset {
@@ -102,75 +105,37 @@
 
 .heading {
   font-family: var(--cc-font-display);
-  margin: 36px 0 8px;
-  font-size: 21px;
+  margin: 26px 0 0;
+  font-size: 20px;
   font-weight: 700;
-  letter-spacing: -0.018em;
+  line-height: 1.2;
 }
 
 .ingredients {
   list-style: none;
-  margin: 0;
+  margin: 8px 0 0;
   padding: 0;
 }
 
 .ingredient {
-  display: grid;
-  grid-template-columns: minmax(64px, auto) 1fr;
-  gap: 16px;
-  padding: 13px 0;
-  font-size: 17px;
-  line-height: 1.35;
-}
-
-.ingredient + .ingredient {
-  border-top: 0.5px solid var(--cc-hairline);
+  display: flex;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 0.5px solid var(--cc-hairline);
+  font-size: 15.5px;
 }
 
 .amount {
-  font-weight: 600;
+  flex: none;
+  width: 74px;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.prep {
-  color: var(--cc-ink-2);
-}
-
-.steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.step {
-  display: grid;
-  grid-template-columns: 28px 1fr;
-  gap: 14px;
-  align-items: start;
 }
 
 .number {
-  display: grid;
-  place-items: center;
+  flex: none;
   width: 28px;
-  height: 28px;
-  margin-top: -1px;
-  border-radius: 50%;
-  background: var(--cc-accent-soft);
-  color: var(--cc-accent);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
-}
-
-.step p {
-  margin: 0;
-  font-size: 17px;
-  line-height: 1.55;
-  text-wrap: pretty;
+  color: var(--cc-ink-3);
 }

@@ -39,7 +39,7 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
                 : 'The draft is saved for the household.'
             }
           />
-          <Button size="medium" variant="secondary" onClick={onClose}>
+          <Button variant="secondary" large onClick={onClose}>
             Close
           </Button>
         </>

@@ -10,15 +10,6 @@ export function daysOfWeek(date: Date): Date[] {
   )
 }
 
-/** "Sep 21 – 27", or "Sep 28 – Oct 4" across months. */
-export function formatWeekRange(days: Date[], locale?: string): string {
-  const first = days[0]
-  const last = days[days.length - 1]
-  const month = (date: Date) => date.toLocaleDateString(locale, { month: 'short' })
-  const end = first.getMonth() === last.getMonth() ? `${last.getDate()}` : `${month(last)} ${last.getDate()}`
-  return `${month(first)} ${first.getDate()} – ${end}`
-}
-
 /** This week as a date bar: today tagged, past days greyed out. */
 export function weekBar(today: Date): BarDay[] {
   const todayDate = localDate(today)

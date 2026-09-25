@@ -10,6 +10,8 @@ html {
 
 body {
   font-family: var(--cc-font-text);
+  font-size: 15px;
+  line-height: 1.35;
   color: var(--cc-ink);
   background: var(--cc-bg);
   -webkit-font-smoothing: antialiased;
@@ -26,7 +28,22 @@ body {
   background: var(--cc-accent-soft);
 }
 
-/* ---- Headers: glass once content scrolls under, invisible over a large title ---- */
+/* A control drawn smaller than --cc-hit-min still takes taps across that size, centered on it. */
+.cc-hit {
+  position: relative;
+}
+
+.cc-hit::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, var(--cc-hit-min));
+  height: max(100%, var(--cc-hit-min));
+  transform: translate(-50%, -50%);
+}
+
+/* ---- Headers: glass once content scrolls under ---- */
 
 ion-header.header-ios ion-toolbar:last-of-type {
   --border-width: 0;
@@ -37,6 +54,13 @@ ion-header ion-toolbar {
   --min-height: 52px;
   --padding-start: 12px;
   --padding-end: 12px;
+}
+
+/* In a card modal, Ionic pads toolbars by 8px on top of --padding-start/end;
+   the mockup's insets are exact, so only the safe area stays. */
+html.ios ion-modal ion-header ion-toolbar {
+  padding-left: var(--ion-safe-area-left, 0px);
+  padding-right: var(--ion-safe-area-right, 0px);
 }
 
 /* Ionic's translucent header draws its material here; it fades in on scroll. */
@@ -78,73 +102,43 @@ ion-header ion-title {
   letter-spacing: -0.01em;
 }
 
-/* Large titles: rounded, heavy weight, tight tracking. */
-ion-header.header-collapse-condense ion-toolbar {
-  --padding-start: var(--cc-page-x);
-  --padding-end: var(--cc-page-x);
-}
-
-ion-title.title-large {
-  font-family: var(--cc-font-display);
-  padding-inline: 0;
-  padding-top: 6px;
-  font-size: 34px;
-  font-weight: 750;
-  line-height: 1.05;
-  letter-spacing: -0.025em;
-}
-
-/* ---- Round glass buttons in toolbars (back, actions) ---- */
-
-ion-back-button {
-  --color: var(--cc-ink);
-  --icon-font-size: 22px;
-  --icon-margin-start: 0;
-  --icon-margin-end: 0;
-  --padding-start: 0;
-  --padding-end: 0;
-  --background: var(--cc-fill);
-  --background-hover: var(--cc-fill-strong);
-  --border-radius: var(--cc-radius-pill);
-  --min-height: 36px;
-  --min-width: 36px;
-  width: 36px;
-  height: 36px;
-}
-
-/* ---- Floating glass tab bar ---- */
+/* ---- Floating glass tab bar (spec/mockup.html: .tabbar, .tab) ---- */
 
 ion-tab-bar {
   --background: var(--cc-glass);
   --border: 0;
-  --color: var(--cc-ink-3);
+  --color: var(--cc-ink-2);
   --color-selected: var(--cc-ink);
+  --inset: 6px; /* between the edge and the tabs */
+  --edge: 0.5px;
   position: absolute;
   left: 50%;
-  bottom: calc(var(--ion-safe-area-bottom, 0px) + var(--cc-tab-bar-gap));
+  bottom: var(--cc-tab-bar-bottom);
   transform: translateX(-50%);
-  width: min(calc(100% - 2 * var(--cc-page-x)), 340px);
-  height: var(--cc-tab-bar-height);
-  padding: 6px;
-  gap: 4px;
+  /* Ionic forces content-box sizing (`!important` in its shadow styles, which
+     outranks any page style), so the size leaves out the inset and edge to
+     come to the tokens' outer size. */
+  width: calc(var(--cc-tab-bar-width) - 2 * (var(--inset) + var(--edge)));
+  height: calc(var(--cc-tab-bar-height) - 2 * (var(--inset) + var(--edge)));
   border-radius: var(--cc-radius-pill);
-  box-shadow:
-    var(--cc-shadow-float),
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.8);
-  outline: 0.5px solid var(--cc-hairline);
+  border: var(--edge) solid rgba(255, 255, 255, 0.7);
+  box-shadow: var(--cc-shadow-float);
   backdrop-filter: var(--cc-glass-blur);
   -webkit-backdrop-filter: var(--cc-glass-blur);
 }
 
-/* Ionic pads the bar for the home indicator; the bar floats above it instead. */
-ion-tab-bar.tab-bar-ios,
-ion-tab-bar.tab-bar-md {
-  padding-bottom: 6px;
+/* Ionic pads the bar for the home indicator and the sides' safe areas; the bar floats clear of them instead. */
+ion-tab-bar.ios,
+ion-tab-bar.md {
+  padding: var(--inset);
 }
 
 ion-tab-button {
+  --background: transparent;
   --padding-top: 0;
   --padding-bottom: 0;
+  --padding-start: 0;
+  --padding-end: 0;
   --ripple-color: transparent;
   border-radius: var(--cc-radius-pill);
   font-family: var(--cc-font-text);
@@ -153,19 +147,22 @@ ion-tab-button {
     transform var(--cc-press) var(--cc-ease);
 }
 
-ion-tab-button ion-icon {
-  font-size: 23px;
-  margin-bottom: 1px;
+ion-tab-button svg {
+  font-size: 22px;
+  margin-bottom: 3px;
 }
 
 ion-tab-button ion-label {
+  margin: 0;
+  min-height: 0;
   font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 ion-tab-button.tab-selected {
-  background: rgba(20, 19, 17, 0.065);
+  background: rgba(20, 19, 17, 0.07);
 }
 
 ion-tab-button:active {

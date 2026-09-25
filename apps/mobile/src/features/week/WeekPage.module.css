@@ -1,9 +1,8 @@
-.range {
-  margin: 2px 0 20px;
-  font-size: 17px;
-  color: var(--cc-ink-2);
+/* spec/mockup.html: .stack (the order cards under the day strip) */
+.stack {
+  padding-top: 14px;
 }
 
 .notice {
-  margin-top: 20px;
+  margin-top: 14px;
 }

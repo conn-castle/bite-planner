@@ -176,7 +176,7 @@ A new stack has its own EFS, so run the agent login for it once. `cd infra && uv
 
 `apps/mobile/` is the Capacitor project and `src/` is the app's only source: `make dev` serves it directly, `make build` compiles it to `dist/`, and Capacitor copies `dist/` into the iOS project (`ios/App/App/public/`, gitignored). Both are build output.
 
-The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on every platform) with `IonReactRouter` (react-router 6, which Ionic 9 requires): three tabs, **This week** (`/week`: start an order, or continue or discard the household's draft), **History** (`/history`, empty until past orders are built), and **Settings** (`/settings`), each with its own navigation stack. The create-order flow is a card over the page (pick meals, with a recipe view inside it; delivery date; next delivery; review; place). Sign-in and "not in a household" are shown instead of the tabs. `src/` is organized by feature:
+The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on every platform) with `IonReactRouter` (react-router 6, which Ionic 9 requires): three tabs, **Orders** (`/week`: start an order, or continue or discard the household's draft), **History** (`/history`, empty until past orders are built), and **Settings** (`/settings`), each with its own navigation stack. The create-order flow is a card over the page (pick meals, with a recipe view inside it; delivery date; next delivery; review; place). Sign-in and "not in a household" are shown instead of the tabs. `src/` is organized by feature:
 
 | Path | What |
 | --- | --- |
@@ -343,4 +343,4 @@ Production runs on AWS (since release `r6`; now date-versioned, e.g. `2026.9.24.
 
 1. Product: give the agent meal history so it avoids repeats, and iterate on the app.
 2. Invite the family ([Households](#households-invite-only)), as App Store Connect users (internal testers) or external testers (Apple reviews the first build).
-3. Build the ordering spec one piece at a time ([`spec/`](spec/)): the create-order flow is first.
+3. Build the ordering spec one piece at a time, in the order in [`spec/README.md`](spec/README.md#build-order): the create-order flow is done; Home (Orders) is next.

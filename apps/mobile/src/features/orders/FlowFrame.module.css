@@ -1,5 +1,30 @@
+/* The create-order card (spec/mockup.html: .grab, .sh-top, .dots, .sh-body, .sh-foot). */
+
+.header {
+  background: var(--cc-bg);
+}
+
+.grab {
+  width: 36px;
+  height: 5px;
+  margin: 7px auto 0;
+  border-radius: 3px;
+  background: var(--cc-fill-strong);
+}
+
 .header ion-toolbar {
-  --min-height: 56px;
+  --min-height: 40px;
+  --padding-top: 6px;
+  --padding-bottom: 0;
+  --padding-start: 12px;
+  --padding-end: 12px;
+}
+
+/* Ionic's toolbar container clips what it holds; the 44px tap areas of the
+   32px Back and Close reach past it, still within the toolbar. */
+.header ion-toolbar::part(container) {
+  overflow: visible;
+  contain: none;
 }
 
 .bar {
@@ -14,8 +39,7 @@
   border: 0;
   display: flex;
   align-items: center;
-  gap: 2px;
-  height: 36px;
+  height: 32px;
   padding: 0 8px 0 0;
   background: none;
   font: inherit;
@@ -24,13 +48,19 @@
   cursor: pointer;
 }
 
-.back ion-icon {
-  font-size: 22px;
+.back:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
 }
 
-/* Keeps the dots centered when there is no Back button. */
+.back svg {
+  font-size: 22px;
+  stroke-width: 2.4;
+}
+
+/* Keeps the dots centered when there is no Back button: as wide as Close. */
 .spacer {
-  width: 36px;
+  width: 32px;
 }
 
 .dots {
@@ -50,22 +80,17 @@
   background: var(--cc-ink);
 }
 
-.close {
-  width: 32px;
-  height: 32px;
-  font-size: 18px;
-  color: var(--cc-ink-2);
-}
-
+/* At the bottom, Ionic's fullscreen content already leaves the footer's height
+   (--offset-bottom); 34px more is the mockup's 130px less its footer. */
 .body {
-  padding: 4px var(--cc-page-x) 32px;
+  padding: 8px var(--cc-page-x) 34px;
   animation: enter 380ms var(--cc-ease) both;
 }
 
 @keyframes enter {
   from {
     opacity: 0;
-    transform: translateX(24px);
+    transform: translateX(40px);
   }
 }
 
@@ -81,7 +106,6 @@
 .lede {
   margin: 6px 0 0;
   font-size: 15px;
-  line-height: 1.4;
   color: var(--cc-ink-2);
 }
 
@@ -98,8 +122,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px var(--cc-page-x) calc(var(--ion-safe-area-bottom, 0px) + 12px);
-  background: var(--cc-glass);
+  padding: 12px var(--cc-page-x) max(34px, var(--ion-safe-area-bottom, 0px));
+  background: var(--cc-glass-strong);
   backdrop-filter: var(--cc-glass-blur);
   -webkit-backdrop-filter: var(--cc-glass-blur);
   border-top: 0.5px solid var(--cc-hairline);
@@ -110,7 +134,6 @@
   min-width: 0;
   margin: 0;
   font-size: 14px;
-  line-height: 1.35;
   color: var(--cc-ink-2);
 }
 

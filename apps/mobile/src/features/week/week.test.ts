@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { daysOfWeek, formatWeekRange, weekBar } from './week'
+import { daysOfWeek, weekBar } from './week'
 
 describe('daysOfWeek', () => {
   it('runs Sunday to Saturday around the given day', () => {
@@ -23,16 +23,6 @@ describe('daysOfWeek', () => {
     const days = daysOfWeek(new Date(2026, 11, 31)) // Thursday, Dec 31
     expect(days[0]).toEqual(new Date(2026, 11, 27))
     expect(days[6]).toEqual(new Date(2027, 0, 2))
-  })
-})
-
-describe('formatWeekRange', () => {
-  it('names the month once within a month', () => {
-    expect(formatWeekRange(daysOfWeek(new Date(2026, 8, 24)), 'en-US')).toBe('Sep 20 – 26')
-  })
-
-  it('names both months across months', () => {
-    expect(formatWeekRange(daysOfWeek(new Date(2026, 8, 30)), 'en-US')).toBe('Sep 27 – Oct 3')
   })
 })
 

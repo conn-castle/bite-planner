@@ -1,5 +1,57 @@
+/* spec/mockup.html: .view.home, .sbfade, .lt, .lt-row */
+
+.content {
+  --background: var(--cc-home-bg);
+}
+
+/* Solid under the status bar, then fading out over the 8px above the header's text,
+   so nothing sits in the fade until it scrolls. */
+.fade {
+  position: absolute;
+  inset: 0 0 auto;
+  height: calc(var(--ion-safe-area-top, 0px) + 8px);
+  pointer-events: none;
+  background: linear-gradient(var(--cc-home-bg) var(--ion-safe-area-top, 0px), transparent);
+}
+
+/* The offline banner, when it shows, takes the top; the header moves down for it. */
+.header {
+  padding: calc(var(--ion-safe-area-top, 0px) + 8px + var(--cc-offline-space)) var(--cc-page-x) 10px;
+  transition: padding-top 380ms var(--cc-ease);
+}
+
+.overline {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--cc-ink-3);
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--cc-font-display);
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+}
+
 .body {
-  padding: 4px var(--cc-page-x) var(--cc-tab-bar-clearance);
+  padding: 0 var(--cc-card-x) var(--cc-tab-bar-clearance);
+}
+
+/* The back button sits 14px from the edge (.hero-btns). */
+.navToolbar {
+  --padding-start: 14px;
+  --padding-end: 14px;
 }
 
 /* A page pushed onto a nav in a card: no tab bar to clear. */

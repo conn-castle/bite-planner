@@ -124,7 +124,7 @@ function OrderFlow({ onClose, onOpenMeal }: OrderFlowProps) {
       step={null}
       onClose={onClose}
       footer={
-        <Button size="medium" variant="secondary" block onClick={onClose}>
+        <Button variant="secondary" block onClick={onClose}>
           Close
         </Button>
       }
