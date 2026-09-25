@@ -127,6 +127,12 @@ export function DateBar({
   }, [scrollable, compact, selected])
 
   const orders = [...new Set(days.flatMap((day) => (day.coveredBy === null ? [] : [day.coveredBy])))]
+  // Each covered day's place in its order's run of days: 0 on the first.
+  const runDays: number[] = []
+  days.forEach((day, index) => {
+    const continues = index > 0 && day.coveredBy !== null && days[index - 1].coveredBy === day.coveredBy
+    runDays.push(continues ? runDays[index - 1] + 1 : 0)
+  })
   const fit: CSSProperties = scrollable ? {} : { gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }
 
   const bar = (
@@ -139,8 +145,8 @@ export function DateBar({
     >
       {days.map(({ date, coveredBy, coverAhead = false, selectable, past = false, tag, marks = [] }, index) => {
         const isSelected = date === selected
-        const cover: CSSProperties & { '--cover'?: string } =
-          coveredBy === null ? {} : { '--cover': orderColor(coveredBy) }
+        const cover: CSSProperties & { '--cover'?: string; '--run-day'?: number } =
+          coveredBy === null ? {} : { '--cover': orderColor(coveredBy), '--run-day': runDays[index] }
         const className = [
           styles.day,
           isSelected && styles.selected,

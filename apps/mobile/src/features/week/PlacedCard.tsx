@@ -125,7 +125,9 @@ export function PlacedCard({
       >
         {!mealsOpen && <MealStack count={order.meals.length} />}
         <span className={styles.foldLabel}>{meals}</span>
-        <Icon name="chevD" className={styles.chevron} />
+        <span className={styles.chevron} aria-hidden="true">
+          <Icon name="chevD" />
+        </span>
       </button>
       {mealsOpen && (
         <div className={styles.rows}>

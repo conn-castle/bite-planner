@@ -3,6 +3,7 @@ import { useNow } from '../../lib/useNow'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
+import { ProgressBar } from '../../ui/ProgressBar'
 import { newestBatchState } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { elapsed } from './format'
@@ -53,7 +54,7 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
         {running && (
           <>
             <p className={styles.lede}>This usually takes a minute or two.</p>
-            <span className={styles.progress} aria-hidden="true" />
+            <ProgressBar className={styles.progress} />
             <p className={styles.elapsed} role="timer">
               {batch.status === 'running' ? elapsed(new Date(batch.job.created_at), now) : 'Starting'}
             </p>

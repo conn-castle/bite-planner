@@ -56,9 +56,11 @@
   font-size: 17px;
 }
 
+/* (.btn.block) keeps .btn's side padding; 26px is only for .sh-foot's large buttons. */
 .block {
   display: flex;
   width: 100%;
+  padding: 0 16px;
   border-radius: 16px;
 }
 

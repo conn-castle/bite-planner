@@ -178,6 +178,8 @@
 }
 
 .compact {
+  --day-width: 44px;
+  --bar-inset: 9px; /* a bar's rounded end, in from its day's edge */
   padding: 8px 6px 6px;
 }
 
@@ -187,7 +189,7 @@
 
 .compact.scroll .day {
   flex: none;
-  width: 44px;
+  width: var(--day-width);
   scroll-snap-align: start;
 }
 
@@ -205,7 +207,6 @@
   height: 12px;
   font-size: 10px;
   font-weight: 600;
-  line-height: 12px;
   letter-spacing: 0.02em;
   color: var(--cc-ink-3);
 }
@@ -242,9 +243,10 @@
 .compact .cover {
   align-self: stretch;
   height: 5px;
-  margin: 0 9px;
+  margin: 0 var(--bar-inset);
   border-radius: 3px;
   background: var(--cover, transparent);
+  --bar-start: var(--bar-inset);
 }
 
 .compact .unavailable .cover {
@@ -252,6 +254,7 @@
 }
 
 .compact .joinStart {
+  --bar-start: 0px;
   margin-left: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
@@ -264,8 +267,12 @@
 }
 
 /* Not delivered yet: a dashed bar. */
+/* Dashes counted from where the order's bar starts (--run-day: its days so far),
+   not from each day, so they run on evenly and every bar starts with a whole dash. */
 .compact .ahead {
-  background: repeating-linear-gradient(90deg, var(--cover) 0 5px, transparent 5px 8px);
+  background: linear-gradient(90deg, var(--cover) 0 5px, transparent 5px) repeat-x;
+  background-size: 8px 100%;
+  background-position-x: calc(var(--bar-inset) - var(--run-day) * var(--day-width) - var(--bar-start));
 }
 
 /* What happens on the day (.dc .ic): a truck on delivery days, a ring on the decide-by day. */

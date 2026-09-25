@@ -1,12 +1,18 @@
 import type { GroceryOrder, ISODate } from '../../lib/api/types'
-import { formatDate } from '../../lib/dates'
+import { formatDate, relativeMoment } from '../../lib/dates'
+import { useNow } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { MealStack } from '../../ui/MealStack'
-import { OrderCard, OrderCardBody, OrderCardLine } from '../../ui/OrderCard'
+import { OrderCard, OrderCardActions, OrderCardBody, OrderCardLine } from '../../ui/OrderCard'
+import { ProgressBar } from '../../ui/ProgressBar'
 import { newestBatchState, suggestions } from './batches'
+import { defaultDeliveryDate } from './dates'
 import styles from './DraftCard.module.css'
-import { memberName, plural } from './format'
+import { elapsed, memberName, plural } from './format'
+
+// The meals in a batch of suggestions, as the backend makes them.
+const BATCH_SIZE = 20
 
 interface DraftCardProps {
   order: GroceryOrder
@@ -22,26 +28,33 @@ interface DraftCardProps {
 export function DraftCard({ order, userId, today, onContinue, onDiscard, discarding }: DraftCardProps) {
   const ideas = suggestions(order).length
   const picks = order.meal_ids.length
-  const working = newestBatchState(order).status === 'running'
+  const batch = newestBatchState(order)
+  const working = batch.status === 'running'
+  // Ticks each second while a batch is being made, for the time it has taken.
+  const now = useNow(working ? 1000 : 60_000)
+  const took = batch.status === 'running' ? elapsed(new Date(batch.job.created_at), now) : null
   const decideBy = order.decide_by_date
   const late = decideBy !== null && decideBy < today
   const look = ideas > 0 ? (late ? 'late' : 'ready') : working ? 'working' : 'draft'
+  // The delivery it's for: the soonest possible one.
+  const delivery = defaultDeliveryDate(order)
+  const forDelivery = delivery === null ? 'your first delivery' : `${formatDate(delivery, 'weekday')}'s delivery`
 
   const title =
     picks > 0
       ? 'Finish your order'
       : ideas > 0
-        ? `${plural(ideas, 'meal idea')} ready`
+        ? `${plural(ideas, 'meal idea')} ${ideas === 1 ? 'is' : 'are'} ready`
         : working
           ? 'Your meal ideas are on the way'
           : 'Pick meals'
   const subtitle =
     picks > 0
-      ? `${plural(picks, 'meal')} added. Next, choose the delivery dates and review the order.`
+      ? `${plural(picks, 'meal')} added for ${forDelivery}. Next, choose the delivery dates and review the order.`
       : ideas > 0
-        ? "Add the ones you want. Pick as many as you'll cook before the next order."
+        ? `Add the ones you want for ${forDelivery}. Pick as many as you'll cook before the next one.`
         : working
-          ? "This takes a minute or two. You can leave; they'll be here when you come back."
+          ? `Chef is picking ${BATCH_SIZE} ideas for ${forDelivery}. This takes a minute or two. You can leave; they'll be here when you come back.`
           : 'No meals added yet.'
   const chip =
     look === 'late' ? (
@@ -63,15 +76,33 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
   return (
     <OrderCard number={order.number} look={look} chip={chip} title={title} subtitle={subtitle}>
       <OrderCardBody>
+        {look === 'working' && (
+          <>
+            <ProgressBar className={styles.progress} />
+            <p className={styles.took}>Working for {took}</p>
+          </>
+        )}
         {ideas > 0 && (
           <div className={styles.meals}>
             <MealStack count={picks > 0 ? picks : ideas} large />
           </div>
         )}
-        <OrderCardLine icon="users">
-          {memberName(order.created_by, userId)} started it. Saved for the household; anyone can continue it.
-        </OrderCardLine>
-        {decideBy !== null &&
+        {ideas > 0 && took !== null && (
+          <>
+            <ProgressBar className={styles.progressMore} />
+            <p className={`${styles.took} ${styles.tookMore}`}>
+              Generating {BATCH_SIZE} more · working for {took}
+            </p>
+          </>
+        )}
+        {look !== 'working' && (
+          <OrderCardLine icon="users">
+            {memberName(order.created_by, userId)} started it {relativeMoment(new Date(order.created_at), today)}. Saved for
+            the household; anyone can continue it.
+          </OrderCardLine>
+        )}
+        {look !== 'working' &&
+          decideBy !== null &&
           (late ? (
             <OrderCardLine icon="cal" tone="danger">
               Was due {formatDate(decideBy, 'short')}
@@ -81,14 +112,14 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
               Decide by <b>{formatDate(decideBy, 'short')}</b>
             </OrderCardLine>
           ))}
-        <div className={styles.actions}>
+        <OrderCardActions>
           <Button variant={late ? 'danger' : look === 'ready' ? 'accent' : 'primary'} block onClick={onContinue}>
-            Continue order
+            {picks > 0 ? 'Continue order' : ideas > 0 ? 'Pick meals' : working ? 'Watch progress' : 'Continue order'}
           </Button>
           <button type="button" className={`${styles.discard} cc-hit`} onClick={onDiscard} disabled={discarding}>
             Discard draft
           </button>
-        </div>
+        </OrderCardActions>
       </OrderCardBody>
     </OrderCard>
   )

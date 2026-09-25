@@ -1,8 +1,4 @@
-/* spec/mockup.html: the draft card's actions (.btn.block, .linkbtn) */
-.actions {
-  margin-top: 2px;
-}
-
+/* spec/mockup.html: the draft card's discard button (.linkbtn) */
 .discard {
   appearance: none;
   border: 0;
@@ -26,6 +22,29 @@
 .discard:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* A batch being made (.gbar), and how long it has taken. */
+.progress {
+  margin: 12px 0 8px;
+}
+
+/* Under the ideas: another batch on the way. */
+.progressMore {
+  margin: 0 0 8px;
+}
+
+/* 12px here and the actions' 2px make the design's 14px above its button. */
+.took {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--cc-ink-3);
+}
+
+/* Before the card's lines instead of its button. */
+.tookMore {
+  margin-bottom: 14px;
 }
 
 /* The ideas or picks, as pictures (.stack-thumbs.lg). */

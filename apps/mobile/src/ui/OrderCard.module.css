@@ -20,8 +20,10 @@
   }
 }
 
+/* A review decision over the mockup's neutral hairline (spec/README.md): the order's color, light. */
 .placed {
   border-width: 1px;
+  border-color: color-mix(in srgb, var(--c) 40%, transparent);
 }
 
 .draft {
@@ -160,14 +162,20 @@
   color: var(--cc-ink-2);
 }
 
+/* The design's plain <b>: bold. */
 .line b {
-  font-weight: 650;
+  font-weight: 700;
   color: var(--cc-ink);
 }
 
 .line.danger,
 .line.danger b {
   color: var(--cc-danger);
+}
+
+/* The card's buttons, 2px further down than a line's margin: padding, so it never collapses into it. */
+.actions {
+  padding-top: 2px;
 }
 
 .note {

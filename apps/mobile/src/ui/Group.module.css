@@ -6,6 +6,8 @@
   font-size: 13px;
   font-weight: 650;
   color: var(--cc-ink-3);
+  /* Headings default to Ionic's 1.2; the design's .gh takes the body's 1.35. */
+  line-height: inherit;
 }
 
 .card {

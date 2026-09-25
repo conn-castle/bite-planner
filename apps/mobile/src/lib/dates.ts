@@ -80,3 +80,15 @@ export function relativeDay(date: ISODate, today: ISODate, style: 'long' | 'shor
   }
   return formatDate(date, 'medium', locale)
 }
+
+/**
+ * A moment (a UTC timestamp) as said from today, in the phone's time zone:
+ * "today at 7:52 AM", "yesterday at 8:40 PM", or "on Mon, Sep 21 at 8:40 PM".
+ */
+export function relativeMoment(at: Date, today: ISODate, locale?: string): string {
+  const day = localDate(at)
+  const time = at.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' })
+  if (day === today) return `today at ${time}`
+  if (day === addDays(today, -1)) return `yesterday at ${time}`
+  return `on ${formatDate(day, 'medium', locale)} at ${time}`
+}

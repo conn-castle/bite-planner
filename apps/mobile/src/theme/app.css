@@ -82,6 +82,18 @@ ion-header.cc-bar {
   border-bottom: 0.5px solid var(--cc-hairline);
 }
 
+ion-header.header-translucent.cc-bar .header-background {
+  background: var(--cc-glass-bar);
+}
+
+/* (.navbar) a 44px row below the safe area. */
+ion-header.cc-bar ion-toolbar {
+  --min-height: 44px;
+  /* Ionic pads iOS toolbars by 3px above and below; the row is exactly 44px. */
+  --padding-top: 0;
+  --padding-bottom: 0;
+}
+
 /* A soft edge where content meets the glass, instead of a hard divider. */
 ion-header.header-translucent.cc-scrolled::after {
   content: '';
@@ -106,6 +118,12 @@ ion-header ion-title {
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+/* (.nb-title) */
+ion-header.cc-bar ion-title {
+  font-weight: 650;
+  letter-spacing: 0;
 }
 
 /* ---- Floating glass tab bar (spec/mockup.html: .tabbar, .tab) ---- */

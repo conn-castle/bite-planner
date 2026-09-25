@@ -1,0 +1,18 @@
+/* spec/mockup.html: .gbar (a sweep, since how long the work takes isn't known) */
+.bar {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, transparent, var(--cc-accent), transparent) no-repeat var(--cc-fill-strong);
+  background-size: 40% 100%;
+  animation: sweep 1.6s var(--cc-ease) infinite;
+}
+
+@keyframes sweep {
+  from {
+    background-position: -70% 0;
+  }
+  to {
+    background-position: 170% 0;
+  }
+}

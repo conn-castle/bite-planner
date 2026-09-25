@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addDays, daysBetween, formatDate, localDate, relativeDay } from './dates'
+import { addDays, daysBetween, formatDate, localDate, relativeDay, relativeMoment } from './dates'
 
 // Time zones are set with vi.stubEnv('TZ', ...), which Node applies at once.
 afterEach(() => {
@@ -49,5 +49,17 @@ describe('relativeDay', () => {
     expect(relativeDay('2026-09-23', today, 'short', 'en-US')).toBe('yesterday')
     expect(relativeDay('2026-09-26', today, 'short', 'en-US')).toBe('Sat')
     expect(relativeDay('2026-09-22', today, 'long', 'en-US')).toBe('Tue, Sep 22')
+  })
+})
+
+describe('relativeMoment', () => {
+  const today = '2026-09-25' // a Friday
+
+  it('says the day and time in the phone’s time zone', () => {
+    vi.stubEnv('TZ', 'America/New_York')
+    expect(relativeMoment(new Date('2026-09-25T11:52:00Z'), today, 'en-US')).toBe('today at 7:52 AM')
+    // 8:40 PM on Sep 24 in New York is already Sep 25 in UTC.
+    expect(relativeMoment(new Date('2026-09-25T00:40:00Z'), today, 'en-US')).toBe('yesterday at 8:40 PM')
+    expect(relativeMoment(new Date('2026-09-22T00:40:00Z'), today, 'en-US')).toBe('on Mon, Sep 21 at 8:40 PM')
   })
 })

@@ -12,6 +12,10 @@ Where the two disagree, the requirements win. Decisions from reviews of the buil
 - In both date steps, the chosen-date card sits below the day row, with its space reserved so choosing a date moves nothing.
 - The next-delivery day row marks the days that have meals with a bar in the order's color, starts at the delivery day, and still marks the best day.
 - The next-delivery coverage details have one fixed layout (rows, not a sentence) whatever is chosen.
+- Placed order cards (home and the order view) have a 1px border in the order's color at 40% (`color-mix(in srgb, var(--c) 40%, transparent)`), not the mockup's neutral hairline, so each card matches its bar in the day strip.
+- The dashed bars of orders not delivered yet run evenly from the start of each order's bar to its end; the mockup restarts the dashes in every day, which bunches them where days meet.
+- While meal ideas are being made, the draft card shows how long it has taken ("Working for 0:42") instead of the mockup's made-up estimate ("About 1 min left").
+- The draft card doesn't credit picks to a person ("2 meals added", not "Sam has added 2 meals"): anyone in the household can pick, and the order records only who started it.
 
 The mockup predates two requirements: it has no meal ratings (thumbs up, thumbs down, favorite, and the prompt to rate last week's meals), and it shows food illustrations where the app shows an icon.
 

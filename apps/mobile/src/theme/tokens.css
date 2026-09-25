@@ -63,6 +63,7 @@
   --cc-shadow-float: 0 18px 44px -16px rgba(20, 19, 17, 0.3), 0 2px 8px rgba(20, 19, 17, 0.06);
   --cc-glass: rgba(255, 255, 255, 0.74);
   --cc-glass-strong: rgba(255, 255, 255, 0.86); /* glass that text sits on, e.g. a sheet's footer */
+  --cc-glass-bar: rgba(255, 255, 255, 0.82); /* a pushed page's navigation bar (.navbar) */
   --cc-glass-blur: blur(24px) saturate(180%);
 
   /* Layout */
@@ -109,6 +110,7 @@
   :root {
     --cc-glass: #ffffff;
     --cc-glass-strong: #ffffff;
+    --cc-glass-bar: #ffffff;
     --cc-glass-blur: none;
   }
 }

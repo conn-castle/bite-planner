@@ -57,21 +57,7 @@
 .progress {
   width: 100%;
   max-width: 300px;
-  height: 6px;
   margin: 26px 0 8px;
-  border-radius: 3px;
-  background: linear-gradient(90deg, transparent, var(--cc-accent), transparent) no-repeat var(--cc-fill-strong);
-  background-size: 40% 100%;
-  animation: sweep 1.6s var(--cc-ease) infinite;
-}
-
-@keyframes sweep {
-  from {
-    background-position: -70% 0;
-  }
-  to {
-    background-position: 170% 0;
-  }
 }
 
 .elapsed {

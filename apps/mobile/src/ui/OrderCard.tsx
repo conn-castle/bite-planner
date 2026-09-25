@@ -68,6 +68,11 @@ export function OrderCardBody({ children }: { children: ReactNode }) {
   return <div className={styles.body}>{children}</div>
 }
 
+/** A card's main button, and any under it, after its lines. */
+export function OrderCardActions({ children }: { children: ReactNode }) {
+  return <div className={styles.actions}>{children}</div>
+}
+
 /** A hairline between a card's sections. */
 export function OrderCardDivider() {
   return <div className={styles.divider} />

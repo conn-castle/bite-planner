@@ -5,7 +5,7 @@ import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { Countdown } from '../../ui/Countdown'
 import { Icon } from '../../ui/Icon'
-import { OrderCard, OrderCardBody, OrderCardLine } from '../../ui/OrderCard'
+import { OrderCard, OrderCardActions, OrderCardBody, OrderCardLine } from '../../ui/OrderCard'
 import { lastCovered, onHand, urgency } from './home'
 import styles from './NextCard.module.css'
 
@@ -59,9 +59,11 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
               No meals on hand since {formatDate(addDays(last, 1), 'short')}
             </OrderCardLine>
           )}
-          <Button variant="danger" block onClick={onStart}>
-            Pick meals now
-          </Button>
+          <OrderCardActions>
+            <Button variant="danger" block onClick={onStart}>
+              Pick meals now
+            </Button>
+          </OrderCardActions>
         </OrderCardBody>
       </OrderCard>
     )
@@ -82,9 +84,11 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
         aside={countdown}
       >
         <OrderCardBody>
-          <Button variant="accent" block onClick={onStart}>
-            Pick meals
-          </Button>
+          <OrderCardActions>
+            <Button variant="accent" block onClick={onStart}>
+              Pick meals
+            </Button>
+          </OrderCardActions>
         </OrderCardBody>
       </OrderCard>
     )
@@ -102,9 +106,11 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
       >
         <OrderCardBody>
           {decideLine}
-          <Button variant="white" block onClick={onStart}>
-            Start early
-          </Button>
+          <OrderCardActions>
+            <Button variant="white" block onClick={onStart}>
+              Start early
+            </Button>
+          </OrderCardActions>
         </OrderCardBody>
       </OrderCard>
     )
@@ -120,9 +126,11 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
       aside={countdown}
     >
       <OrderCardBody>
-        <Button variant="secondary" onClick={onStart}>
-          Start early <Icon name="chevR" />
-        </Button>
+        <OrderCardActions>
+          <Button variant="secondary" onClick={onStart}>
+            Start early <Icon name="chevR" />
+          </Button>
+        </OrderCardActions>
       </OrderCardBody>
     </OrderCard>
   )
