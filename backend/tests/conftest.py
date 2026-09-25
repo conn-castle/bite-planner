@@ -2,6 +2,7 @@ import os
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import text
@@ -21,6 +22,7 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 from castle_chef.db import get_engine  # noqa: E402
 from castle_chef.dispatch import get_dispatcher  # noqa: E402
+from castle_chef.models import Household  # noqa: E402
 from castle_chef.settings import get_settings  # noqa: E402
 
 
@@ -51,10 +53,21 @@ def clean_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[No
     get_settings.cache_clear()
     get_dispatcher.cache_clear()
     with get_engine().begin() as connection:
-        connection.execute(text('TRUNCATE job, meal, household_member, neon_auth."user" CASCADE'))
+        connection.execute(
+            text('TRUNCATE job, meal, household_member, household, neon_auth."user" CASCADE')
+        )
 
 
 @pytest.fixture
 def session() -> Iterator[Session]:
     with Session(get_engine()) as session:
         yield session
+
+
+@pytest.fixture
+def household_id(session: Session) -> UUID:
+    """A household for jobs whose household doesn't matter to the test."""
+    household = Household(name="Test Castle")
+    session.add(household)
+    session.commit()
+    return household.id

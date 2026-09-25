@@ -5,7 +5,7 @@ events, trimmed to the fields that matter."""
 import json
 import logging
 from collections.abc import Iterator
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,9 +54,9 @@ def test_the_public_api_has_no_events_route() -> None:
 
 
 def test_crashed_worker_fails_its_job(
-    events: TestClient, session: Session, caplog: pytest.LogCaptureFixture
+    events: TestClient, session: Session, household_id: UUID, caplog: pytest.LogCaptureFixture
 ) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     job.status = JobStatus.RUNNING
     session.add(job)
     session.commit()
@@ -71,8 +71,10 @@ def test_crashed_worker_fails_its_job(
     assert "job.worker_stopped" in [r.getMessage() for r in caplog.records]
 
 
-def test_worker_that_never_launched_fails_its_job(events: TestClient, session: Session) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+def test_worker_that_never_launched_fails_its_job(
+    events: TestClient, session: Session, household_id: UUID
+) -> None:
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     reason = "CannotPullContainerError: pull image manifest has been retried 1 time(s)"
 
     events.post("/events", json=task_stopped(str(job.id), exit_code=None, reason=reason))
@@ -83,9 +85,9 @@ def test_worker_that_never_launched_fails_its_job(events: TestClient, session: S
 
 
 def test_worker_that_finished_the_job_itself_is_left_alone(
-    events: TestClient, session: Session, caplog: pytest.LogCaptureFixture
+    events: TestClient, session: Session, household_id: UUID, caplog: pytest.LogCaptureFixture
 ) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     job.status = JobStatus.SUCCEEDED
     session.add(job)
     session.commit()
@@ -99,8 +101,10 @@ def test_worker_that_finished_the_job_itself_is_left_alone(
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
-def test_a_finished_job_is_never_overwritten(events: TestClient, session: Session) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+def test_a_finished_job_is_never_overwritten(
+    events: TestClient, session: Session, household_id: UUID
+) -> None:
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     job.status = JobStatus.SUCCEEDED
     session.add(job)
     session.commit()
@@ -110,8 +114,10 @@ def test_a_finished_job_is_never_overwritten(events: TestClient, session: Sessio
     assert reload(session, job).status == JobStatus.SUCCEEDED
 
 
-def test_dead_lettered_request_fails_its_job(events: TestClient, session: Session) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+def test_dead_lettered_request_fails_its_job(
+    events: TestClient, session: Session, household_id: UUID
+) -> None:
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     record = {
         "messageId": "1",
         "eventSource": "aws:sqs",

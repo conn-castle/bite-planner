@@ -1,0 +1,46 @@
+.code {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+/* The real input covers the boxes, invisible, so taps and autofill reach it. */
+.input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  font-size: 16px; /* at least 16px, or iOS zooms in on focus */
+  caret-color: transparent;
+}
+
+.box {
+  display: grid;
+  place-items: center;
+  height: 60px;
+  border-radius: 16px;
+  background: var(--cc-fill);
+  font-size: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transition:
+    box-shadow 160ms var(--cc-ease),
+    background-color 160ms var(--cc-ease);
+}
+
+.filled {
+  background: var(--cc-fill-strong);
+  animation: pop 180ms var(--cc-ease);
+}
+
+@keyframes pop {
+  from {
+    transform: scale(0.92);
+  }
+}
+
+.active {
+  background: var(--cc-bg);
+  box-shadow: 0 0 0 2px var(--cc-ink);
+}

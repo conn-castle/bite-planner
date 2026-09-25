@@ -126,6 +126,10 @@ class Job(TimestampMixin, SQLModel, table=True):
     )
     # Neon Auth user id of the requester (set by the API; none for `job create`).
     requested_by: UUID | None = None
+    # Whose job it is: only this household's members see it. Nullable only while
+    # the previous release still inserts jobs without it; a later release makes it
+    # NOT NULL. New code always sets it.
+    household_id: UUID | None = Field(default=None, foreign_key="household.id", index=True)
     error: str | None = None
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
@@ -140,13 +144,31 @@ class JobMeal(SQLModel, table=True):
     meal_id: UUID = Field(foreign_key="meal.id", ondelete="CASCADE", primary_key=True)
 
 
+class Household(TimestampMixin, SQLModel, table=True):
+    """A group of people who share jobs and meals. Each household sees only its own."""
+
+    __tablename__ = "household"
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        primary_key=True,
+        sa_column_kwargs={"server_default": text("gen_random_uuid()")},
+    )
+    name: str = Field(unique=True)
+
+
 class HouseholdMember(SQLModel, table=True):
-    """A Neon Auth user invited to the household. The app is invite-only: the API
-    serves only members. Email and name live in Neon Auth."""
+    """A Neon Auth user invited to a household. The app is invite-only: the API
+    serves only members of a household. Email and name live in Neon Auth."""
 
     __tablename__ = "household_member"
 
+    # One household per user.
     user_id: UUID = Field(primary_key=True)
+    # A row without a household is not a member. Nullable only while the previous
+    # release still inserts members without it; a later release makes it NOT NULL.
+    # New code always sets it.
+    household_id: UUID | None = Field(default=None, foreign_key="household.id", index=True)
     invited_at: datetime = Field(
         default_factory=utc_now,
         sa_type=DateTime(timezone=True),

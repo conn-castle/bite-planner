@@ -1,0 +1,48 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cc-ink-2);
+}
+
+.field {
+  appearance: none;
+  width: 100%;
+  height: 58px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: var(--cc-radius-md);
+  background: var(--cc-fill);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--cc-ink);
+  outline: none;
+  transition:
+    box-shadow 160ms var(--cc-ease),
+    background-color 160ms var(--cc-ease);
+}
+
+.field::placeholder {
+  color: var(--cc-ink-3);
+}
+
+.field:focus {
+  background: var(--cc-bg);
+  box-shadow: 0 0 0 2px var(--cc-ink);
+}
+
+.links {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 4px;
+}

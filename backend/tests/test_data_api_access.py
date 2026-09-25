@@ -8,18 +8,14 @@ import pytest
 from psycopg.errors import InsufficientPrivilege
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
+from sqlmodel import SQLModel
 
+import castle_chef.models  # noqa: F401  (registers the tables on SQLModel.metadata)
 from castle_chef.db import get_engine
 
-# A column of each table, to try updating it.
-COLUMN = {
-    "meal": "name",
-    "meal_ingredient": "name",
-    "job": "status",
-    "job_meal": "job_id",
-    "household_member": "user_id",
-}
-TABLES = list(COLUMN)
+# Every table, so a new one is covered too, with a column to try updating.
+COLUMN = {name: next(iter(table.columns)).name for name, table in SQLModel.metadata.tables.items()}
+TABLES = sorted(COLUMN)
 
 
 @pytest.mark.parametrize("role", ["authenticated", "anonymous"])

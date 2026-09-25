@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlmodel import Session
@@ -18,10 +19,10 @@ def log_events(logs_dir: Path) -> list[dict]:
 
 
 def test_worker_writes_structured_job_events_to_the_log_file(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 1 end_turn 0 0")
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     assert runner.invoke(app, ["job", "run", "--job-id", str(job.id)]).exit_code == 0
 

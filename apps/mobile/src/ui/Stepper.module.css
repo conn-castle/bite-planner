@@ -1,0 +1,77 @@
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--cc-fill);
+  border-radius: var(--cc-radius-pill);
+  padding: 4px;
+}
+
+.step {
+  appearance: none;
+  border: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-bg);
+  color: var(--cc-ink);
+  box-shadow: 0 1px 2px rgba(20, 19, 17, 0.08);
+  cursor: pointer;
+  transition:
+    transform var(--cc-press) var(--cc-ease),
+    opacity 200ms var(--cc-ease);
+}
+
+.step:active:not(:disabled) {
+  transform: scale(0.9);
+}
+
+.step:disabled {
+  opacity: 0.35;
+  box-shadow: none;
+  cursor: default;
+}
+
+.value {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  animation: settle 260ms var(--cc-ease);
+}
+
+@keyframes settle {
+  from {
+    opacity: 0.2;
+    transform: translateY(4px) scale(0.96);
+  }
+}
+
+.compact .step {
+  width: 32px;
+  height: 32px;
+  font-size: 17px;
+}
+
+.compact .value {
+  min-width: 40px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.large {
+  width: 100%;
+  padding: 8px;
+}
+
+.large .step {
+  width: 56px;
+  height: 56px;
+  font-size: 24px;
+}
+
+.large .value {
+  font-family: var(--cc-font-display);
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}

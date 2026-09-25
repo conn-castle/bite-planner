@@ -16,7 +16,7 @@ Failures (dead-letter queue, task stopped) ──► failure-handler Lambda ─�
 Error log lines, Lambda and Pipe failures ──► CloudWatch alarms ──► email
 ```
 
-1. The app asks the API for N meals (`POST /v1/jobs` with a job id it generates, so retries are safe). The API checks the person is a household member, allows at most 3 open requests each, stores a `pending` job, and sends its id to the queue.
+1. The app asks the API for N meals (`POST /v1/jobs` with a job id it generates, so retries are safe). The API checks the person is in a household, allows at most 3 open requests each, stores a `pending` job for their household, and sends its id to the queue.
 2. The Pipe starts one Fargate task per message. The worker claims the job and runs Grok with a prompt asking for N low-effort meals.
 3. Grok calls `castle-chef meal add` once per meal. The CLI validates the meal and saves it as JSON in the job directory; the agent never touches the database.
 4. After Grok exits, the worker checks that exactly N meals were saved, then stores them (linked through `job_meal`) and marks the job `succeeded` in one transaction. Otherwise the job is `failed` with an error and nothing is stored. The task then exits.
@@ -46,6 +46,7 @@ Runs the whole loop on this machine against the Neon `dev` branch: the API with 
 make setup       # once: install dependencies, write backend/.env for dev from SSM
 make dev-reset   # optional: make dev a fresh copy of production (discards dev's changes)
 make dev         # the API on http://localhost:8000 and the app on https://localhost:5173
+make review      # the same, for a UI review with comments from another device (below)
 ```
 
 `make dev` runs the API (each request starts `castle-chef job run`) and the app's dev server, which proxies `/api` to it, until you press `Ctrl+C` or either one exits. For phones, open port 5173 once: `sudo ufw allow from 192.168.1.0/24 to any port 5173 proto tcp`.
@@ -54,11 +55,13 @@ make dev         # the API on http://localhost:8000 and the app on https://local
 
 **Stop:** `Ctrl+C`. A job already started keeps running to the end.
 
+**UI review:** `make review` (not together with `make dev`: both use port 8000) runs the same API and app, behind the `request-html-comments` review server on `https://<LAN IP>:5174` (open the port once: `sudo ufw allow from 192.168.1.0/24 to any port 5174 proto tcp`). Open it on a phone or computer, accept the certificate warning, sign in, and comment on any element; **Send** writes the comments to `.agent-layer/tmp/reviews/` and stops everything. The review server has no login: anyone on the network who reaches the port can use the app as the signed-in account while it runs. Its self-signed certificate for this machine's address is kept in `~/.local/state/castle-chef/review-tls/`.
+
 To try the app against a deployed API instead of the local one: `cd apps/mobile && CASTLE_CHEF_API_DEV_URL=<its URL> pnpm dev` (the deployed stack must use the same Neon branch as `.env.development`).
 
 ## Backend
 
-`backend/.env` (gitignored, written by `make env`; `make` ignores a `DATABASE_URL` in your shell) holds `DATABASE_URL`, the direct owner-role connection string for the Neon `dev` branch, the Neon ids for `family` commands, `CASTLE_CHEF_NEON_AUTH_URL` (`dev`'s Neon Auth), and `CASTLE_CHEF_JOB_DISPATCH=local` (see [Development](#development)). It is generated from SSM ([Secrets](#secrets)); credentials for `main` are never in your checkout. Every setting is in `src/castle_chef/settings.py`.
+`backend/.env` (gitignored, written by `make env`; `make` ignores a `DATABASE_URL` in your shell) holds `DATABASE_URL`, the direct owner-role connection string for the Neon `dev` branch, the Neon ids for `household` commands, `CASTLE_CHEF_NEON_AUTH_URL` (`dev`'s Neon Auth), and `CASTLE_CHEF_JOB_DISPATCH=local` (see [Development](#development)). It is generated from SSM ([Secrets](#secrets)); credentials for `main` are never in your checkout. Every setting is in `src/castle_chef/settings.py`.
 
 The worker's packages are the project's dependencies; the API's extra packages (FastAPI, boto3, PyJWT, uvicorn) are the `api` dependency group, installed by default locally and left out of the worker image.
 
@@ -94,7 +97,7 @@ make migrate                      # apply to dev
 ### Worker
 
 ```sh
-uv run castle-chef job create --count 3   # queue a job and run it (locally, or on AWS with CASTLE_CHEF_JOB_DISPATCH=sqs)
+uv run castle-chef job create --count 3 --household "Conn Castle"   # queue a job for the household and run it (locally, or on AWS with CASTLE_CHEF_JOB_DISPATCH=sqs)
 CASTLE_CHEF_JOB_ID=<id> uv run castle-chef job run   # run one pending job; what each Fargate task does
 ```
 
@@ -117,7 +120,7 @@ Everything logs structured JSON, one object per line: `{"ts", "level", "logger",
 
 - Worker: `worker.started` (release, commit), `job.claimed`, `agent.lock_acquired` (seconds waited), `agent.started`, `agent.finished` (seconds, turns, cost), `job.succeeded`, `job.failed`, `schema.behind`.
 - Failure handler: `job.worker_stopped` and `job.never_started` (both errors).
-- App: each entry is `{"ts", "level", "event", "launch", ...fields}`, kept in a 1,000-entry buffer on the device. Account → **Send logs** posts it to the API, which writes a `client.batch` line (sender, device) and one `client.log` line per entry to its log group (logger `castle_chef.client`).
+- App: each entry is `{"ts", "level", "event", "launch", ...fields}`. Entries at info and above wait in an outbox on the device (1,000 entries; overflow drops the oldest and reports `logs.dropped`) and are uploaded automatically, every minute while the app is open and as soon as it goes to the background, for signed-in household members (`src/lib/logUpload.ts`). The API writes a `client.batch` line (sender, device) and one `client.log` line per entry, at the entry's level, to its log group (logger `castle_chef.client`). The app logs `error` only for defects (a crash, an uncaught exception), so only those email an alarm; expected failures (offline, a refused request) are warnings.
 
 Every line at level `error` or `critical` emails an alarm ([AWS](#aws)).
 
@@ -170,23 +173,35 @@ A new stack has its own EFS, so run the agent login for it once. `cd infra && uv
 
 `apps/mobile/` is the Capacitor project and `src/` is the app's only source: `make dev` serves it directly, `make build` compiles it to `dist/`, and Capacitor copies `dist/` into the iOS project (`ios/App/App/public/`, gitignored). Both are build output.
 
-Public URLs (not secrets): `.env.development` (Neon `dev`'s auth, and the API at `/api`, which the dev server proxies to `localhost:8000`) is used by `pnpm dev`; `.env.production` (Neon `main`'s auth and the prod API's Function URL, which stays the same across deploys) by `pnpm build`, so by TestFlight **and by any local iOS build**; `.env` holds what both share. The Account page shows the app version and the release (`YYYY.M.D.N`, or `dev` for local builds). `__APP_VERSION__` (`package.json`) also invalidates the persisted cache; bump it when the cached data's shape changes.
+The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on every platform) with `IonReactRouter` (react-router 6, which Ionic 9 requires): three tabs, **This week** (`/week`), **History** (`/history`, a request at `/history/:jobId`, a recipe at `/history/:jobId/meals/:mealId`), and **Settings** (`/settings`), each with its own navigation stack. Sign-in and "not in a household" are shown instead of the tabs. `src/` is organized by feature:
+
+| Path | What |
+| --- | --- |
+| `app/` | The shell: providers, session gate, tabs and routes, error boundary, offline banner, native launch |
+| `features/<feature>/` | One folder per feature (`session`, `week`, `history`, `meals`, `settings`): its screens, API calls and queries, and pure logic with its tests |
+| `ui/` | Shared components (page frame, buttons, stepper, grouped rows, empty states, illustrations) |
+| `lib/` | Infrastructure: API client, auth (`auth.ts`, `neonAuth.ts`), query client, logging, haptics |
+| `theme/` | Design tokens (`tokens.css`: every color, radius, shadow, and font) and the styling of Ionic's structural components (`app.css`) |
+
+The look is light only: white surfaces, ink text, one warm accent, the system font for text (SF Pro; Inter where it is missing) and SF Pro Rounded for titles, a floating glass tab bar, and headers that turn to glass once content scrolls under them. Inter is bundled (`@fontsource`), so no font loads from the network. Component styles are CSS modules next to their components and use only the tokens. Native plugins: Haptics (on meaningful actions only), Status Bar (dark text), Splash Screen (hidden once the first screen renders), and Keyboard; after adding a plugin, `pnpm exec cap sync ios` updates `ios/App/CapApp-SPM/Package.swift`.
+
+Public URLs (not secrets): `.env.development` (Neon `dev`'s auth, and the API at `/api`, which the dev server proxies to `localhost:8000`) is used by `pnpm dev`; `.env.production` (Neon `main`'s auth and the prod API's Function URL, which stays the same across deploys) by `pnpm build`, so by TestFlight **and by any local iOS build**; `.env` holds what both share. Settings shows the app version and the release (`YYYY.M.D.N`, or `dev` for local builds). `__APP_VERSION__` (`package.json`) also invalidates the persisted cache; bump it when the cached data's shape changes.
 
 The dev server listens on the local network over HTTPS with a self-signed certificate (browsers warn once; accept it). It also proxies Neon Auth at `/neon-auth` so the session cookie is first-party in any browser, including Safari on a phone, and sends the trusted origin Neon Auth requires (`vite.config.ts`). If other devices can't connect, allow the port through the firewall: `sudo ufw allow from 192.168.1.0/24 to any port 5173 proto tcp`.
 
 iOS (on a Mac): `make ios` builds, copies the build into the iOS project, and opens Xcode. This build talks to **production** (`main`). Opening Xcode without `make ios` runs whatever was copied last.
 
-Data handling (`src/queryClient.ts`, `src/queries.ts`):
+Data handling (`src/lib/query/queryClient.ts` and each feature's queries):
 
 - Server data lives in TanStack Query: shown from cache immediately, refreshed in the background (stale-while-revalidate).
 - The cache is persisted on the device (Capacitor Preferences) for 7 days, so a relaunch shows the last data instantly. Sign-out deletes it.
 - Refreshes when the app returns to the foreground (`@capacitor/app`) and pauses while offline (`@capacitor/network`), with an offline banner. Requests made offline are sent when the connection returns.
-- The request list refreshes every 10 s while any request is pending or running.
+- History refreshes every 5 s while any request is pending or running.
 - Requesting meals is optimistic: the request appears at once and reconciles with the server.
 - Meals of recent finished requests are prefetched, so opening one is instant.
-- Hash routing (`/`, `/requests/:id`, `/account`) gives real back navigation in the WebView. Render errors show a recovery screen and are logged.
+- Render errors show a recovery screen and are logged.
 
-On iOS, Neon Auth requests go through Capacitor's native HTTP with the trusted origin `https://app.example.test`, because the WebView's `capacitor://localhost` origin can't be trusted and its cookies would be third-party. See `src/neonAuth.ts`, the Neon Auth implementation of `src/auth.ts` (the app's only dependency on the auth provider). `src/api.ts` calls the API with a fresh token per request.
+On iOS, Neon Auth requests go through Capacitor's native HTTP with the trusted origin `https://app.example.test`, because the WebView's `capacitor://localhost` origin can't be trusted and its cookies would be third-party. See `src/lib/auth/neonAuth.ts`, the Neon Auth implementation of `src/lib/auth/auth.ts` (the app's only dependency on the auth provider). `src/lib/api/client.ts` calls the API with a fresh token per request.
 
 ### TestFlight
 
@@ -227,8 +242,8 @@ Repository secrets: `NEON_API_KEY`, `MIGRATION_DATABASE_URL` (direct owner conne
 | What went wrong | What to do |
 | --- | --- |
 | The release failed | Nothing to undo. Fix and push. |
-| The release is bad, the data is fine | Run **Rollback** with the previous release. The database keeps the newer schema, which the older code works with; the workflow refuses if a contract migration since then removed something it needs. Then `git revert` the bad commits and push (the next push releases `main` again). |
-| Data was damaged | Run **Rollback** with the last good release, `restore_database` checked, and the confirmation `roll back to <release> and restore the database`. It stops the Pipe (no new jobs start; requests wait in the queue), waits for running workers, snapshots `main` as it is (`before-rollback-<release>-…`), restores `main` from the snapshot taken before the next release, deploys the release, and starts the Pipe again. Everything written since that snapshot is lost, including sign-ins (Neon Auth lives in the same database), so everyone signs in again. Restore points expire after 14 days. Then follow its summary: `git revert` the bad commits and their migrations and push; if `main`'s branch id changed, update `CASTLE_CHEF_NEON_BRANCH_ID` where you run `family` commands; delete the pre-restore branch Neon keeps when done, and reset `dev` if it was a child of it. |
+| The release is bad, the data is fine | Run **Rollback** with the previous release. The database keeps the newer schema, which the older code works with; the workflow refuses if a contract migration since then removed something it needs or holds data it can't handle safely (e.g. `households`: older releases would show one household's requests to another). Then `git revert` the bad commits and push (the next push releases `main` again). |
+| Data was damaged | Run **Rollback** with the last good release, `restore_database` checked, and the confirmation `roll back to <release> and restore the database`. It stops the Pipe (no new jobs start; requests wait in the queue), waits for running workers, snapshots `main` as it is (`before-rollback-<release>-…`), restores `main` from the snapshot taken before the next release, deploys the release, and starts the Pipe again. Everything written since that snapshot is lost, including sign-ins (Neon Auth lives in the same database), so everyone signs in again. Restore points expire after 14 days. Then follow its summary: `git revert` the bad commits and their migrations and push; if `main`'s branch id changed, update `CASTLE_CHEF_NEON_BRANCH_ID` where you run `household` commands; delete the pre-restore branch Neon keeps when done, and reset `dev` if it was a child of it. |
 | A bad iOS build | Expire it in App Store Connect; testers can reinstall the previous build from TestFlight → Previous Builds. Then fix forward. |
 
 A code rollback was rehearsed on 2026-09-24 (r8 to r7). The database restore has not been exercised (Neon doesn't allow a test root branch in this project); it also assumes the restored branch keeps `main`'s endpoints, so check sign-in and a request afterwards.
@@ -239,7 +254,7 @@ A code rollback was rehearsed on 2026-09-24 (r8 to r7). The database restore has
 
 | SSM parameter | Used by | Status |
 | --- | --- | --- |
-| `/castle-chef/production/database-url` (direct) | GitHub `MIGRATION_DATABASE_URL`; `family` commands for production ([Family members](#family-members-invite-only)) | set |
+| `/castle-chef/production/database-url` (direct) | GitHub `MIGRATION_DATABASE_URL`; `household` commands for production ([Households](#households-invite-only)) | set |
 | `/castle-chef/production/database-url-pooled` | the `CastleChef` stack: API and failure handler (read at startup), worker (injected by ECS) | set |
 | `/castle-chef/development/database-url` (direct) | your checkout's `backend/.env` `DATABASE_URL` | set |
 | `/castle-chef/development/database-url-pooled` | the `CastleChef-dev` stack, when deployed | set |
@@ -276,9 +291,9 @@ For a file such as the App Store Connect `.p8`: `base64 -i AuthKey_EXAMP12345.p8
 
 ## Development
 
-Development uses the Neon branch `dev` (`example-development-branch`), a copy of `main` with its own Neon Auth (users and keys copied when the branch was made, then independent). Test in the browser with [local development](#local-development); iOS-only behavior (native sign-in in `src/neonAuth.ts`, the persisted cache across relaunches) still needs a TestFlight build.
+Development uses the Neon branch `dev` (`example-development-branch`), a copy of `main` with its own Neon Auth (users and keys copied when the branch was made, then independent). Test in the browser with [local development](#local-development); iOS-only behavior (native sign-in in `src/lib/auth/neonAuth.ts`, the persisted cache across relaunches) still needs a TestFlight build.
 
-`make env` writes `backend/.env` for `dev`: `DATABASE_URL` from SSM `/castle-chef/development/database-url` ([Secrets](#secrets)), the Neon project and `dev` branch ids (`Makefile`), `CASTLE_CHEF_NEON_AUTH_URL` (from `apps/mobile/.env.development`), and `CASTLE_CHEF_JOB_DISPATCH=local`. The database and the Neon ids must all point at `dev`, or `family invite` creates the account on one branch and the membership on the other.
+`make env` writes `backend/.env` for `dev`: `DATABASE_URL` from SSM `/castle-chef/development/database-url` ([Secrets](#secrets)), the Neon project and `dev` branch ids (`Makefile`), `CASTLE_CHEF_NEON_AUTH_URL` (from `apps/mobile/.env.development`), and `CASTLE_CHEF_JOB_DISPATCH=local`. The database and the Neon ids must all point at `dev`, or `household invite` creates the account on one branch and the membership on the other.
 
 `make dev-reset` (it asks first) replaces `dev` with a copy of production as it is now, then applies this checkout's migrations. It discards everything on `dev`, including its Neon Auth state (users and sessions become production's, so sign in again). Connection details stay the same, so `backend/.env` still works. The copy is the family's real data: keep it on this machine.
 
@@ -289,34 +304,41 @@ Project `castle-chef` (`example-project`), database `neondb`, branches `main` (p
 Security model:
 
 - The app signs in with Neon Auth using an emailed one-time code (no passwords, no social providers) and gets a 15-minute JWT (EdDSA). The API verifies it against the branch's published keys (`castle_chef/auth.py`, behind an `AuthVerifier` interface so the provider can be swapped).
-- Invite-only: the API serves only accounts listed in `household_member`; anyone else gets 403. Sign-up is disabled in Neon Auth.
+- Invite-only: the API serves only accounts in a household (a `household_member` row with a `household_id`); anyone else gets 403. Sign-up is disabled in Neon Auth, but only for passwords: Neon's setting doesn't cover emailed codes, so anyone can request a code for any address, and entering it creates an empty account (tested on `dev`, 2026-09-24). Such accounts get no data (403). Accepted for the private TestFlight app. To close it, use Neon Auth's `send.otp` and `user.before_create` webhooks to email codes only to invited people, or wait for Neon to apply disable-sign-up to emailed codes.
+- Households are separate: `GET /v1/jobs` lists only the caller's household's 50 newest requests (everyone's in it, each with its meals' ids and names), a new request belongs to the requester's household, and another household's request is 404 like a missing one. `GET /v1/me` reports the caller's `household` (`id`, `name`, or null).
 - The API enforces the request rules: counts from 1 to 14, at most 3 pending or running per person, and client-generated job ids that can't be reused by someone else or with different parameters.
 - The API and worker use the owner role through Neon's pooled endpoint; the agent has no database access. Local tools use the direct endpoint.
 - Trusted auth origin: `https://app.example.test`, presented by the iOS app and the dev server's auth proxy. Keep this domain under your control. Localhost is not trusted.
 - The app doesn't use the Neon Data API. The `remove Data API access` migration removed its grants, row-level security, policies, and `client_log_batch`, so its roles (`authenticated`, `anonymous`, which Neon keeps while Neon Auth is on) can't read or write any table (`tests/test_data_api_access.py`), and the Data API itself is deleted per branch with `neonctl data-api delete --project-id example-project --branch <branch> --database neondb` (done on `dev` and `main`).
 
-### Family members (invite-only)
+### Households (invite-only)
+
+Each account belongs to at most one household and sees only that household's requests and meals. The family is `Conn Castle` (the `households` migration put every earlier member and request there). Keep testing in a household of its own so its accounts and requests never show up in the family's: on `dev` that is `Test Kitchen`, with the account `operator@example.com` (its codes arrive in the owner's Gmail). `make dev-reset` replaces `dev` with production, which has neither; create them again with the commands below.
 
 From your checkout these act on `dev` (`backend/.env`). For production, run them with `main`'s credentials from SSM (nothing is written to disk):
 
 ```sh
 cd backend
-uv run castle-chef family invite mom@example.com --name "Mom"   # create the account and add it
-uv run castle-chef family list                                  # invited emails and names
-uv run castle-chef family remove mom@example.com                # remove and delete the account
+uv run castle-chef household create "Test Household"   # a new, empty household
+uv run castle-chef household list                       # names, member and job counts
+uv run castle-chef household invite mom@example.com --name "Mom" --household "Conn Castle"
+                                                        # create the account if needed and add it
+uv run castle-chef household members "Conn Castle"      # its members' emails and names
+uv run castle-chef household remove mom@example.com     # remove and delete the account
 
 # Production: prefix each command with `prod`
 prod() { DATABASE_URL="$(aws ssm get-parameter --profile conn --region us-east-1 --with-decryption \
   --name /castle-chef/production/database-url --query Parameter.Value --output text)" \
   CASTLE_CHEF_NEON_BRANCH_ID=br-example-00000000 "$@"; }
-prod uv run castle-chef family list
+prod uv run castle-chef household list
 ```
 
-`invite` and `remove` need `CASTLE_CHEF_NEON_PROJECT_ID` and `CASTLE_CHEF_NEON_BRANCH_ID` and a logged-in `neonctl`. Sign-in is passwordless: the person enters their email in the app, then the 6-digit code Neon Auth emails them (from `auth@mail.myneon.app`; check spam).
+`invite` refuses someone already in another household (remove them first); inviting them to their own household again changes nothing. `invite` and `remove` need `CASTLE_CHEF_NEON_PROJECT_ID` and `CASTLE_CHEF_NEON_BRANCH_ID` and a logged-in `neonctl`. Sign-in is passwordless: the person enters their email in the app, then the 6-digit code Neon Auth emails them (from `auth@mail.myneon.app`; check spam).
 
 ## Status and next steps
 
 Production runs on AWS (since release `r6`; now date-versioned, e.g. `2026.9.24.1`), with alarms emailing the owner, and the iOS app on TestFlight (verified on a phone: sign-in, relaunch, requests, sending logs). A code rollback was rehearsed. Next:
 
 1. Product: give the agent meal history so it avoids repeats, and iterate on the app.
-2. Invite the family ([Family members](#family-members-invite-only)), as App Store Connect users (internal testers) or external testers (Apple reviews the first build).
+2. Invite the family ([Households](#households-invite-only)), as App Store Connect users (internal testers) or external testers (Apple reviews the first build).
+3. Contract step for households, in a later release: make `household_id` on `household_member` and `job` NOT NULL. It is nullable only because the release before it (and a rollback to it) inserts rows without one; first assign any such rows (a job to its requester's household).

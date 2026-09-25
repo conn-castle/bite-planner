@@ -1,0 +1,50 @@
+.profile {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f7a47f, var(--cc-accent));
+  color: #fff;
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: 0 10px 24px -12px rgba(239, 90, 47, 0.7);
+}
+
+.who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.name {
+  font-family: var(--cc-font-display);
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.018em;
+}
+
+.email {
+  margin-top: 2px;
+  font-size: 15px;
+  color: var(--cc-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.version {
+  margin: 32px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--cc-ink-3);
+}

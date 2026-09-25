@@ -1,0 +1,90 @@
+.button,
+.icon {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    transform var(--cc-press) var(--cc-ease),
+    background-color 200ms var(--cc-ease),
+    opacity 200ms var(--cc-ease);
+}
+
+/* Feedback on press, not on release. */
+.button:active:not(:disabled),
+.icon:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.button:disabled,
+.icon:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.button:focus-visible,
+.icon:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
+}
+
+.large {
+  height: 56px;
+  padding: 0 28px;
+  font-size: 17px;
+  border-radius: var(--cc-radius-pill);
+}
+
+.medium {
+  height: 44px;
+  padding: 0 20px;
+  font-size: 15px;
+  border-radius: var(--cc-radius-pill);
+}
+
+.block {
+  display: flex;
+  width: 100%;
+}
+
+.primary {
+  background: var(--cc-ink);
+  color: var(--cc-on-ink);
+}
+
+.secondary {
+  background: var(--cc-fill);
+  color: var(--cc-ink);
+}
+
+.secondary:active:not(:disabled) {
+  background: var(--cc-fill-strong);
+}
+
+.plain {
+  background: transparent;
+  color: var(--cc-ink-2);
+  height: auto;
+  padding: 10px 12px;
+}
+
+.danger {
+  background: var(--cc-danger-soft);
+  color: var(--cc-danger);
+}
+
+.icon {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: var(--cc-radius-pill);
+  font-size: 20px;
+}

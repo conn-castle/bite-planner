@@ -12,7 +12,7 @@ unexport DATABASE_URL
 # Like CI: fail rather than update a stale uv.lock.
 export UV_LOCKED := 1
 
-.PHONY: help setup deps env dev dev-reset migrate migration db db-stop test lint format check build ios
+.PHONY: help setup deps env dev review dev-reset migrate migration db db-stop test lint format check build ios
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
@@ -30,6 +30,9 @@ env: ## Write backend/.env for Neon dev from AWS SSM
 
 dev: ## Run the API and the app (https://localhost:5173) against Neon dev
 	scripts/dev.sh
+
+review: ## Review the app's UI from a phone on the local network, with comments (Neon dev)
+	scripts/review.sh
 
 dev-reset: ## Replace Neon dev with a copy of production, then migrate it
 	@[[ -f backend/.env ]] || { echo "Missing backend/.env: run make env" >&2; exit 1; }

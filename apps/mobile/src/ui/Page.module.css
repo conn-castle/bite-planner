@@ -1,0 +1,3 @@
+.body {
+  padding: 4px var(--cc-page-x) var(--cc-tab-bar-clearance);
+}

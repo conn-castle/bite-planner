@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlmodel import Session, col, select
@@ -52,10 +53,10 @@ def job_meals(session: Session, job: Job) -> list[Meal]:
 
 
 def test_job_succeeds_when_agent_adds_requested_meals(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     use_fake_agent(monkeypatch, meals=3)
-    job = create_job(session, GENERATE_MEALS, {"count": 3})
+    job = create_job(session, GENERATE_MEALS, {"count": 3}, household_id)
 
     run_job(job)
 
@@ -73,10 +74,10 @@ def test_job_succeeds_when_agent_adds_requested_meals(
 
 
 def test_agent_environment_has_no_database_credentials(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     run_job(job)
 
@@ -86,10 +87,10 @@ def test_agent_environment_has_no_database_credentials(
 
 
 def test_job_fails_when_agent_adds_too_few_meals(
-    session: Session, monkeypatch: pytest.MonkeyPatch
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 2})
+    job = create_job(session, GENERATE_MEALS, {"count": 2}, household_id)
 
     run_job(job)
 
@@ -100,10 +101,10 @@ def test_job_fails_when_agent_adds_too_few_meals(
 
 
 def test_job_fails_when_agent_exits_with_error(
-    session: Session, monkeypatch: pytest.MonkeyPatch
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     use_fake_agent(monkeypatch, meals=0, exit_code=3)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     run_job(job)
 
@@ -113,10 +114,10 @@ def test_job_fails_when_agent_exits_with_error(
 
 
 def test_job_fails_when_agent_stops_abnormally(
-    session: Session, monkeypatch: pytest.MonkeyPatch
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     use_fake_agent(monkeypatch, meals=1, stop_reason="max_turns")
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     run_job(job)
 
@@ -126,10 +127,10 @@ def test_job_fails_when_agent_stops_abnormally(
 
 
 def test_job_of_unknown_kind_fails_without_running_agent(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, "plan_shopping", {})
+    job = create_job(session, "plan_shopping", {}, household_id)
 
     run_job(job)
 
@@ -140,7 +141,7 @@ def test_job_of_unknown_kind_fails_without_running_agent(
 
 
 def test_job_fails_when_its_meals_cannot_be_saved(
-    session: Session, monkeypatch: pytest.MonkeyPatch
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     use_fake_agent(monkeypatch, meals=1)
 
@@ -148,7 +149,7 @@ def test_job_fails_when_its_meals_cannot_be_saved(
         raise RuntimeError("database went away")
 
     monkeypatch.setattr("castle_chef.worker.add_meals", fail_to_save)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     run_job(job)
 
@@ -159,11 +160,11 @@ def test_job_fails_when_its_meals_cannot_be_saved(
 
 
 def test_job_already_claimed_is_left_alone(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # A duplicate delivery: another task already claimed this job.
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     job.status = JobStatus.RUNNING
     session.add(job)
     session.commit()
@@ -183,11 +184,11 @@ def test_running_a_job_that_does_not_exist_fails_loudly(session: Session) -> Non
 
 
 def test_meals_are_discarded_if_the_job_was_failed_meanwhile(
-    session: Session, monkeypatch: pytest.MonkeyPatch
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The job was marked failed as stale while its agent was still running.
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     real_process_job = worker.process_job
 
     def process_then_go_stale(claimed: Job):
@@ -206,12 +207,12 @@ def test_meals_are_discarded_if_the_job_was_failed_meanwhile(
 
 
 def test_agent_timeout_stops_everything_the_agent_started(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     spawner = Path(__file__).parent / "fake_agent_spawner.py"
     monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {spawner}")
     monkeypatch.setenv("CASTLE_CHEF_AGENT_TIMEOUT_SECONDS", "2")
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     run_job(job)
 
@@ -225,12 +226,12 @@ def test_agent_timeout_stops_everything_the_agent_started(
 
 
 def test_parallel_jobs_wait_for_the_agent_lock(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     lock_path = tmp_path / "agent.lock"
     monkeypatch.setenv("CASTLE_CHEF_AGENT_LOCK_FILE", str(lock_path))
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
     agent_started = tmp_path / "jobs" / str(job.id) / "fake-agent-prompt.md"
 
     with lock_path.open("a") as other_job:  # another job's agent is running

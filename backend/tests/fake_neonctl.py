@@ -1,4 +1,4 @@
-"""Stands in for `neonctl api` in family tests.
+"""Stands in for `neonctl api` in household tests.
 
 Handles the two Neon Auth user calls castle-chef makes, applying them to the
 test database's `neon_auth.user` stand-in, and logs each call to

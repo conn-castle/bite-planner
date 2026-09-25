@@ -5,6 +5,7 @@ import re
 import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from alembic.config import Config
@@ -58,13 +59,13 @@ def database_revision() -> Iterator[Callable[[str], None]]:
 
 
 def test_worker_refuses_to_run_when_the_database_is_behind(
-    session: Session, database_revision: Callable[[str], None], tmp_path: Path
+    session: Session, household_id: UUID, database_revision: Callable[[str], None], tmp_path: Path
 ) -> None:
     # The revision before the newest migration: this code expects a migration that has not run.
     script = ScriptDirectory.from_config(Config(BACKEND_DIR / "alembic.ini"))
     [head] = script.get_heads()
     database_revision(script.get_revision(head).down_revision)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     result = runner.invoke(app, ["job", "run", "--job-id", str(job.id)])
 
@@ -76,6 +77,7 @@ def test_worker_refuses_to_run_when_the_database_is_behind(
 
 def test_worker_runs_when_the_database_is_newer_than_the_code(
     session: Session,
+    household_id: UUID,
     database_revision: Callable[[str], None],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -83,7 +85,7 @@ def test_worker_runs_when_the_database_is_newer_than_the_code(
     # A revision this code does not know: an older release is running.
     database_revision("f00dfeedf00d")
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     result = runner.invoke(app, ["job", "run", "--job-id", str(job.id)])
 
@@ -96,10 +98,10 @@ def test_worker_runs_when_the_database_is_newer_than_the_code(
 
 
 def test_worker_logs_the_checkout_it_runs(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     runner.invoke(app, ["job", "run", "--job-id", str(job.id)])
 
@@ -116,13 +118,13 @@ def test_worker_logs_the_checkout_it_runs(
 
 
 def test_worker_in_an_image_logs_the_release_it_was_built_from(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, household_id: UUID, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Images have no git checkout; the build sets these.
     monkeypatch.setenv("CASTLE_CHEF_RELEASE", "r42")
     monkeypatch.setenv("CASTLE_CHEF_COMMIT", "abc123")
     use_fake_agent(monkeypatch, meals=1)
-    job = create_job(session, GENERATE_MEALS, {"count": 1})
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, household_id)
 
     runner.invoke(app, ["job", "run", "--job-id", str(job.id)])
 

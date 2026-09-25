@@ -1,0 +1,38 @@
+.notice {
+  display: flex;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--cc-radius-md);
+  background: var(--cc-danger-soft);
+  color: var(--cc-danger);
+}
+
+.icon {
+  flex: none;
+  font-size: 20px;
+  margin-top: 1px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.body button {
+  font-weight: 600;
+  color: var(--cc-danger);
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}

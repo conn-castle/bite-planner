@@ -5,26 +5,32 @@ import { defineConfig, loadEnv } from 'vite'
 
 export default defineConfig(({ mode }) => {
   const { version } = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string }
-  // Release this build belongs to (`r<N>`), set by the release workflow; `dev` for local builds.
+  // Release this build belongs to (`YYYY.M.D.N`), set by the release workflow; `dev` for local builds.
   const release = process.env.CASTLE_CHEF_RELEASE ?? 'dev'
+  // `make review` (scripts/review.sh): the review server in front of the dev server
+  // provides HTTPS on the LAN at this port, so the dev server itself stays on loopback HTTP.
+  const reviewPort = process.env.CASTLE_CHEF_REVIEW_PORT
 
   return {
     define: { __APP_VERSION__: JSON.stringify(version), __APP_RELEASE__: JSON.stringify(release) },
     // Self-signed HTTPS so phones on the local network get a secure context,
     // which Neon Auth's Secure session cookie requires.
-    plugins: [react(), basicSsl()],
+    plugins: [react(), ...(reviewPort ? [] : [basicSsl()])],
     // Unit tests (mode `test`) load no Neon branch, so they get no dev server.
-    server: mode === 'test' ? undefined : devServer(loadEnv(mode, process.cwd())),
+    server: mode === 'test' ? undefined : devServer(loadEnv(mode, process.cwd()), reviewPort),
   }
 })
 
-function devServer(env: Record<string, string>) {
+function devServer(env: Record<string, string>, reviewPort: string | undefined) {
   if (!env.VITE_NEON_AUTH_URL) {
     throw new Error('Missing VITE_NEON_AUTH_URL; see apps/mobile/.env.development')
   }
   const authUrl = new URL(env.VITE_NEON_AUTH_URL)
   return {
-    host: true, // Listen on the local network, not just localhost.
+    // Listen on the local network, or only on loopback behind the review server,
+    // whose HTTPS address hot reload then connects through.
+    host: reviewPort ? '127.0.0.1' : true,
+    hmr: reviewPort ? { protocol: 'wss', clientPort: Number(reviewPort) } : undefined,
     proxy: {
       // The Castle Chef API, run locally with `uv run uvicorn castle_chef.api:app`
       // (backend/). Same origin as the app, so no CORS in development.

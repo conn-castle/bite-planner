@@ -38,8 +38,12 @@ from castle_chef.settings import get_settings, load_ssm_parameters
 from tests.test_worker import FAKE_AGENT
 
 STALE_AFTER = (timedelta(minutes=10), timedelta(minutes=20))
+CASTLE = uuid4()  # the household of MOM and DAD
+OTHER_HOUSE = uuid4()  # a separate household (e.g. a test household)
 MOM = uuid4()  # an invited household member
-DAD = uuid4()  # another member
+DAD = uuid4()  # another member of the same household
+NEIGHBOR = uuid4()  # a member of the other household
+UNASSIGNED = uuid4()  # has a membership row but no household (an older release's invite)
 STRANGER = uuid4()  # signed in, but never invited
 
 
@@ -80,14 +84,25 @@ def client(dispatcher: RecordingDispatcher) -> Iterator[TestClient]:
 
 
 @pytest.fixture(autouse=True)
-def household(session: Session) -> None:
-    for user_id, email, name in [(MOM, "mom@example.com", "Mom"), (DAD, "dad@example.com", "Dad")]:
+def households(session: Session) -> None:
+    for household_id, name in [(CASTLE, "Conn Castle"), (OTHER_HOUSE, "Test Household")]:
+        session.execute(
+            text("INSERT INTO household (id, name) VALUES (:id, :name)"),
+            {"id": household_id, "name": name},
+        )
+    for user_id, email, name, household_id in [
+        (MOM, "mom@example.com", "Mom", CASTLE),
+        (DAD, "dad@example.com", "Dad", CASTLE),
+        (NEIGHBOR, "neighbor@example.com", "Neighbor", OTHER_HOUSE),
+        (UNASSIGNED, "unassigned@example.com", "Unassigned", None),
+    ]:
         session.execute(
             text('INSERT INTO neon_auth."user" (id, email, name) VALUES (:id, :email, :name)'),
             {"id": user_id, "email": email, "name": name},
         )
         session.execute(
-            text("INSERT INTO household_member (user_id) VALUES (:id)"), {"id": user_id}
+            text("INSERT INTO household_member (user_id, household_id) VALUES (:id, :household)"),
+            {"id": user_id, "household": household_id},
         )
     session.commit()
 
@@ -122,14 +137,27 @@ def test_sign_in_outage_is_reported_as_unavailable(client: TestClient) -> None:
     assert client.get("/v1/jobs", headers={"Authorization": "Bearer outage"}).status_code == 503
 
 
-def test_me_reports_membership_and_account(client: TestClient) -> None:
+def test_me_reports_membership_household_and_account(client: TestClient) -> None:
     assert client.get("/v1/me", headers=as_user(MOM)).json() == {
         "user_id": str(MOM),
         "email": "mom@example.com",
         "name": "Mom",
         "member": True,
+        "household": {"id": str(CASTLE), "name": "Conn Castle"},
     }
-    assert client.get("/v1/me", headers=as_user(STRANGER)).json()["member"] is False
+    assert client.get("/v1/me", headers=as_user(NEIGHBOR)).json()["household"] == {
+        "id": str(OTHER_HOUSE),
+        "name": "Test Household",
+    }
+
+
+@pytest.mark.parametrize("user", [STRANGER, UNASSIGNED])
+def test_me_reports_accounts_without_a_household_as_non_members(
+    client: TestClient, user: UUID
+) -> None:
+    me = client.get("/v1/me", headers=as_user(user)).json()
+
+    assert (me["user_id"], me["member"], me["household"]) == (str(user), False, None)
 
 
 def test_each_request_is_logged_without_ids(
@@ -158,13 +186,18 @@ def test_each_request_is_logged_without_ids(
         ("post", "/v1/logs"),
     ],
 )
-def test_non_members_can_do_nothing_else(client: TestClient, method: str, path: str) -> None:
+@pytest.mark.parametrize("user", [STRANGER, UNASSIGNED])
+def test_non_members_can_do_nothing_else(
+    client: TestClient, session: Session, method: str, path: str, user: UUID
+) -> None:
     body = {"count": 2} if path == "/v1/jobs" else {"device": {}, "entries": []}
     kwargs = {"json": body} if method == "post" else {}
 
-    response = getattr(client, method)(path, headers=as_user(STRANGER), **kwargs)
+    response = getattr(client, method)(path, headers=as_user(user), **kwargs)
 
     assert response.status_code == 403
+    assert response.json()["detail"] == "This account isn't in a household."
+    assert session.exec(select(Job)).all() == []
 
 
 # Requesting meals.
@@ -189,7 +222,8 @@ def test_member_requests_meals(
         "created_at": None,
         "finished_at": None,
     }
-    assert reload(session, job_id).requested_by == MOM
+    job = reload(session, job_id)
+    assert (job.requested_by, job.household_id) == (MOM, CASTLE)
     assert dispatcher.dispatched == [job_id]
     listed = client.get("/v1/jobs", headers=as_user(DAD)).json()
     assert [job["id"] for job in listed] == [str(job_id)]
@@ -213,6 +247,7 @@ def test_someone_elses_job_id_is_rejected(client: TestClient) -> None:
     client.post("/v1/jobs", headers=as_user(MOM), json=body)
 
     assert client.post("/v1/jobs", headers=as_user(DAD), json=body).status_code == 409
+    assert client.post("/v1/jobs", headers=as_user(NEIGHBOR), json=body).status_code == 409
 
 
 @pytest.mark.parametrize("count", [0, 15, 2.5, "3"])
@@ -243,7 +278,7 @@ def test_stale_requests_do_not_count_against_the_limit(
         (JobStatus.PENDING, None),
         (JobStatus.RUNNING, utc_now() - timedelta(hours=2)),
     ]:
-        job = create_job(session, GENERATE_MEALS, {"count": 1}, requested_by=MOM)
+        job = create_job(session, GENERATE_MEALS, {"count": 1}, CASTLE, requested_by=MOM)
         job.status, job.started_at = status, started
         job.created_at = utc_now() - timedelta(hours=2)
         session.add(job)
@@ -276,7 +311,7 @@ def test_request_that_cannot_be_started_fails_visibly(client: TestClient, sessio
 def test_meals_of_a_request_in_the_order_the_agent_added_them(
     client: TestClient, session: Session
 ) -> None:
-    job = create_job(session, GENERATE_MEALS, {"count": 2}, requested_by=MOM)
+    job = create_job(session, GENERATE_MEALS, {"count": 2}, CASTLE, requested_by=MOM)
     meal = MealInput(
         name="Tacos",
         servings=4,
@@ -301,6 +336,83 @@ def test_meals_of_a_request_in_the_order_the_agent_added_them(
 
 def test_meals_of_an_unknown_request_are_not_found(client: TestClient) -> None:
     assert client.get(f"/v1/jobs/{uuid4()}/meals", headers=as_user(MOM)).status_code == 404
+
+
+# Households are separate.
+
+
+def add_tacos_and_soup(session: Session, job: Job) -> None:
+    meal = MealInput(
+        name="Tacos", servings=4, ingredients=[IngredientInput(name="beef")], steps=["Cook."]
+    )
+    add_meals(session, job.id, [meal, meal.model_copy(update={"name": "Soup"})])
+    session.commit()
+
+
+def test_members_see_only_their_households_requests(client: TestClient) -> None:
+    moms = client.post("/v1/jobs", headers=as_user(MOM), json={"count": 1}).json()["id"]
+    neighbors = client.post("/v1/jobs", headers=as_user(NEIGHBOR), json={"count": 1}).json()["id"]
+
+    assert [job["id"] for job in client.get("/v1/jobs", headers=as_user(DAD)).json()] == [moms]
+    assert [job["id"] for job in client.get("/v1/jobs", headers=as_user(NEIGHBOR)).json()] == [
+        neighbors
+    ]
+
+
+def test_another_households_meals_are_not_found(client: TestClient, session: Session) -> None:
+    job = create_job(session, GENERATE_MEALS, {"count": 2}, OTHER_HOUSE, requested_by=NEIGHBOR)
+    add_tacos_and_soup(session, job)
+
+    response = client.get(f"/v1/jobs/{job.id}/meals", headers=as_user(MOM))
+
+    assert (response.status_code, response.json()["detail"]) == (404, "No such request.")
+    assert len(client.get(f"/v1/jobs/{job.id}/meals", headers=as_user(NEIGHBOR)).json()) == 2
+
+
+def test_listed_requests_name_their_meals(client: TestClient, session: Session) -> None:
+    done = create_job(session, GENERATE_MEALS, {"count": 2}, CASTLE, requested_by=MOM)
+    add_tacos_and_soup(session, done)
+    waiting = create_job(session, GENERATE_MEALS, {"count": 1}, CASTLE, requested_by=DAD)
+    meal_ids = client.get(f"/v1/jobs/{done.id}/meals", headers=as_user(MOM)).json()
+
+    listed = {job["id"]: job for job in client.get("/v1/jobs", headers=as_user(MOM)).json()}
+
+    assert listed[str(done.id)]["meals"] == [
+        {"id": meal["id"], "name": meal["name"]} for meal in meal_ids
+    ]
+    assert [meal["name"] for meal in listed[str(done.id)]["meals"]] == ["Tacos", "Soup"]
+    assert listed[str(waiting.id)]["meals"] == []
+    assert set(listed[str(waiting.id)]) == {
+        "id",
+        "kind",
+        "params",
+        "status",
+        "error",
+        "created_at",
+        "finished_at",
+        "meals",
+    }
+
+
+def test_the_50_newest_requests_are_listed_newest_first(
+    client: TestClient, session: Session
+) -> None:
+    # Created 1 to 51 minutes ago, in random id order.
+    rows = session.execute(
+        text(
+            "INSERT INTO job (kind, params, household_id, created_at) "
+            "SELECT 'generate_meals', '{\"count\": 1}', :household, "
+            "now() - make_interval(mins => n) FROM generate_series(1, 51) AS n "
+            "RETURNING id, created_at"
+        ),
+        {"household": CASTLE},
+    ).all()
+    session.commit()
+    newest_first = [str(row.id) for row in sorted(rows, key=lambda row: row.created_at)][::-1]
+
+    listed = client.get("/v1/jobs", headers=as_user(MOM)).json()
+
+    assert [job["id"] for job in listed] == newest_first[:50]
 
 
 # App logs.
@@ -331,6 +443,29 @@ def test_app_logs_are_written_as_structured_log_lines(
     )
     assert [line.entry for line in lines] == entries
     assert {line.batch_id for line in lines} == {batch.batch_id}
+
+
+def test_only_app_errors_are_logged_at_error_level(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Error-level lines email an alarm (infra/), so only the app's errors may be one.
+    entries = [
+        {"event": "render.crashed", "level": "error"},
+        {"event": "query.failed", "level": "warn"},
+        {"event": "app.start", "level": "info"},
+        {"event": "no.level"},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="castle_chef.client"):
+        client.post("/v1/logs", headers=as_user(MOM), json={"device": {}, "entries": entries})
+
+    lines = [r for r in caplog.records if r.getMessage() == "client.log"]
+    assert [(line.entry["event"], line.levelname) for line in lines] == [
+        ("render.crashed", "ERROR"),
+        ("query.failed", "WARNING"),
+        ("app.start", "INFO"),
+        ("no.level", "INFO"),
+    ]
 
 
 def test_too_many_log_entries_are_rejected(client: TestClient) -> None:
@@ -391,7 +526,7 @@ def test_request_runs_to_completion_with_a_local_worker(
 
 
 def make_job(session: Session, member: UUID, status: JobStatus, hours_ago: float) -> Job:
-    job = create_job(session, GENERATE_MEALS, {"count": 1}, requested_by=member)
+    job = create_job(session, GENERATE_MEALS, {"count": 1}, CASTLE, requested_by=member)
     job.status = status
     job.created_at = utc_now() - timedelta(hours=hours_ago)
     job.started_at = job.created_at if status == JobStatus.RUNNING else None
@@ -439,7 +574,7 @@ def test_concurrent_requests_cannot_exceed_the_limit(session: Session) -> None:
     def submit() -> None:
         with Session(get_engine()) as own:
             try:
-                submit_job(own, MOM, uuid4(), GenerateMealsParams(count=1), 3, STALE_AFTER)
+                submit_job(own, MOM, CASTLE, uuid4(), GenerateMealsParams(count=1), 3, STALE_AFTER)
                 results.append("created")
             except TooManyActiveJobs:
                 results.append("refused")
@@ -454,12 +589,37 @@ def test_concurrent_requests_cannot_exceed_the_limit(session: Session) -> None:
     assert len(session.exec(select(Job).where(Job.requested_by == MOM)).all()) == 3
 
 
-def test_submitting_after_being_removed_is_refused(session: Session) -> None:
-    session.execute(text("DELETE FROM household_member WHERE user_id = :id"), {"id": MOM})
+def test_a_job_id_from_a_members_previous_household_is_rejected(
+    client: TestClient, session: Session
+) -> None:
+    body = {"job_id": str(uuid4()), "count": 2}
+    client.post("/v1/jobs", headers=as_user(MOM), json=body)
+    session.execute(
+        text("UPDATE household_member SET household_id = :house WHERE user_id = :id"),
+        {"house": OTHER_HOUSE, "id": MOM},
+    )
+    session.commit()
+
+    assert client.post("/v1/jobs", headers=as_user(MOM), json=body).status_code == 409
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "DELETE FROM household_member WHERE user_id = :id",
+        "UPDATE household_member SET household_id = NULL WHERE user_id = :id",
+        f"UPDATE household_member SET household_id = '{OTHER_HOUSE}' WHERE user_id = :id",
+    ],
+    ids=["removed", "household cleared", "moved"],
+)
+def test_submitting_after_leaving_the_household_is_refused(session: Session, change: str) -> None:
+    # The membership changes between the API's check and the submission's lock.
+    session.execute(text(change), {"id": MOM})
     session.commit()
 
     with pytest.raises(NotAMember):
-        submit_job(session, MOM, uuid4(), GenerateMealsParams(count=1), 3, STALE_AFTER)
+        submit_job(session, MOM, CASTLE, uuid4(), GenerateMealsParams(count=1), 3, STALE_AFTER)
+    assert session.exec(select(Job)).all() == []
 
 
 def test_oversized_log_batches_are_rejected(client: TestClient) -> None:

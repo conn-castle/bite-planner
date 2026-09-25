@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # run: the worker container's /app is read-only, so the agent gets a writable
     # copy of the project's .agent-layer.
     agent_project_template: Path | None = None
-    # Neon project and branch for managing Neon Auth accounts (`castle-chef family`).
+    # Neon project and branch for managing Neon Auth accounts (`castle-chef household`).
     neon_project_id: str | None = None
     neon_branch_id: str | None = None
     # Structured logs from the worker and CLI, plus logs sent from the app (client/).

@@ -1,0 +1,211 @@
+/*
+ * App-wide styling: base typography and the Castle Chef look for Ionic's
+ * structural components (headers, large titles, the floating tab bar, sheets).
+ * Component-specific styles live next to their components as CSS modules.
+ */
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--cc-font-text);
+  color: var(--cc-ink);
+  background: var(--cc-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* No tap flash; pressed states are designed per control. */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: var(--cc-accent-soft);
+}
+
+/* ---- Headers: glass once content scrolls under, invisible over a large title ---- */
+
+ion-header.header-ios ion-toolbar:last-of-type {
+  --border-width: 0;
+}
+
+ion-header ion-toolbar {
+  --background: transparent;
+  --min-height: 52px;
+  --padding-start: 12px;
+  --padding-end: 12px;
+}
+
+/* Ionic's translucent header draws its material here; it fades in on scroll. */
+ion-header.header-translucent .header-background {
+  background: var(--cc-glass);
+  backdrop-filter: var(--cc-glass-blur);
+  -webkit-backdrop-filter: var(--cc-glass-blur);
+  opacity: 0;
+  transition: opacity 220ms var(--cc-ease);
+}
+
+ion-header.header-translucent.cc-scrolled .header-background {
+  opacity: 1;
+}
+
+/* A soft edge where content meets the glass, instead of a hard divider. */
+ion-header.header-translucent.cc-scrolled::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 -12px;
+  height: 12px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(20, 19, 17, 0.045), transparent);
+}
+
+/* Pushed pages: the toolbar title appears once the page's own heading scrolls away. */
+ion-header ion-title.cc-reveal {
+  transition: opacity 220ms var(--cc-ease);
+}
+
+ion-header:not(.cc-scrolled) ion-title.cc-reveal {
+  opacity: 0;
+}
+
+ion-header ion-title {
+  font-family: var(--cc-font-text);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Large titles: rounded, heavy weight, tight tracking. */
+ion-header.header-collapse-condense ion-toolbar {
+  --padding-start: var(--cc-page-x);
+  --padding-end: var(--cc-page-x);
+}
+
+ion-title.title-large {
+  font-family: var(--cc-font-display);
+  padding-inline: 0;
+  padding-top: 6px;
+  font-size: 34px;
+  font-weight: 750;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+}
+
+/* ---- Round glass buttons in toolbars (back, actions) ---- */
+
+ion-back-button {
+  --color: var(--cc-ink);
+  --icon-font-size: 22px;
+  --icon-margin-start: 0;
+  --icon-margin-end: 0;
+  --padding-start: 0;
+  --padding-end: 0;
+  --background: var(--cc-fill);
+  --background-hover: var(--cc-fill-strong);
+  --border-radius: var(--cc-radius-pill);
+  --min-height: 36px;
+  --min-width: 36px;
+  width: 36px;
+  height: 36px;
+}
+
+/* ---- Floating glass tab bar ---- */
+
+ion-tab-bar {
+  --background: var(--cc-glass);
+  --border: 0;
+  --color: var(--cc-ink-3);
+  --color-selected: var(--cc-ink);
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--ion-safe-area-bottom, 0px) + var(--cc-tab-bar-gap));
+  transform: translateX(-50%);
+  width: min(calc(100% - 2 * var(--cc-page-x)), 340px);
+  height: var(--cc-tab-bar-height);
+  padding: 6px;
+  gap: 4px;
+  border-radius: var(--cc-radius-pill);
+  box-shadow:
+    var(--cc-shadow-float),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.8);
+  outline: 0.5px solid var(--cc-hairline);
+  backdrop-filter: var(--cc-glass-blur);
+  -webkit-backdrop-filter: var(--cc-glass-blur);
+}
+
+/* Ionic pads the bar for the home indicator; the bar floats above it instead. */
+ion-tab-bar.tab-bar-ios,
+ion-tab-bar.tab-bar-md {
+  padding-bottom: 6px;
+}
+
+ion-tab-button {
+  --padding-top: 0;
+  --padding-bottom: 0;
+  --ripple-color: transparent;
+  border-radius: var(--cc-radius-pill);
+  font-family: var(--cc-font-text);
+  transition:
+    background-color 240ms var(--cc-ease),
+    transform var(--cc-press) var(--cc-ease);
+}
+
+ion-tab-button ion-icon {
+  font-size: 23px;
+  margin-bottom: 1px;
+}
+
+ion-tab-button ion-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+ion-tab-button.tab-selected {
+  background: rgba(20, 19, 17, 0.065);
+}
+
+ion-tab-button:active {
+  transform: scale(0.94);
+}
+
+/* ---- Sheets ---- */
+
+ion-modal.sheet-auto-height {
+  --height: auto;
+  --border-radius: 32px;
+  --backdrop-opacity: 0.28;
+  --box-shadow: 0 -8px 40px -12px rgba(20, 19, 17, 0.25);
+}
+
+ion-modal.sheet-auto-height .ion-page {
+  position: relative;
+  display: block;
+  contain: none;
+}
+
+ion-modal::part(handle) {
+  background: var(--cc-fill-strong);
+  width: 40px;
+  height: 5px;
+  top: 8px;
+}
+
+/* ---- Pull to refresh ---- */
+
+ion-refresher ion-refresher-content {
+  --color: var(--cc-ink-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

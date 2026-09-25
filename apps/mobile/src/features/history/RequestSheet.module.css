@@ -1,0 +1,33 @@
+.sheet {
+  padding: 36px var(--cc-page-x) calc(var(--ion-safe-area-bottom, 0px) + 20px);
+}
+
+.title {
+  font-family: var(--cc-font-display);
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.text {
+  margin: 8px 0 0;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--cc-ink-2);
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 28px 0 28px;
+}
+
+.unit {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--cc-ink-3);
+}

@@ -34,25 +34,41 @@ class NotAMember(Exception):
     pass
 
 
-def create_job(session: Session, kind: str, params: dict, requested_by: UUID | None = None) -> Job:
-    """Insert and commit a pending job (no limits; for the CLI and tests)."""
-    job = Job(kind=kind, params=params, requested_by=requested_by)
+def create_job(
+    session: Session,
+    kind: str,
+    params: dict,
+    household_id: UUID,
+    requested_by: UUID | None = None,
+) -> Job:
+    """Insert and commit a household's pending job (no limits; for the CLI and tests)."""
+    job = Job(kind=kind, params=params, household_id=household_id, requested_by=requested_by)
     session.add(job)
     session.commit()
     session.refresh(job)
-    log.info("job.created", extra={"job_id": str(job.id), "kind": kind, "params": params})
+    log.info(
+        "job.created",
+        extra={
+            "job_id": str(job.id),
+            "kind": kind,
+            "params": params,
+            "household_id": str(household_id),
+        },
+    )
     return job
 
 
 def submit_job(
     session: Session,
     member_id: UUID,
+    household_id: UUID,
     job_id: UUID,
     params: GenerateMealsParams,
     max_active: int,
     stale_after: tuple[timedelta, timedelta],
 ) -> tuple[Job, bool]:
-    """Record a member's meal request and commit it. Returns (job, created).
+    """Record a member's meal request for their household and commit it.
+    Returns (job, created).
 
     The client picks the job id, so a retried request returns the same job
     instead of creating another. Locking the member's row serializes that
@@ -60,15 +76,21 @@ def submit_job(
     are failed first, so a crashed task can't hold one of the member's slots.
     """
     locked = session.exec(
-        select(HouseholdMember).where(HouseholdMember.user_id == member_id).with_for_update()
+        select(HouseholdMember)
+        .where(HouseholdMember.user_id == member_id, HouseholdMember.household_id == household_id)
+        .with_for_update()
     ).first()
     if locked is None:  # removed from the household since the membership check
         session.rollback()
-        raise NotAMember(f"{member_id} is not in the household.")
+        raise NotAMember(f"{member_id} is not in household {household_id}.")
     existing = session.get(Job, job_id)
     if existing is not None:
         session.rollback()
-        if existing.requested_by != member_id or existing.params != params.model_dump():
+        if (existing.requested_by, existing.household_id, existing.params) != (
+            member_id,
+            household_id,
+            params.model_dump(),
+        ):
             raise JobIdTaken(f"Job id {job_id} is taken.")
         return existing, False
     fail_stale_jobs(session, member_id, *stale_after)
@@ -80,11 +102,20 @@ def submit_job(
     if active >= max_active:
         session.rollback()
         raise TooManyActiveJobs(f"At most {max_active} requests can be waiting at a time.")
-    job = Job(id=job_id, kind=GENERATE_MEALS, params=params.model_dump(), requested_by=member_id)
+    job = Job(
+        id=job_id,
+        kind=GENERATE_MEALS,
+        params=params.model_dump(),
+        household_id=household_id,
+        requested_by=member_id,
+    )
     session.add(job)
     session.commit()
     session.refresh(job)
-    log.info("job.created", extra={"job_id": str(job.id), "params": job.params})
+    log.info(
+        "job.created",
+        extra={"job_id": str(job.id), "params": job.params, "household_id": str(household_id)},
+    )
     return job, True
 
 

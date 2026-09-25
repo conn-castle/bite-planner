@@ -3,14 +3,17 @@
 import json
 import logging
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
 import typer
 from pydantic import ValidationError
+from sqlmodel import Session
 
-from castle_chef import family, jobs, worker
+from castle_chef import household, jobs, worker
 from castle_chef import log as logging_config
 from castle_chef.db import get_session
 from castle_chef.dispatch import JOB_ID_ENV, get_dispatcher
@@ -20,11 +23,26 @@ from castle_chef.settings import get_settings
 app = typer.Typer(no_args_is_help=True)
 meal_app = typer.Typer(no_args_is_help=True, help="Manage meals.")
 job_app = typer.Typer(no_args_is_help=True, help="Create and run jobs.")
-family_app = typer.Typer(no_args_is_help=True, help="Manage who can use the app (invite-only).")
+household_app = typer.Typer(
+    no_args_is_help=True, help="Manage households and who is in them (invite-only)."
+)
 app.add_typer(meal_app, name="meal")
 app.add_typer(job_app, name="job")
-app.add_typer(family_app, name="family")
+app.add_typer(household_app, name="household")
 log = logging.getLogger(__name__)
+
+HouseholdOption = Annotated[str, typer.Option("--household", help="The household's name.")]
+
+
+@contextmanager
+def household_session() -> Iterator[Session]:
+    """A session for a household command; its errors end the command with their message."""
+    with get_session() as session:
+        try:
+            yield session
+        except household.HouseholdError as error:
+            typer.echo(str(error), err=True)
+            raise typer.Exit(1) from error
 
 
 @app.callback()
@@ -61,12 +79,15 @@ def meal_add(
 
 
 @job_app.command("create")
-def job_create(count: Annotated[int, typer.Option(min=1, max=14)]) -> None:
-    """Create a meal generation job and start it (SQS or a local worker, per
-    CASTLE_CHEF_JOB_DISPATCH). Prints the job id."""
+def job_create(
+    count: Annotated[int, typer.Option(min=1, max=14)], household_name: HouseholdOption
+) -> None:
+    """Create a household's meal generation job and start it (SQS or a local
+    worker, per CASTLE_CHEF_JOB_DISPATCH). Prints the job id."""
     params = jobs.GenerateMealsParams(count=count).model_dump()
-    with get_session() as session:
-        job = jobs.create_job(session, jobs.GENERATE_MEALS, params)
+    with household_session() as session:
+        household_id = household.get(session, household_name).id
+        job = jobs.create_job(session, jobs.GENERATE_MEALS, params, household_id)
     get_dispatcher().dispatch(job.id)
     typer.echo(json.dumps({"job_id": str(job.id)}))
 
@@ -97,30 +118,48 @@ def agent_login(provider: Annotated[str, typer.Argument(help="Agent provider.")]
     raise typer.Exit(worker.login_agent(provider))
 
 
-@family_app.command("invite")
-def family_invite(
-    email: str, name: Annotated[str, typer.Option(help="Name for their account.")]
+@household_app.command("create")
+def household_create(name: str) -> None:
+    """Create a household."""
+    with household_session() as session:
+        household.create(session, name)
+    typer.echo(f"Created the household {name!r}.")
+
+
+@household_app.command("list")
+def household_list() -> None:
+    """List households: name, member count, job count."""
+    with household_session() as session:
+        for name, member_count, job_count in household.households(session):
+            typer.echo(f"{name}\t{member_count}\t{job_count}")
+
+
+@household_app.command("invite")
+def household_invite(
+    email: str,
+    name: Annotated[str, typer.Option(help="Name for their account.")],
+    household_name: HouseholdOption,
 ) -> None:
-    """Invite someone: create their account and add them to the household."""
-    with get_session() as session:
-        family.invite(session, email, name)
+    """Invite someone: create their account if needed and add them to the household."""
+    with household_session() as session:
+        household.invite(session, email, name, household_name)
     typer.echo(
-        f"Invited {email}. They sign in to the app with this email and the code Neon Auth "
-        "emails them."
+        f"Invited {email} to {household_name!r}. They sign in to the app with this email and "
+        "the code Neon Auth emails them."
     )
 
 
-@family_app.command("list")
-def family_list() -> None:
-    """List household members."""
-    with get_session() as session:
-        for email, name in family.members(session):
+@household_app.command("members")
+def household_members(household_name: Annotated[str, typer.Argument(metavar="household")]) -> None:
+    """List a household's members: email and name."""
+    with household_session() as session:
+        for email, name in household.members(session, household_name):
             typer.echo(f"{email}\t{name}")
 
 
-@family_app.command("remove")
-def family_remove(email: str) -> None:
-    """Remove someone from the household and delete their account."""
-    with get_session() as session:
-        family.remove(session, email)
+@household_app.command("remove")
+def household_remove(email: str) -> None:
+    """Remove someone from their household and delete their account."""
+    with household_session() as session:
+        household.remove(session, email)
     typer.echo(f"Removed {email}.")

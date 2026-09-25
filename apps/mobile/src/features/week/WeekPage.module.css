@@ -1,0 +1,51 @@
+.range {
+  margin: 2px 0 20px;
+  font-size: 17px;
+  color: var(--cc-ink-2);
+}
+
+.days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 0 12px;
+  border-radius: var(--cc-radius-md);
+  background: var(--cc-fill);
+}
+
+.weekday {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--cc-ink-3);
+}
+
+.date {
+  font-size: 19px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.past .date {
+  color: var(--cc-ink-3);
+}
+
+.today {
+  background: var(--cc-ink);
+  color: var(--cc-on-ink);
+  box-shadow: 0 10px 22px -12px rgba(20, 19, 17, 0.6);
+}
+
+.today .weekday {
+  color: rgba(255, 255, 255, 0.6);
+}

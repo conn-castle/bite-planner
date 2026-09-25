@@ -77,10 +77,11 @@ jobs:
             echo "snapshot=pre-$next" >> "$GITHUB_OUTPUT"
           else
             # Without a restore, the database keeps the newer schema: fine unless
-            # a contract migration since then dropped something $RELEASE uses.
+            # a contract migration since then dropped something $RELEASE uses, or
+            # holds data $RELEASE can't handle safely (e.g. households).
             contract=$(git diff --name-only "$RELEASE" "$latest" -- backend/migrations/versions \
               | while read -r file; do git show "$latest:$file" 2> /dev/null | grep -q '# contract:' && echo "$file"; done || true)
-            [ -z "$contract" ] || fail "Contract migrations since $RELEASE ($contract) removed what it needs; restore the database too, or roll back less far."
+            [ -z "$contract" ] || fail "Contract migrations since $RELEASE ($contract) make today's database unsafe for it; restore the database too, or roll back less far."
           fi
       - uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -117,7 +118,7 @@ jobs:
             echo "Restored Neon main from $SNAPSHOT (everything written since is gone; everyone signs in again)."
             if [ "$after" != "$before" ]; then
               # Expected: the restored branch takes over the name; the old one is kept.
-              echo "main's branch id changed ($before -> $after): set CASTLE_CHEF_NEON_BRANCH_ID=$after in backend/.env for \`castle-chef family\`. Delete the pre-restore branch when no longer needed."
+              echo "main's branch id changed ($before -> $after): set CASTLE_CHEF_NEON_BRANCH_ID=$after in backend/.env for \`castle-chef household\`. Delete the pre-restore branch when no longer needed."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/deploy

@@ -1,0 +1,30 @@
+.banner {
+  position: fixed;
+  z-index: 1000;
+  top: calc(var(--ion-safe-area-top, 0px) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-ink);
+  color: var(--cc-on-ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--cc-shadow-float);
+  animation: drop 380ms var(--cc-ease) both;
+}
+
+.banner ion-icon {
+  font-size: 16px;
+}
+
+@keyframes drop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -12px);
+  }
+}

@@ -1,0 +1,107 @@
+.group {
+  margin-top: 28px;
+}
+
+.title {
+  margin: 0 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cc-ink-3);
+}
+
+.card {
+  overflow: hidden;
+  border-radius: var(--cc-radius-lg);
+  background: var(--cc-bg);
+  box-shadow: var(--cc-shadow-card);
+  outline: 0.5px solid var(--cc-hairline);
+}
+
+.footer {
+  margin: 10px 4px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--cc-ink-3);
+}
+
+.row {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
+  padding: 10px 18px;
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+  color: var(--cc-ink);
+  text-align: left;
+  position: relative;
+}
+
+.row + .row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 18px;
+  border-top: 0.5px solid var(--cc-hairline);
+}
+
+.pressable {
+  cursor: pointer;
+  transition: background-color 160ms var(--cc-ease);
+}
+
+.pressable:active:not(:disabled) {
+  background: var(--cc-fill);
+}
+
+.pressable:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.iconTile {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--cc-fill);
+  font-size: 18px;
+  color: var(--cc-ink);
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+}
+
+.detail {
+  color: var(--cc-ink-2);
+  font-size: 15px;
+  text-align: right;
+}
+
+.chevron {
+  flex: none;
+  font-size: 16px;
+  color: var(--cc-ink-3);
+}
+
+.danger {
+  color: var(--cc-danger);
+}
+
+.danger .iconTile {
+  background: var(--cc-danger-soft);
+  color: var(--cc-danger);
+}

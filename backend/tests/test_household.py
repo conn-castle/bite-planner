@@ -1,0 +1,260 @@
+"""`castle-chef household` and `job create`, through the CLI. Neon Auth account
+calls go to a fake `neonctl` that applies them to the test database."""
+
+import json
+import stat
+import sys
+from pathlib import Path
+from uuid import UUID
+
+import pytest
+from sqlalchemy import text
+from sqlmodel import Session, select
+from typer.testing import CliRunner, Result
+
+from castle_chef import cli
+from castle_chef.cli import app
+from castle_chef.models import Household, HouseholdMember, Job
+
+runner = CliRunner()
+FAKE_NEONCTL = Path(__file__).parent / "fake_neonctl.py"
+
+
+@pytest.fixture(autouse=True)
+def fake_neonctl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "neonctl"
+    script.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE_NEONCTL} "$@"\n')
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{Path(sys.executable).parent}:/usr/bin:/bin")
+    monkeypatch.setenv("CASTLE_CHEF_NEON_PROJECT_ID", "proj-test")
+    monkeypatch.setenv("CASTLE_CHEF_NEON_BRANCH_ID", "br-test")
+    log = tmp_path / "neonctl.log"
+    monkeypatch.setenv("FAKE_NEONCTL_LOG", str(log))
+    return log
+
+
+@pytest.fixture(autouse=True)
+def households() -> None:
+    for name in ("Conn Castle", "Test Household"):
+        assert run("household", "create", name).exit_code == 0
+
+
+def run(*args: str) -> Result:
+    return runner.invoke(app, list(args))
+
+
+def calls(log: Path) -> list[list[str]]:
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def membership(session: Session) -> dict[str, str | None]:
+    """Each member's email and household name."""
+    session.expire_all()
+    rows = session.execute(
+        text(
+            'SELECT u.email, h.name FROM household_member AS m JOIN neon_auth."user" AS u '
+            "ON u.id = m.user_id LEFT JOIN household AS h ON h.id = m.household_id"
+        )
+    ).all()
+    return {row.email: row.name for row in rows}
+
+
+def add_account(session: Session, email: str, name: str) -> None:
+    session.execute(
+        text('INSERT INTO neon_auth."user" (email, name) VALUES (:email, :name)'),
+        {"email": email, "name": name},
+    )
+    session.commit()
+
+
+class DispatchRecorder:
+    def __init__(self) -> None:
+        self.dispatched: list[UUID] = []
+
+    def dispatch(self, job_id: UUID) -> None:
+        self.dispatched.append(job_id)
+
+
+@pytest.fixture
+def dispatched(monkeypatch: pytest.MonkeyPatch) -> list[UUID]:
+    """Job ids `job create` starts (instead of queueing them or running a worker)."""
+    recorder = DispatchRecorder()
+    monkeypatch.setattr(cli, "get_dispatcher", lambda: recorder)
+    return recorder.dispatched
+
+
+def test_households_are_created_once_by_name() -> None:
+    again = run("household", "create", "Conn Castle")
+
+    assert again.exit_code == 1
+    assert "A household named 'Conn Castle' already exists." in again.stderr
+    assert run("household", "list").stdout == "Conn Castle\t0\t0\nTest Household\t0\t0\n"
+
+
+def test_list_counts_each_households_members_and_jobs(dispatched: list[UUID]) -> None:
+    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
+    run("household", "invite", "dad@example.com", "--name", "Dad", "--household", "Conn Castle")
+    run("household", "invite", "me@example.com", "--name", "Me", "--household", "Test Household")
+    run("job", "create", "--count", "1", "--household", "Test Household")
+
+    assert run("household", "list").stdout == "Conn Castle\t2\t0\nTest Household\t1\t1\n"
+
+
+def test_invite_creates_account_and_adds_it_to_the_household(
+    session: Session, fake_neonctl: Path
+) -> None:
+    result = run(
+        "household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [call[:4] for call in calls(fake_neonctl)] == [
+        ["api", "/projects/proj-test/branches/br-test/auth/users", "-X", "POST"]
+    ]
+    assert run("household", "members", "Conn Castle").stdout == "mom@example.com\tMom\n"
+    assert run("household", "members", "Test Household").stdout == ""
+    assert membership(session) == {"mom@example.com": "Conn Castle"}
+
+
+def test_inviting_an_existing_account_only_adds_membership(
+    session: Session, fake_neonctl: Path
+) -> None:
+    add_account(session, "kid@example.com", "Kid")
+
+    first = run(
+        "household", "invite", "KID@example.com", "--name", "Kid", "--household", "Conn Castle"
+    )
+    again = run(
+        "household", "invite", "kid@example.com", "--name", "Kid", "--household", "Conn Castle"
+    )
+
+    assert (first.exit_code, again.exit_code) == (0, 0), first.output + again.output
+    assert calls(fake_neonctl) == []
+    assert membership(session) == {"kid@example.com": "Conn Castle"}
+
+
+def test_someone_in_another_household_is_not_moved(session: Session, fake_neonctl: Path) -> None:
+    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
+
+    result = run(
+        "household", "invite", "mom@example.com", "--name", "Mom", "--household", "Test Household"
+    )
+
+    assert result.exit_code == 1
+    assert "already in the household 'Conn Castle'" in result.stderr
+    assert membership(session) == {"mom@example.com": "Conn Castle"}
+    assert len(calls(fake_neonctl)) == 1  # only the first invite's account
+
+
+def test_a_membership_without_a_household_joins_the_invited_one(
+    session: Session, fake_neonctl: Path
+) -> None:
+    add_account(session, "kid@example.com", "Kid")
+    session.execute(
+        text(
+            'INSERT INTO household_member (user_id) SELECT id FROM neon_auth."user" '
+            "WHERE email = 'kid@example.com'"
+        )
+    )
+    session.commit()
+
+    result = run(
+        "household", "invite", "kid@example.com", "--name", "Kid", "--household", "Conn Castle"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert membership(session) == {"kid@example.com": "Conn Castle"}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["household", "invite", "mom@example.com", "--name", "Mom", "--household", "Nowhere"],
+        ["household", "members", "Nowhere"],
+    ],
+)
+def test_unknown_households_fail_clearly(
+    session: Session, fake_neonctl: Path, command: list[str]
+) -> None:
+    result = run(*command)
+
+    assert result.exit_code == 1
+    assert "No household named 'Nowhere'" in result.stderr
+    assert calls(fake_neonctl) == []
+    assert membership(session) == {}
+
+
+def test_remove_deletes_membership_and_account(session: Session, fake_neonctl: Path) -> None:
+    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
+
+    result = run("household", "remove", "mom@example.com")
+
+    assert result.exit_code == 0, result.output
+    assert calls(fake_neonctl)[-1][3] == "DELETE"
+    assert session.exec(select(HouseholdMember)).all() == []
+    assert run("household", "members", "Conn Castle").stdout == ""
+
+
+def test_removing_an_unknown_account_fails_clearly(fake_neonctl: Path) -> None:
+    result = run("household", "remove", "nobody@example.com")
+
+    assert result.exit_code == 1
+    assert "No account for nobody@example.com." in result.stderr
+    assert calls(fake_neonctl) == []
+
+
+def test_invite_fails_loudly_when_neon_rejects_it(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_NEONCTL_FAIL", "1")
+
+    result = run(
+        "household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle"
+    )
+
+    assert result.exit_code != 0
+    assert "simulated Neon failure" in str(result.exception)
+    assert session.exec(select(HouseholdMember)).all() == []
+
+
+@pytest.mark.parametrize("missing", ["--name", "--household"])
+def test_invite_requires_a_name_and_a_household(fake_neonctl: Path, missing: str) -> None:
+    options = {"--name": "Mom", "--household": "Conn Castle"}
+    del options[missing]
+
+    result = run("household", "invite", "mom@example.com", *sum(options.items(), ()))
+
+    assert result.exit_code == 2  # usage error: missing required option
+    assert calls(fake_neonctl) == []
+
+
+# `job create`
+
+
+def test_job_create_makes_a_job_for_the_household(session: Session, dispatched: list[UUID]) -> None:
+    result = run("job", "create", "--count", "2", "--household", "Test Household")
+
+    assert result.exit_code == 0, result.output
+    job_id = UUID(json.loads(result.stdout)["job_id"])
+    job = session.exec(select(Job).where(Job.id == job_id)).one()
+    household = session.exec(select(Household).where(Household.id == job.household_id)).one()
+    assert (household.name, job.params, job.requested_by) == ("Test Household", {"count": 2}, None)
+    assert dispatched == [job_id]
+
+
+def test_job_create_for_an_unknown_household_fails_clearly(
+    session: Session, dispatched: list[UUID]
+) -> None:
+    result = run("job", "create", "--count", "2", "--household", "Nowhere")
+
+    assert result.exit_code == 1
+    assert "No household named 'Nowhere'" in result.stderr
+    assert session.exec(select(Job)).all() == []
+    assert dispatched == []
+
+
+def test_job_create_requires_a_household(session: Session, dispatched: list[UUID]) -> None:
+    assert run("job", "create", "--count", "2").exit_code == 2
+    assert session.exec(select(Job)).all() == []

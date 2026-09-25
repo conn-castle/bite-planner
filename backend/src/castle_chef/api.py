@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Any
@@ -32,14 +33,18 @@ from castle_chef.jobs import (
     is_stale,
     submit_job,
 )
-from castle_chef.models import HouseholdMember, Job, JobMeal, JobStatus, Meal
+from castle_chef.models import Household, HouseholdMember, Job, JobMeal, JobStatus, Meal
 from castle_chef.settings import get_settings, load_ssm_parameters
 
 log = logging.getLogger(__name__)
 client_log = logging.getLogger("castle_chef.client")
 
-RECENT_JOBS = 20
+RECENT_JOBS = 50
+NOT_IN_A_HOUSEHOLD = "This account isn't in a household."
 MAX_LOG_ENTRIES = 2000
+# The app's log levels, as Python's. The app logs `error` only for defects
+# (crashes, uncaught exceptions), so those alarm like the backend's own errors.
+CLIENT_LOG_LEVELS = {"error": logging.ERROR, "warn": logging.WARNING}
 MAX_LOG_BYTES = 1_000_000
 
 
@@ -54,6 +59,16 @@ class JobOut(BaseModel):
     error: str | None
     created_at: datetime
     finished_at: datetime | None
+
+
+class MealSummaryOut(BaseModel):
+    id: UUID
+    name: str
+
+
+class ListedJobOut(JobOut):
+    # The job's meals in the order the agent added them (none until it succeeds).
+    meals: list[MealSummaryOut]
 
 
 class IngredientOut(BaseModel):
@@ -77,11 +92,18 @@ class MealOut(BaseModel):
     meal_ingredient: list[IngredientOut]
 
 
+class HouseholdOut(BaseModel):
+    id: UUID
+    name: str
+
+
 class MeOut(BaseModel):
     user_id: UUID
     email: str | None
     name: str | None
+    # Whether the account is in a household (the API serves only those).
     member: bool
+    household: HouseholdOut | None
 
 
 class JobIn(BaseModel):
@@ -163,17 +185,32 @@ def signed_in(
         ) from error
 
 
-def is_member(session: Session, user_id: UUID) -> bool:
-    return session.get(HouseholdMember, user_id) is not None
+@dataclass(frozen=True)
+class Member:
+    """A signed-in user who is in a household."""
+
+    user_id: UUID
+    household_id: UUID
+
+
+def household_of(session: Session, user_id: UUID) -> Household | None:
+    """The user's household, or None if they aren't in one (a membership row
+    without a household doesn't count)."""
+    return session.exec(
+        select(Household)
+        .join(HouseholdMember, col(HouseholdMember.household_id) == Household.id)
+        .where(HouseholdMember.user_id == user_id)
+    ).first()
 
 
 def member(
     principal: Annotated[Principal, Depends(signed_in)],
     session: Annotated[Session, Depends(db)],
-) -> Principal:
-    if not is_member(session, principal.user_id):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "This account isn't in the household.")
-    return principal
+) -> Member:
+    household = household_of(session, principal.user_id)
+    if household is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, NOT_IN_A_HOUSEHOLD)
+    return Member(user_id=principal.user_id, household_id=household.id)
 
 
 def account(session: Session, user_id: UUID) -> tuple[str | None, str | None]:
@@ -235,28 +272,43 @@ def create_app() -> FastAPI:
         session: Annotated[Session, Depends(db)],
     ) -> MeOut:
         email, name = account(session, principal.user_id)
+        household = household_of(session, principal.user_id)
         return MeOut(
             user_id=principal.user_id,
             email=email,
             name=name,
-            member=is_member(session, principal.user_id),
+            member=household is not None,
+            household=HouseholdOut(id=household.id, name=household.name) if household else None,
         )
 
     @api.get("/v1/jobs")
     def list_jobs(
-        _: Annotated[Principal, Depends(member)], session: Annotated[Session, Depends(db)]
-    ) -> list[JobOut]:
+        caller: Annotated[Member, Depends(member)], session: Annotated[Session, Depends(db)]
+    ) -> list[ListedJobOut]:
+        """The household's most recent jobs, newest first, with their meals' names."""
         jobs = session.exec(
-            select(Job).order_by(col(Job.created_at).desc()).limit(RECENT_JOBS)
+            select(Job)
+            .where(Job.household_id == caller.household_id)
+            .order_by(col(Job.created_at).desc())
+            .limit(RECENT_JOBS)
         ).all()
+        meals: dict[UUID, list[MealSummaryOut]] = {job.id: [] for job in jobs}
+        rows = session.exec(
+            select(JobMeal.job_id, Meal.id, Meal.name)
+            .join(Meal, col(Meal.id) == JobMeal.meal_id)
+            .where(col(JobMeal.job_id).in_(list(meals)))
+            .order_by(col(Meal.created_at))
+        ).all()
+        for job_id, meal_id, name in rows:
+            meals[job_id].append(MealSummaryOut(id=meal_id, name=name))
         now = datetime.now(UTC)
-        return [job_out(job, now) for job in jobs]
+        return [ListedJobOut(**job_out(job, now).model_dump(), meals=meals[job.id]) for job in jobs]
 
     @api.post("/v1/jobs", status_code=status.HTTP_201_CREATED)
     def request_meals(
         body: JobIn,
         response: Response,
-        principal: Annotated[Principal, Depends(member)],
+        caller: Annotated[Member, Depends(member)],
         session: Annotated[Session, Depends(db)],
         dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
     ) -> JobOut:
@@ -264,7 +316,8 @@ def create_app() -> FastAPI:
         try:
             job, created = submit_job(
                 session,
-                principal.user_id,
+                caller.user_id,
+                caller.household_id,
                 body.job_id,
                 GenerateMealsParams(count=body.count),
                 settings.max_active_jobs_per_member,
@@ -279,9 +332,7 @@ def create_app() -> FastAPI:
         except JobIdTaken as error:
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
         except NotAMember as error:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, "This account isn't in the household."
-            ) from error
+            raise HTTPException(status.HTTP_403_FORBIDDEN, NOT_IN_A_HOUSEHOLD) from error
         if not created:
             response.status_code = status.HTTP_200_OK
             return JobOut.model_validate(job, from_attributes=True)
@@ -299,10 +350,12 @@ def create_app() -> FastAPI:
     @api.get("/v1/jobs/{job_id}/meals")
     def job_meals(
         job_id: UUID,
-        _: Annotated[Principal, Depends(member)],
+        caller: Annotated[Member, Depends(member)],
         session: Annotated[Session, Depends(db)],
     ) -> list[MealOut]:
-        if session.get(Job, job_id) is None:
+        job = session.get(Job, job_id)
+        # Another household's job is indistinguishable from a missing one.
+        if job is None or job.household_id != caller.household_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "No such request.")
         meals = session.exec(
             select(Meal)
@@ -325,16 +378,17 @@ def create_app() -> FastAPI:
     @api.post("/v1/logs", status_code=status.HTTP_204_NO_CONTENT)
     def send_logs(
         body: LogsIn,
-        principal: Annotated[Principal, Depends(member)],
+        caller: Annotated[Member, Depends(member)],
         session: Annotated[Session, Depends(db)],
     ) -> None:
-        email, _ = account(session, principal.user_id)
-        batch = {"batch_id": str(uuid4()), "user_id": str(principal.user_id), "email": email}
+        email, _ = account(session, caller.user_id)
+        batch = {"batch_id": str(uuid4()), "user_id": str(caller.user_id), "email": email}
         client_log.info(
             "client.batch", extra=batch | {"device": body.device, "entries": len(body.entries)}
         )
         for entry in body.entries:
-            client_log.info("client.log", extra=batch | {"entry": entry})
+            level = CLIENT_LOG_LEVELS.get(entry.get("level"), logging.INFO)
+            client_log.log(level, "client.log", extra=batch | {"entry": entry})
 
     return api
 
