@@ -28,6 +28,7 @@ A request takes one to two minutes: about 30 s to start the task (mostly Fargate
 
 | Path | What |
 | --- | --- |
+| `spec/` | The ordering spec: requirements checklist and the UI mockup |
 | `backend/` | Python (uv): the API, SQLModel models, Alembic migrations, `castle-chef` CLI, job worker, failure handler, tests |
 | `backend/src/castle_chef/prompts/` | Agent prompts |
 | `apps/mobile/` | Capacitor + React + Vite app (`ios/` is the Xcode project) |

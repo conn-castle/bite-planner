@@ -1,0 +1,1726 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Castle Chef: Combined</title>
+<link rel="icon" href="data:,">
+<style>
+/* ---- Castle Chef tokens (from ../tokens.css) ---- */
+:root {
+  color-scheme: light;
+  --cc-bg: #ffffff;
+  --cc-fill: #f5f4f1;
+  --cc-fill-strong: #ecebe7;
+  --cc-hairline: rgba(20, 19, 17, 0.08);
+  --cc-ink: #141311;
+  --cc-ink-2: #62605b;
+  --cc-ink-3: #9d9a94;
+  --cc-on-ink: #ffffff;
+  --cc-accent: #ef5a2f;
+  --cc-accent-soft: #fdefe9;
+  --cc-success: #1d8a5a;
+  --cc-success-soft: #e8f5ee;
+  --cc-danger: #d23b2c;
+  --cc-danger-soft: #fcecea;
+  --cc-font-text: -apple-system, BlinkMacSystemFont, 'Inter Variable', system-ui, sans-serif;
+  --cc-font-display: ui-rounded, var(--cc-font-text);
+  --cc-radius-sm: 12px;
+  --cc-radius-md: 18px;
+  --cc-radius-lg: 26px;
+  --cc-radius-pill: 999px;
+  --cc-shadow-card: 0 1px 2px rgba(20, 19, 17, 0.04), 0 10px 28px -14px rgba(20, 19, 17, 0.14);
+  --cc-shadow-float: 0 18px 44px -16px rgba(20, 19, 17, 0.3), 0 2px 8px rgba(20, 19, 17, 0.06);
+  --cc-glass: rgba(255, 255, 255, 0.74);
+  --cc-glass-blur: blur(24px) saturate(180%);
+  --cc-page-x: 20px;
+  --cc-tab-bar-height: 64px;
+  --cc-tab-bar-gap: 10px;
+  --cc-tab-bar-clearance: calc(var(--cc-tab-bar-height) + var(--cc-tab-bar-gap) + 34px + 24px);
+  --cc-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --cc-press: 120ms;
+
+  /* Concept additions: a warm page behind the passes, and per-order colors. */
+  --home-bg: #eceae5;
+  --card-x: 16px;
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root { --cc-glass: #ffffff; --cc-glass-blur: none; }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; text-align: inherit; }
+html, body { height: 100%; }
+body {
+  background: radial-gradient(1200px 700px at 50% 30%, #efede8, #e3e0da);
+  font-family: var(--cc-font-text); color: var(--cc-ink);
+  -webkit-font-smoothing: antialiased; font-size: 15px; line-height: 1.35;
+}
+svg.i { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- Stage (outside the design) ---------- */
+.stage { min-height: 100vh; display: flex; align-items: center; justify-content: center; gap: 44px; padding: 32px 24px; }
+.panel { width: 270px; flex: none; align-self: center; }
+.mock-label { font: 600 11px/1 var(--cc-font-text); letter-spacing: .08em; text-transform: uppercase; color: #8a867f; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.mock-label::after { content: ''; flex: 1; border-top: 1px dashed #bdb8b0; }
+.concept h2 { font: 700 22px/1.15 var(--cc-font-display); margin-bottom: 8px; letter-spacing: -.01em; }
+.concept p { font-size: 13.5px; color: #55524d; margin-bottom: 22px; }
+.switcher { border: 1.5px dashed #bdb8b0; border-radius: 16px; padding: 8px; background: rgba(255,255,255,.35); }
+.switcher button { display: flex; width: 100%; align-items: baseline; justify-content: space-between; gap: 8px; padding: 9px 12px; border-radius: 10px; font-size: 13.5px; font-weight: 600; color: #3b3935; }
+.switcher button small { font-weight: 500; color: #8a867f; font-size: 12px; }
+.switcher button:hover { background: rgba(255,255,255,.6); }
+.switcher button.on { background: #1f1e1b; color: #fff; }
+.switcher button.on small { color: #bcb8b1; }
+.panel-note { font-size: 12px; color: #8a867f; margin-top: 12px; }
+
+/* ---------- Phone ---------- */
+.phone {
+  width: 390px; height: 844px; flex: none; position: relative; overflow: hidden;
+  border-radius: 56px; background: #000;
+  box-shadow: 0 0 0 11px #1c1b19, 0 0 0 12.5px #4a4843, 0 50px 90px -30px rgba(40,30,20,.45);
+  isolation: isolate;
+}
+.island { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 122px; height: 35px; border-radius: 20px; background: #000; z-index: 80; }
+.statusbar { position: absolute; top: 0; left: 0; right: 0; height: 54px; display: flex; align-items: center; justify-content: space-between; padding: 4px 30px 0 50px; font-weight: 600; font-size: 16px; z-index: 70; pointer-events: none; transition: color .3s; }
+.statusbar .sb-r { display: flex; gap: 6px; align-items: center; }
+.statusbar.light { color: #fff; }
+.home-ind { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); width: 136px; height: 5px; border-radius: 3px; background: #141311; z-index: 90; pointer-events: none; }
+.screen { position: absolute; inset: 0; background: var(--cc-bg); border-radius: 56px; overflow: hidden; transition: transform .45s var(--cc-ease), border-radius .45s var(--cc-ease), filter .45s; transform-origin: 50% 0; }
+.screen.behind { transform: translateY(58px) scale(.92); border-radius: 22px; filter: brightness(.82); }
+.view { position: absolute; inset: 0; background: var(--cc-bg); overflow: hidden; }
+.view.home { background: var(--home-bg); }
+.sbfade { position: absolute; top: 0; left: 0; right: 0; height: 50px; z-index: 15; pointer-events: none; background: linear-gradient(var(--home-bg) 55%, rgba(236,234,229,0)); }
+.scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; padding-top: 54px; padding-bottom: var(--cc-tab-bar-clearance); scrollbar-width: none; overscroll-behavior: contain; }
+.scroll::-webkit-scrollbar { display: none; }
+.in-push { animation: inPush .42s var(--cc-ease); }
+.in-pop { animation: inPop .38s var(--cc-ease); }
+.in-fade { animation: inFade .3s var(--cc-ease); }
+@keyframes inPush { from { transform: translateX(100%); box-shadow: -20px 0 40px rgba(0,0,0,.1); } to { transform: none; } }
+@keyframes inPop { from { transform: translateX(-28%); opacity: .6; } to { transform: none; opacity: 1; } }
+@keyframes inFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ---------- Tab bar ---------- */
+.tabbar { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); width: 292px; height: var(--cc-tab-bar-height); border-radius: 999px; background: var(--cc-glass); -webkit-backdrop-filter: var(--cc-glass-blur); backdrop-filter: var(--cc-glass-blur); box-shadow: var(--cc-shadow-float); display: flex; padding: 6px; z-index: 30; border: .5px solid rgba(255,255,255,.7); transition: transform .35s var(--cc-ease), opacity .25s; }
+.tabbar.hide { transform: translate(-50%, 120px); opacity: 0; pointer-events: none; }
+.tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-radius: 999px; font-size: 10.5px; font-weight: 600; color: var(--cc-ink-2); position: relative; transition: background var(--cc-press); }
+.tab svg.i { font-size: 22px; }
+.tab.on { background: rgba(20,19,17,.07); color: var(--cc-ink); }
+.tab .badge { position: absolute; top: 7px; left: calc(50% + 7px); width: 9px; height: 9px; border-radius: 50%; background: var(--cc-accent); box-shadow: 0 0 0 2px #fff; }
+
+/* ---------- Large title header ---------- */
+.lt { padding: 8px var(--cc-page-x) 10px; }
+.lt .over { font-size: 13px; font-weight: 600; color: var(--cc-ink-3); letter-spacing: .01em; }
+.lt-row { display: flex; align-items: center; justify-content: space-between; }
+.lt h1 { font: 700 34px/1.12 var(--cc-font-display); letter-spacing: -.02em; }
+.round-btn { width: 38px; height: 38px; border-radius: 50%; background: #fff; box-shadow: var(--cc-shadow-card); display: grid; place-items: center; font-size: 19px; transition: transform var(--cc-press); }
+.round-btn:active, .btn:active, .press:active { transform: scale(.96); }
+
+/* ---------- Day strip ---------- */
+.strip-box { margin: 2px var(--card-x) 0; background: #fff; border-radius: 20px; box-shadow: 0 1px 2px rgba(20,19,17,.04); border: .5px solid var(--cc-hairline); overflow: hidden; }
+.strip { display: flex; overflow-x: auto; scrollbar-width: none; padding: 8px 6px 6px; scroll-snap-type: x proximity; }
+.strip::-webkit-scrollbar { display: none; }
+.dc { flex: none; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 0 3px; border-radius: 12px; scroll-snap-align: start; position: relative; }
+.dc .w { font-size: 10px; font-weight: 600; color: var(--cc-ink-3); letter-spacing: .02em; height: 12px; }
+.dc .w.mo { color: var(--cc-ink); }
+.dc .n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.dc.past .n { color: var(--cc-ink-3); }
+.dc.today .n { background: var(--cc-ink); color: #fff; }
+.dc.sel:not(.today) .n { background: var(--cc-fill-strong); }
+.dc .bar { align-self: stretch; height: 5px; margin: 0 9px; border-radius: 3px; background: transparent; }
+.dc .bar.cov { background: var(--c); }
+.dc .bar.cl { margin-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.dc .bar.cr { margin-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.dc.past .bar.cov { opacity: .4; }
+.dc .bar.cov.ahead { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 8px); }
+.dc .ic { height: 12px; display: flex; gap: 2px; align-items: center; }
+.dc .ic svg.i { font-size: 11px; stroke-width: 2.4; }
+.dc .ic .dec { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--cc-accent); }
+.dc .ic .dec.late { border-color: var(--cc-danger); background: var(--cc-danger); }
+.dc .ic .rem { width: 5px; height: 5px; border-radius: 50%; background: var(--cc-accent); }
+.dc .ic .dec.done { border-color: var(--cc-ink-3); background: transparent; width: 6px; height: 6px; border-width: 1.5px; }
+.strip-cap { display: flex; align-items: center; gap: 8px; padding: 9px 14px 10px; border-top: .5px solid var(--cc-hairline); font-size: 13px; color: var(--cc-ink-2); min-height: 38px; }
+.strip-cap b { color: var(--cc-ink); font-weight: 650; white-space: nowrap; }
+.strip-cap .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.strip-cap span.t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- Passes (order cards) ---------- */
+.stack { padding: 14px var(--card-x) 0; display: flex; flex-direction: column; gap: 14px; }
+.pass { background: #fff; border-radius: var(--cc-radius-lg); box-shadow: var(--cc-shadow-card); border: 1px solid rgba(20,19,17,.10); overflow: hidden; position: relative; }
+.pass.pulse { animation: pulse 1.1s var(--cc-ease); }
+@keyframes pulse { 0% { transform: scale(1); } 25% { transform: scale(1.025); box-shadow: 0 0 0 4px var(--c), var(--cc-shadow-float); } 100% { transform: scale(1); } }
+.pass-head { padding: 16px 18px 14px; background: var(--soft); position: relative; }
+.pass-over { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--deep); }
+.pass-over .l { display: flex; align-items: center; gap: 7px; }
+.pass-over .od { width: 9px; height: 9px; border-radius: 3px; background: var(--c); }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 650; letter-spacing: 0; text-transform: none; background: #fff; box-shadow: inset 0 0 0 1px rgba(20,19,17,.14); color: var(--cc-ink); white-space: nowrap; }
+.chip svg.i { font-size: 13px; }
+.chip.live { background: #141311; color: #fff; }
+.chip.live::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #3ddc84; animation: blink 1.6s infinite; }
+.chip.warn { background: var(--cc-danger); color: #fff; }
+.chip.acc { background: var(--cc-accent); color: #fff; }
+.chip.ok { background: var(--cc-success-soft); color: var(--cc-success); }
+@keyframes blink { 50% { opacity: .3; } }
+.pass-title { font: 700 23px/1.15 var(--cc-font-display); letter-spacing: -.015em; margin-top: 10px; }
+.pass-sub { font-size: 14px; color: var(--cc-ink-2); margin-top: 3px; }
+.pass-body { padding: 14px 18px 16px; }
+.perf { height: 0; border-top: .5px solid var(--cc-hairline); margin: 0 18px; }
+
+/* Track */
+.track { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); padding: 16px 4px 2px; }
+.track .ln { position: absolute; top: 24px; left: 10%; right: 10%; height: 3px; border-radius: 2px; background: var(--cc-fill-strong); }
+.track .ln i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--c); }
+.tn { display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; z-index: 1; }
+.tn .k { width: 19px; height: 19px; border-radius: 50%; background: #fff; border: 2px solid var(--cc-fill-strong); display: grid; place-items: center; color: #fff; }
+.tn .k svg.i { font-size: 11px; stroke-width: 3.2; }
+.tn.done .k { background: var(--c); border-color: var(--c); }
+.tn.cur .k { background: var(--c); border-color: var(--c); box-shadow: 0 0 0 5px var(--soft), 0 0 0 6px var(--c); }
+.tn .k { position: relative; }
+.tn.cur.pulsing .k::after { content: ''; position: absolute; inset: -8px; border-radius: 50%; border: 2px solid var(--c); animation: ping 1.6s var(--cc-ease) infinite; }
+@keyframes ping { from { transform: scale(.6); opacity: 1; } to { transform: scale(1.35); opacity: 0; } }
+.tn.warn .k { background: var(--cc-danger); border-color: var(--cc-danger); box-shadow: 0 0 0 5px var(--cc-danger-soft); }
+.tn .t { font-size: 10px; letter-spacing: -.01em; font-weight: 600; color: var(--cc-ink-3); text-align: center; white-space: nowrap; }
+.tn.done .t { color: var(--cc-ink-2); }
+.tn.cur .t, .tn.warn .t { color: var(--cc-ink); font-weight: 700; }
+.tn .ring { width: 23px; height: 23px; margin: -2px; }
+.tn .dt { font-size: 10.5px; font-weight: 650; color: var(--cc-ink-2); text-align: center; white-space: nowrap; line-height: 1.25; margin-top: -3px; }
+.tn .dt small { display: block; font-size: 10px; font-weight: 500; color: var(--cc-ink-3); }
+.track.dated { padding-bottom: 4px; }
+
+/* Action row inside a pass */
+.act { display: flex; align-items: center; gap: 12px; }
+.act .txt { flex: 1; min-width: 0; }
+.act .txt > span { display: block; }
+.act .ov { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--cc-accent); }
+.act .nm { font-weight: 650; font-size: 16px; line-height: 1.25; margin-top: 1px; }
+.act .mt { font-size: 13px; color: var(--cc-ink-2); margin-top: 2px; }
+.btn { height: 40px; padding: 0 16px; border-radius: 999px; background: var(--cc-ink); color: #fff; font-weight: 650; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; transition: transform var(--cc-press), opacity .2s; }
+.btn.acc { background: var(--cc-accent); }
+.btn.dng { background: var(--cc-danger); }
+.btn.soft { background: var(--cc-fill); color: var(--cc-ink); }
+.btn.white { background: #fff; color: var(--cc-ink); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.btn.block { width: 100%; height: 50px; font-size: 16.5px; border-radius: 16px; }
+.btn[disabled] { opacity: .35; pointer-events: none; }
+.btn svg.i { font-size: 17px; }
+
+/* Meal list rows and meal stack (from mockup 1) */
+.list-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 18px; position: relative; text-align: left; }
+.list-row + .list-row::before { content: ''; position: absolute; top: 0; right: 0; left: 70px; border-top: .5px solid var(--cc-hairline); }
+.list-row > .dish { width: 40px; height: 40px; border-radius: 12px; flex: none; }
+.list-row .tx { flex: 1; min-width: 0; }
+.list-row .tx > span { display: block; }
+.list-row .dl { font-size: 12px; font-weight: 650; color: var(--cc-ink-3); text-transform: uppercase; letter-spacing: .03em; }
+.list-row .nm { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.list-row .chev { color: var(--cc-ink-3); font-size: 16px; flex: none; }
+.group .list-row, .hcard .list-row { padding: 11px 14px; }
+.group .list-row + .list-row::before, .hcard .list-row + .list-row::before { left: 66px; }
+.hcard .hh + .list-row::before { display: none; }
+.stack-thumbs { display: flex; align-items: center; }
+.stack-thumbs .dish { width: 40px; height: 40px; border-radius: 50%; box-shadow: 0 0 0 3px #fff; margin-left: -12px; flex: none; }
+.stack-thumbs .dish:first-child { margin-left: 0; }
+.stack-thumbs .more { margin-left: 10px; font-size: 14px; font-weight: 650; color: var(--deep); white-space: nowrap; }
+.stack-thumbs.lg .dish { width: 46px; height: 46px; }
+/* Meals on a card: collapsed to the stack, or expanded to list rows */
+.mfold { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 18px 14px; }
+.mfold .ml { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--cc-ink-2); }
+.mfold .chev { color: var(--cc-ink-3); font-size: 16px; flex: none; transition: transform .25s var(--cc-ease); }
+.mfold.open { padding: 12px 18px 4px; }
+.mfold.open .ml { font-size: 13px; font-weight: 650; color: var(--cc-ink-3); }
+.mfold.open .chev { transform: rotate(180deg); }
+.pass .rows { padding-bottom: 6px; }
+.linkbtn { display: block; margin: 8px auto 0; height: 36px; padding: 0 14px; font-size: 14.5px; font-weight: 600; color: var(--cc-ink-2); text-align: center; }
+
+/* Another member is ordering */
+.who { width: 58px; height: 58px; border-radius: 50%; flex: none; display: grid; place-items: center; font: 700 24px/1 var(--cc-font-display); color: #fff; background: #5b7fa8; position: relative; }
+.who::after { content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid transparent; border-top-color: #5b7fa8; border-right-color: rgba(91,127,168,.3); animation: spin 1.6s linear infinite; }
+.who.sm { width: 22px; height: 22px; font-size: 11px; }
+.who.sm::after { display: none; }
+.who.lg { width: 96px; height: 96px; font-size: 40px; margin: 0 auto 22px; }
+.who.lg::after { inset: -9px; border-width: 2.5px; }
+.chip.dark { background: #141311; color: #fff; }
+.chip.dark .who.sm { width: 16px; height: 16px; font-size: 9px; margin-left: -4px; }
+.pstep { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: var(--cc-ink-2); }
+.pstep b { color: var(--cc-ink); font-weight: 650; }
+.pstep .dots i { width: 18px; }
+.pstep .dots i.on { background: #5b7fa8; }
+.pick-note { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--cc-ink-3); margin-top: 10px; }
+.pick-note svg.i { font-size: 15px; margin-top: 1px; }
+.note { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; color: var(--cc-ink-2); margin-top: 12px; }
+.note svg.i { font-size: 17px; margin-top: 1px; color: var(--cc-ink-3); }
+.note b { color: var(--cc-ink); font-weight: 650; }
+
+.btn-row { display: flex; gap: 8px; }
+.btn-row .btn { flex: 1; }
+
+/* Draft passes */
+.pass.draft { background: transparent; box-shadow: none; border: 1.5px dashed rgba(20,19,17,.2); }
+.pass.draft .pass-head { background: transparent; }
+.pass.draft.soon { background: #fff; border: 1.5px solid var(--cc-accent); box-shadow: 0 12px 30px -16px rgba(239,90,47,.45); }
+.pass.draft.soon .pass-head { background: var(--cc-accent-soft); }
+.pass.draft.late { background: #fff; border: 1.5px solid var(--cc-danger); box-shadow: 0 12px 30px -16px rgba(210,59,44,.45); }
+.pass.draft.late .pass-head { background: var(--cc-danger-soft); }
+.pass.draft.remind { background: #fff; border: 1.5px solid rgba(20,19,17,.1); box-shadow: var(--cc-shadow-card); }
+.pass.draft.locked { background: #fff; border: 1.5px solid rgba(91,127,168,.45); box-shadow: var(--cc-shadow-card); }
+.pass.draft.locked .pass-head { background: #eef2f8; }
+.pass.draft.gen, .pass.draft.ready { background: #fff; border: 1.5px solid rgba(20,19,17,.1); box-shadow: var(--cc-shadow-card); }
+.pass.draft.ready { border-color: var(--cc-accent); }
+.pass.draft.ready .pass-head { background: var(--cc-accent-soft); }
+.draft-row { display: flex; gap: 14px; align-items: center; }
+.draft-row .txt { flex: 1; min-width: 0; }
+.cd { width: 58px; height: 58px; position: relative; flex: none; }
+.cd svg { width: 58px; height: 58px; transform: rotate(-90deg); }
+.cd .v { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+.cd .v b { font: 700 20px/1 var(--cc-font-display); font-variant-numeric: tabular-nums; }
+.cd .v small { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--cc-ink-3); margin-top: 2px; }
+.cover { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--cc-ink-2); margin: 0 0 14px; }
+.cover .seg { display: flex; gap: 3px; }
+.cover .seg i { width: 14px; height: 6px; border-radius: 3px; background: var(--cc-fill-strong); }
+.gbar { height: 6px; border-radius: 3px; background: var(--cc-fill-strong); overflow: hidden; margin: 12px 0 8px; }
+.gbar i { display: block; height: 100%; width: 0; border-radius: 3px; background: linear-gradient(90deg, var(--cc-accent), #ff9a6e, var(--cc-accent)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; transition: width .5s linear; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* Welcome */
+.welcome { padding: 22px 20px 20px; text-align: left; }
+.welcome .art { display: flex; gap: 8px; margin-bottom: 16px; }
+.ghost { height: 60px; border-radius: 20px; border: 1.5px dashed rgba(20,19,17,.13); }
+
+/* ---------- Nav bar for pushed screens ---------- */
+.navbar { position: absolute; top: 0; left: 0; right: 0; height: 98px; padding-top: 54px; display: flex; align-items: center; justify-content: space-between; z-index: 20; background: rgba(255,255,255,.82); -webkit-backdrop-filter: var(--cc-glass-blur); backdrop-filter: var(--cc-glass-blur); border-bottom: .5px solid var(--cc-hairline); }
+.navbar.clear { background: transparent; border-color: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.nb-back { display: flex; align-items: center; gap: 2px; color: var(--cc-ink); font-size: 17px; padding: 0 12px 0 8px; height: 44px; }
+.nb-back svg.i { font-size: 24px; stroke-width: 2.4; }
+.nb-title { position: absolute; left: 50%; transform: translateX(-50%); font-weight: 650; font-size: 17px; bottom: 11px; }
+.nb-r { padding-right: 12px; }
+.glass-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.8); -webkit-backdrop-filter: var(--cc-glass-blur); backdrop-filter: var(--cc-glass-blur); box-shadow: 0 2px 10px rgba(0,0,0,.08); font-size: 22px; }
+.pushed .scroll { padding-top: 98px; }
+
+/* Grouped lists */
+.group { margin: 0 var(--card-x); background: #fff; border-radius: 18px; border: .5px solid var(--cc-hairline); overflow: hidden; }
+.gh { font-size: 13px; font-weight: 650; color: var(--cc-ink-3); padding: 22px calc(var(--card-x) + 4px) 8px; text-transform: none; }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; min-height: 52px; width: 100%; }
+.row + .row { border-top: .5px solid var(--cc-hairline); }
+.row .rl { flex: 1; min-width: 0; }
+.row .rt { font-size: 15.5px; font-weight: 550; }
+.row .rs { font-size: 13px; color: var(--cc-ink-2); margin-top: 1px; }
+.row .rv { color: var(--cc-ink-2); font-size: 15px; white-space: nowrap; }
+.row .chev { color: var(--cc-ink-3); font-size: 16px; }
+.row .day { width: 38px; text-align: center; flex: none; }
+.row .day b { display: block; font: 700 18px/1 var(--cc-font-display); }
+.row .day small { font-size: 11px; font-weight: 700; color: var(--cc-ink-3); text-transform: uppercase; }
+.pill { font-size: 12px; font-weight: 650; padding: 4px 9px; border-radius: 999px; background: var(--cc-fill); color: var(--cc-ink-2); white-space: nowrap; }
+.pill.acc { background: var(--cc-accent-soft); color: var(--cc-accent); }
+.pill.ok { background: #d6efe1; color: #136c45; }
+
+/* Order view */
+.ov-hero { margin: 8px var(--card-x) 0; }
+
+/* Meal view */
+.hero { height: 330px; position: relative; }
+.hero .dish { position: absolute; inset: 0; border-radius: 0; }
+.hero-btns { position: absolute; top: 54px; left: 14px; right: 14px; display: flex; justify-content: space-between; z-index: 5; }
+.mv { padding: 18px var(--cc-page-x) 0; background: #fff; border-radius: 26px 26px 0 0; margin-top: -26px; position: relative; }
+.mv .over { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--deep); display: flex; gap: 7px; align-items: center; }
+.mv .over i { width: 9px; height: 9px; border-radius: 3px; background: var(--c); }
+.mv h1 { font: 700 28px/1.15 var(--cc-font-display); letter-spacing: -.02em; margin-top: 8px; }
+.mv .desc { color: var(--cc-ink-2); margin-top: 6px; font-size: 15px; }
+.facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 18px; }
+.fact { background: var(--cc-fill); border-radius: 14px; padding: 10px 8px; text-align: center; }
+.fact b { display: block; font: 700 17px/1.1 var(--cc-font-display); }
+.fact small { font-size: 11px; color: var(--cc-ink-2); font-weight: 600; }
+.serv { display: flex; align-items: center; justify-content: space-between; margin-top: 22px; padding: 10px 10px 10px 14px; background: var(--cc-fill); border-radius: 16px; }
+.serv .slab { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.stepper { display: flex; align-items: center; gap: 4px; background: #fff; border-radius: 999px; padding: 3px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.stepper button { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; font-weight: 600; }
+.stepper button:active { background: var(--cc-fill); }
+.stepper b { min-width: 24px; text-align: center; font-variant-numeric: tabular-nums; font-size: 16px; }
+.ing { list-style: none; margin-top: 8px; }
+.ing li { display: flex; gap: 12px; padding: 11px 0; border-bottom: .5px solid var(--cc-hairline); font-size: 15.5px; }
+.ing li .q { width: 74px; flex: none; font-weight: 650; font-variant-numeric: tabular-nums; }
+.h3 { font: 700 20px/1.2 var(--cc-font-display); margin-top: 26px; }
+.sticky-cta { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px var(--cc-page-x) 34px; background: linear-gradient(rgba(255,255,255,0), #fff 28%); z-index: 10; display: flex; gap: 10px; }
+
+/* Instructions view */
+.cook { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 54px 0 0; background: #fff; }
+.cook-top { display: flex; align-items: center; justify-content: space-between; padding: 4px 14px 0; }
+.cook-top .ttl { font-size: 14px; font-weight: 600; color: var(--cc-ink-2); max-width: 230px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.segs { display: flex; gap: 4px; padding: 14px var(--cc-page-x) 0; }
+.segs i { flex: 1; height: 4px; border-radius: 2px; background: var(--cc-fill-strong); }
+.segs i.on { background: var(--cc-ink); }
+.cook-body { flex: 1; padding: 34px var(--cc-page-x) 0; overflow-y: auto; }
+.cook-body .sn { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--cc-accent); }
+.cook-body p.big { font: 600 27px/1.3 var(--cc-font-display); letter-spacing: -.015em; margin-top: 12px; }
+.timer { margin-top: 26px; display: inline-flex; align-items: center; gap: 10px; height: 52px; padding: 0 20px 0 16px; border-radius: 999px; background: var(--cc-accent-soft); color: var(--cc-accent); font-weight: 700; font-size: 17px; }
+.timer svg.i { font-size: 22px; }
+.timer.run { background: var(--cc-accent); color: #fff; font-variant-numeric: tabular-nums; }
+.uses { margin-top: 30px; }
+.uses h5 { font-size: 13px; color: var(--cc-ink-3); font-weight: 650; margin-bottom: 6px; }
+.uses div { font-size: 15px; color: var(--cc-ink-2); padding: 3px 0; }
+.cook-foot { display: flex; gap: 10px; padding: 12px var(--cc-page-x) 34px; }
+.cook-foot .btn { height: 54px; border-radius: 18px; font-size: 16.5px; }
+
+/* History */
+.seg-ctl { display: flex; margin: 4px var(--card-x) 6px; background: var(--cc-fill-strong); border-radius: 11px; padding: 2px; }
+.seg-ctl button { flex: 1; height: 32px; border-radius: 9px; font-size: 14px; font-weight: 600; text-align: center; color: var(--cc-ink-2); }
+.seg-ctl button.on { background: #fff; color: var(--cc-ink); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.hcard { margin: 12px var(--card-x) 0; background: #fff; border-radius: 22px; border: .5px solid var(--cc-hairline); box-shadow: var(--cc-shadow-card); overflow: hidden; }
+.hcard .hh { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--soft); width: 100%; }
+.hcard .hh .od { width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+.hcard .hh .hl { flex: 1; }
+.hcard .hh .a { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--deep); }
+.hcard .hh .b { font-size: 14px; font-weight: 600; margin-top: 1px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; }
+.gtile { border-radius: 16px; overflow: hidden; background: var(--cc-fill); text-align: left; }
+.gtile .dish { height: 96px; border-radius: 0; }
+.gtile .gl { padding: 8px 10px 10px; }
+.gtile .gl b { display: block; font-size: 13.5px; font-weight: 650; line-height: 1.25; height: 34px; overflow: hidden; }
+.gtile .gl small { font-size: 12px; color: var(--cc-ink-2); }
+.hgroup { margin: 14px var(--card-x) 0; border-radius: 22px; background: var(--soft); overflow: hidden; }
+.hgroup .ghd { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 0; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--deep); }
+.hgroup .gtile { background: #fff; }
+
+/* Dish art: an illustrated plate standing in for food photography. */
+.dish { position: relative; overflow: hidden; background: var(--bg); display: block; }
+.dish::before { content: ''; position: absolute; inset: 11%; border-radius: 50%; background: radial-gradient(circle, #fff 60%, #efece6 63%, #fff 68%, #f4f2ee 100%); box-shadow: 0 5px 12px -4px rgba(60,40,20,.28); }
+.dish::after { content: ''; position: absolute; inset: 24%; border-radius: 50%;
+  background:
+    radial-gradient(circle at 30% 34%, var(--b) 0 13%, transparent 14%),
+    radial-gradient(circle at 66% 30%, var(--c) 0 11%, transparent 12%),
+    radial-gradient(circle at 72% 64%, var(--b) 0 12%, transparent 13%),
+    radial-gradient(circle at 38% 70%, var(--c) 0 10%, transparent 11%),
+    radial-gradient(circle at 52% 50%, var(--a) 0 20%, transparent 21%),
+    radial-gradient(circle at 45% 45%, var(--base) 0 60%, color-mix(in srgb, var(--base) 80%, #000) 100%);
+  filter: blur(.4px) saturate(1.05);
+}
+.hero .dish::before { inset: auto; width: 250px; height: 250px; left: 50%; top: 50%; transform: translate(-50%, -46%); }
+.hero .dish::after { inset: auto; width: 168px; height: 168px; left: 50%; top: 50%; transform: translate(-50%, -52%); }
+
+/* ---------- Create-order sheet ---------- */
+.sheet-wrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
+.sheet-wrap.open { pointer-events: auto; }
+.sheet-bd { position: absolute; inset: 0; background: rgba(0,0,0,.001); }
+.sheet { position: absolute; left: 0; right: 0; top: 50px; bottom: 0; background: #fff; border-radius: 14px 14px 0 0; overflow: hidden; box-shadow: 0 -10px 40px rgba(0,0,0,.15); display: flex; flex-direction: column; }
+.sheet.in-up { animation: up .5s var(--cc-ease); }
+.sheet.out-down { animation: down .35s var(--cc-ease) forwards; }
+@keyframes up { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes down { to { transform: translateY(100%); } }
+.grab { width: 36px; height: 5px; border-radius: 3px; background: var(--cc-fill-strong); margin: 7px auto 0; flex: none; }
+.sh-top { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px 0; height: 46px; flex: none; }
+.sh-top .x { width: 32px; height: 32px; border-radius: 50%; background: var(--cc-fill); display: grid; place-items: center; font-size: 16px; color: var(--cc-ink-2); }
+.sh-top .x svg.i { stroke-width: 2.6; }
+.sh-top .bk { display: flex; align-items: center; font-size: 17px; height: 32px; padding-right: 8px; }
+.sh-top .bk svg.i { font-size: 22px; stroke-width: 2.4; }
+.dots { display: flex; gap: 5px; }
+.dots i { width: 22px; height: 4px; border-radius: 2px; background: var(--cc-fill-strong); }
+.dots i.on { background: var(--cc-ink); }
+.sh-body { flex: 1; overflow-y: auto; padding: 8px var(--cc-page-x) 130px; scrollbar-width: none; }
+.sh-body::-webkit-scrollbar { display: none; }
+.sh-body.in-step { animation: stepIn .38s var(--cc-ease); }
+.sh-body.in-stepback { animation: stepBack .38s var(--cc-ease); }
+@keyframes stepIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
+@keyframes stepBack { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: none; } }
+.sh-body h2 { font: 700 30px/1.12 var(--cc-font-display); letter-spacing: -.02em; }
+.sh-body .lede { color: var(--cc-ink-2); margin-top: 6px; font-size: 15px; }
+.sh-foot { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px var(--cc-page-x) 34px; background: rgba(255,255,255,.86); -webkit-backdrop-filter: var(--cc-glass-blur); backdrop-filter: var(--cc-glass-blur); border-top: .5px solid var(--cc-hairline); display: flex; align-items: center; gap: 12px; }
+.sh-foot .sum { flex: 1; min-width: 0; font-size: 14px; color: var(--cc-ink-2); }
+.sh-foot .sum b { color: var(--cc-ink); display: block; font-size: 15px; }
+.sh-foot .btn { height: 50px; padding: 0 26px; font-size: 16.5px; }
+
+/* wait */
+.wait { text-align: center; padding-top: 40px; }
+.orb { width: 120px; height: 120px; margin: 0 auto 26px; position: relative; }
+.orb .dish { position: absolute; inset: 0; border-radius: 50%; animation: orb 6s var(--cc-ease) infinite; }
+.orb::after { content: ''; position: absolute; inset: -10px; border-radius: 50%; border: 2.5px solid transparent; border-top-color: var(--cc-accent); border-right-color: rgba(239,90,47,.3); animation: spin 1.2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes orb { 0%,100% { transform: scale(1); } 50% { transform: scale(.94); } }
+.wait h2 { font-size: 26px; }
+.checks { text-align: left; margin: 26px auto 0; max-width: 300px; list-style: none; }
+.checks li { display: flex; align-items: center; gap: 12px; padding: 8px 0; font-size: 15px; color: var(--cc-ink-3); transition: color .3s; }
+.checks li .cb { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--cc-fill-strong); display: grid; place-items: center; color: #fff; flex: none; transition: all .3s; }
+.checks li .cb svg.i { font-size: 12px; stroke-width: 3.4; opacity: 0; }
+.checks li.on { color: var(--cc-ink); }
+.checks li.on .cb { background: var(--cc-success); border-color: var(--cc-success); }
+.checks li.on .cb svg.i { opacity: 1; }
+.checks li.now .cb { border-color: var(--cc-accent); border-top-color: transparent; animation: spin .9s linear infinite; }
+.wait .gbar { max-width: 300px; margin: 26px auto 8px; }
+.wait .left { font-size: 13px; color: var(--cc-ink-3); }
+
+/* pick: 2-column grid of suggestions */
+.pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+.pc { position: relative; border-radius: 18px; background: #fff; border: 1.5px solid var(--cc-hairline); overflow: hidden; display: flex; flex-direction: column; transition: border-color .2s, background .2s, opacity .2s; }
+.pc > .dish { height: 104px; border-radius: 0; }
+.pc .pl { padding: 8px 10px 0; flex: 1; }
+.pc .pl b { display: block; font-size: 13.5px; font-weight: 650; line-height: 1.25; height: 34px; overflow: hidden; }
+.pc .pl small { display: block; font-size: 12px; color: var(--cc-ink-2); margin-top: 2px; }
+.pc .add { margin: 8px 10px 10px; height: 34px; border-radius: 999px; background: var(--cc-fill); font-size: 13.5px; font-weight: 650; display: flex; align-items: center; justify-content: center; gap: 5px; transition: background .2s, color .2s, transform var(--cc-press); }
+.pc .add svg.i { font-size: 15px; stroke-width: 2.6; }
+.pc .add:active { transform: scale(.96); }
+.pc .dx { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.85); -webkit-backdrop-filter: var(--cc-glass-blur); backdrop-filter: var(--cc-glass-blur); color: var(--cc-ink-2); box-shadow: 0 1px 4px rgba(0,0,0,.12); font-size: 14px; }
+.pc .dx svg.i { stroke-width: 2.8; }
+.pc.on { border-color: var(--cc-ink); background: #fbfaf8; }
+.pc.on .add { background: var(--cc-ink); color: #fff; }
+.pc.off { background: var(--cc-fill); border-color: transparent; }
+.pc.off > .dish { filter: grayscale(1); opacity: .35; }
+.pc.off .pl b, .pc.off .pl small { color: var(--cc-ink-3); }
+.pc.off .pl b { text-decoration: line-through; text-decoration-color: rgba(20,19,17,.25); }
+.pc.off .dx { background: var(--cc-ink); color: #fff; }
+.pc .gone { position: absolute; left: 0; right: 0; top: 36px; text-align: center; font-size: 12px; font-weight: 650; color: var(--cc-ink-2); padding: 0 12px; }
+.pc.skel { pointer-events: none; }
+.pc.skel > .dish, .pc.skel .pl b, .pc.skel .pl small, .pc.skel .add { background: var(--cc-fill-strong) !important; color: transparent !important; animation: skel 1s ease-in-out infinite; }
+.pc.skel .pl b { height: 14px; border-radius: 6px; margin-top: 4px; width: 80%; }
+.pc.skel .pl small { height: 11px; border-radius: 6px; width: 50%; margin-top: 8px; }
+.pc.skel > .dish::before, .pc.skel > .dish::after { display: none; }
+@keyframes skel { 50% { opacity: .5; } }
+.more { margin-top: 18px; text-align: center; }
+.more .btn { width: 100%; height: 50px; border-radius: 16px; }
+.more .mt { font-size: 12.5px; color: var(--cc-ink-3); margin-top: 8px; }
+.more .gbar { margin: 4px 0 8px; }
+
+/* delivery + next */
+.lab { font-size: 13px; font-weight: 650; color: var(--cc-ink-3); margin: 24px 0 10px; display: flex; justify-content: space-between; }
+.lab span { color: var(--cc-ink-2); }
+.dchips { display: flex; gap: 8px; overflow-x: auto; margin: 0 calc(-1 * var(--cc-page-x)); padding: 2px var(--cc-page-x) 4px; scrollbar-width: none; }
+.dchips::-webkit-scrollbar { display: none; }
+.dchip { flex: none; width: 58px; padding: 9px 0 10px; border-radius: 16px; background: var(--cc-fill); text-align: center; position: relative; }
+.dchip small { display: block; font-size: 11.5px; font-weight: 650; color: var(--cc-ink-2); }
+.dchip b { display: block; font: 700 21px/1.15 var(--cc-font-display); }
+.dchip .tag { position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%); font-size: 9.5px; font-weight: 700; background: var(--cc-accent); color: #fff; border-radius: 6px; padding: 1px 5px; white-space: nowrap; letter-spacing: .02em; }
+.dchip.on { background: var(--cc-ink); color: #fff; }
+.dchip.on small { color: #cfcbc4; }
+.dchip .cv { position: absolute; left: 10px; right: 10px; bottom: 5px; height: 4px; border-radius: 2px; background: var(--oc); opacity: .75; }
+.dchip.on .cv { opacity: 1; box-shadow: 0 0 0 1.5px var(--cc-ink); }
+.dchip.past { opacity: .45; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--cc-ink-3); margin-top: 12px; }
+.legend span { display: flex; align-items: center; gap: 5px; }
+.legend i { width: 14px; height: 4px; border-radius: 2px; background: var(--cc-ink-3); }
+.lede b { color: var(--cc-ink); font-weight: 650; }
+.rec { margin-top: 20px; border-radius: 22px; padding: 18px; background: var(--cc-accent-soft); border: 1.5px solid var(--cc-accent); }
+.rec.off { background: #fff; border-color: var(--cc-hairline); }
+.rec.warn { background: var(--cc-danger-soft); border-color: var(--cc-danger); }
+.rec.warn .rt { color: var(--cc-danger); }
+.rec .rt { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--cc-accent); display: flex; align-items: center; gap: 6px; }
+.rec .rd { font: 700 26px/1.15 var(--cc-font-display); margin-top: 6px; }
+.rec .rw { font-size: 14px; color: var(--cc-ink-2); margin-top: 4px; }
+.mini-strip { display: flex; gap: 4px; margin-top: 14px; }
+.mini-strip div { flex: 1; text-align: center; }
+.mini-strip i { display: block; height: 6px; border-radius: 3px; background: var(--cc-fill-strong); margin-bottom: 4px; }
+.mini-strip small { font-size: 10.5px; font-weight: 650; color: var(--cc-ink-3); }
+.mini-strip .m i { background: var(--c); }
+.mini-strip .x i { background: var(--cc-accent); }
+.mini-strip .x small { color: var(--cc-accent); }
+.mini-strip .p i { background: var(--oc); opacity: .45; }
+.mini-strip .x.m i { background: linear-gradient(90deg, var(--c) 50%, var(--cc-accent) 50%); }
+.sets { margin-top: 10px; background: var(--cc-fill); border-radius: 16px; padding: 2px 14px; }
+.sets .sr { display: flex; align-items: center; gap: 10px; padding: 11px 0; font-size: 14.5px; }
+.sets .sr + .sr { border-top: .5px solid var(--cc-hairline); }
+.sets .sr svg.i { font-size: 17px; color: var(--cc-ink-3); }
+.sets .sr .l { flex: 1; min-width: 0; }
+.sets .sr .l small { display: block; font-size: 12.5px; color: var(--cc-ink-3); }
+.sets .sr b { font-weight: 650; white-space: nowrap; }
+.sets .sr.acc svg.i, .sets .sr.acc b { color: var(--cc-accent); }
+
+/* shopping list */
+.lsum { display: flex; gap: 8px; margin-top: 16px; }
+.lsum div { flex: 1; background: var(--cc-fill); border-radius: 14px; padding: 9px 10px; }
+.lsum b { display: block; font: 700 18px/1.15 var(--cc-font-display); }
+.lsum small { font-size: 11.5px; color: var(--cc-ink-2); font-weight: 600; }
+.aisle { font-size: 13px; font-weight: 650; color: var(--cc-ink-3); margin: 22px 0 6px; display: flex; justify-content: space-between; }
+.li-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: .5px solid var(--cc-hairline); }
+.li-row .q { width: 62px; flex: none; font-weight: 650; font-size: 14.5px; font-variant-numeric: tabular-nums; }
+.li-row .nm { flex: 1; min-width: 0; }
+.li-row .nm b { display: block; font-size: 15px; font-weight: 550; }
+.li-row .nm b::first-letter { text-transform: uppercase; }
+.li-row .nm small { display: block; font-size: 12px; color: var(--cc-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.li-row .rm { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--cc-fill); color: var(--cc-ink-2); font-size: 15px; flex: none; }
+.li-row .rm svg.i { stroke-width: 2.6; }
+.li-row .rs { height: 30px; padding: 0 11px; border-radius: 999px; background: var(--cc-fill); font-size: 12.5px; font-weight: 650; color: var(--cc-ink); flex: none; display: flex; align-items: center; gap: 4px; }
+.li-row .rs svg.i { font-size: 13px; }
+.li-row.out .q, .li-row.out .nm b { color: var(--cc-ink-3); text-decoration: line-through; text-decoration-color: rgba(20,19,17,.3); }
+.li-row.out .nm small::before { content: 'Removed · '; color: var(--cc-ink-2); font-weight: 600; }
+.pushed .slist { padding: 0 calc(var(--card-x) + 4px); }
+
+/* settings */
+.row .stepper { box-shadow: none; background: var(--cc-fill); }
+.row .stepper button { width: 30px; height: 30px; }
+.row .stepper b { min-width: 20px; font-size: 15px; }
+.tinput { font: 600 15px var(--cc-font-text); color: var(--cc-ink); background: var(--cc-fill); border: 0; border-radius: 10px; height: 34px; padding: 0 10px; }
+.foot-note { font-size: 13px; color: var(--cc-ink-3); padding: 8px calc(var(--card-x) + 4px) 0; display: flex; gap: 6px; align-items: flex-start; }
+.foot-note svg.i { font-size: 14px; margin-top: 2px; flex: none; }
+.preview { margin: 0 var(--card-x); background: #fff; border-radius: 18px; border: .5px solid var(--cc-hairline); padding: 4px 0; }
+
+
+/* ---------- Toast / banner ---------- */
+.toast { position: absolute; top: 50px; left: 10px; right: 10px; z-index: 95; background: rgba(250,249,247,.9); -webkit-backdrop-filter: var(--cc-glass-blur); backdrop-filter: var(--cc-glass-blur); border-radius: 22px; padding: 12px 14px; display: flex; gap: 12px; align-items: center; box-shadow: 0 12px 40px -10px rgba(0,0,0,.3); transform: translateY(-220px); opacity: 0; transition: transform .5s var(--cc-ease), opacity .3s; cursor: pointer; }
+.toast.show { transform: none; opacity: 1; }
+.appicon { width: 38px; height: 38px; border-radius: 9px; background: linear-gradient(160deg, #ff7a4d, var(--cc-accent)); display: grid; place-items: center; flex: none; }
+.appicon svg { width: 22px; height: 22px; fill: #fff; }
+.toast .tt { flex: 1; min-width: 0; }
+.toast .tt b { font-size: 14.5px; font-weight: 650; display: flex; justify-content: space-between; }
+.toast .tt b small { font-weight: 500; color: var(--cc-ink-3); font-size: 12.5px; }
+.toast .tt div { font-size: 14px; color: var(--cc-ink-2); line-height: 1.3; }
+
+/* ---------- Alert ---------- */
+.alert-wrap { position: absolute; inset: 0; z-index: 96; background: rgba(20,19,17,.3); display: grid; place-items: center; animation: inFade .2s var(--cc-ease); }
+.alert { width: 272px; border-radius: 18px; background: rgba(250,249,247,.97); -webkit-backdrop-filter: var(--cc-glass-blur); backdrop-filter: var(--cc-glass-blur); text-align: center; overflow: hidden; box-shadow: var(--cc-shadow-float); }
+.alert h4 { font-size: 17px; font-weight: 650; padding: 20px 18px 4px; }
+.alert p { font-size: 13.5px; color: var(--cc-ink-2); padding: 0 18px 16px; line-height: 1.35; }
+.alert button { display: block; width: 100%; height: 46px; border-top: .5px solid rgba(20,19,17,.14); font-size: 17px; text-align: center; }
+.alert button.dng { color: var(--cc-danger); font-weight: 600; }
+
+/* ---------- Lock screen (side panel) ---------- */
+.lock { width: 270px; height: 520px; border-radius: 40px; position: relative; overflow: hidden; background: linear-gradient(170deg, #f4a77b 0%, #d9674a 38%, #7a3f5e 78%, #3a2437 100%); box-shadow: 0 0 0 7px #1c1b19, 0 30px 60px -24px rgba(40,30,20,.45); color: #fff; }
+.lock .li { position: absolute; top: 9px; left: 50%; transform: translateX(-50%); width: 84px; height: 25px; border-radius: 14px; background: #000; }
+.lock .ld { text-align: center; margin-top: 50px; font-size: 13px; font-weight: 600; opacity: .9; }
+.lock .lt2 { text-align: center; font: 700 64px/1 var(--cc-font-display); letter-spacing: -.02em; margin-top: 2px; }
+.lock .ncount { text-align: center; font-size: 11px; font-weight: 600; opacity: .8; margin-top: 150px; }
+.notif { margin: 8px 10px 0; background: rgba(255,255,255,.72); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); color: var(--cc-ink); border-radius: 20px; padding: 10px 12px; display: flex; gap: 10px; }
+.notif .appicon { width: 30px; height: 30px; border-radius: 8px; }
+.notif .appicon svg { width: 18px; height: 18px; }
+.notif b { font-size: 12.5px; display: flex; justify-content: space-between; }
+.notif b small { font-weight: 500; color: var(--cc-ink-2); }
+.notif div div { font-size: 12.5px; line-height: 1.3; color: #2c2b28; }
+.notif.solo { margin: 0; background: #fff; box-shadow: 0 10px 28px -14px rgba(20,19,17,.3); border: .5px solid var(--cc-hairline); }
+.lock-foot { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); width: 96px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.8); }
+.cap { font-size: 12px; color: #6f6b65; margin-top: 16px; line-height: 1.45; }
+.cap b { color: #3b3935; }
+
+/* ---------- Narrow screens: the phone becomes the page ---------- */
+.mock-fab { display: none; }
+.mock-sheet { display: none; }
+@media (max-width: 1180px) { .panel.right { display: none; } }
+@media (max-width: 760px) {
+  .stage { padding: 0; gap: 0; }
+  .panel { display: none; }
+  .phone { width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; box-shadow: none; }
+  .screen { border-radius: 0; }
+  .island, .statusbar, .home-ind { display: none; }
+  .mock-fab { display: flex; position: fixed; z-index: 200; right: 12px; top: calc(env(safe-area-inset-top) + 10px); height: 30px; padding: 0 12px; align-items: center; border-radius: 999px; background: rgba(255,255,255,.9); border: 1.5px dashed #9d9a94; font-size: 12px; font-weight: 700; color: #55524d; }
+  .mock-sheet.open { display: block; position: fixed; inset: 0; z-index: 210; background: rgba(233,231,226,.97); overflow-y: auto; padding: 60px 20px 40px; }
+  .mock-sheet .lock { margin: 0 auto; }
+}
+</style>
+</head>
+<body>
+<div class="stage">
+  <aside class="panel left">
+    <div class="mock-label">Mockup 6 · controls, not design</div>
+    <div class="concept">
+      <h2>Order cards, next step first</h2>
+      <p>Home is a stack of order cards, each with its progress track. The top card says plainly what to do now, with one button. The other cards fold their meals into a stack; tap it to see the list.</p>
+    </div>
+    <div class="mock-label">Home state</div>
+    <div class="switcher" id="switcher"></div>
+    <div class="panel-note">The create-order flow is live from any state: tap the top card's button or +. Close it partway and the draft stays on Home to resume or discard. Suggestions take about 7 seconds here (1–2 minutes for real); Generate more takes about 6. Household settings move the draft's decide-by and reminder dates live.</div>
+  </aside>
+
+  <div class="phone" id="phone">
+    <div class="island"></div>
+    <div class="statusbar" id="statusbar"><span>9:41</span><span class="sb-r">
+      <svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+      <svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.1-1.2C13.2 1.6 10.7.5 8 .5S2.8 1.6.9 3.4L2 4.6c1.6-1.5 3.7-2.4 6-2.4zm0 3.4c1.4 0 2.6.5 3.6 1.4l1.1-1.2C11.4 4.6 9.8 3.9 8 3.9s-3.4.7-4.7 1.9L4.4 7c1-.9 2.2-1.4 3.6-1.4zm0 3.4c.6 0 1.1.2 1.5.6L8 11.2 6.5 9.6c.4-.4.9-.6 1.5-.6z"/></svg>
+      <svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="18" height="9" rx="2" fill="currentColor"/><path d="M25 4.5v4c.8-.3 1.3-1.1 1.3-2s-.5-1.7-1.3-2z" fill="currentColor" opacity=".45"/></svg>
+    </span></div>
+    <div class="screen" id="screen"></div>
+    <div class="sheet-wrap" id="sheetwrap"></div>
+    <div class="toast" id="toast"></div>
+    <div class="home-ind"></div>
+  </div>
+
+  <aside class="panel right">
+    <div class="mock-label">Notifications · static examples</div>
+    <div id="lockslot"></div>
+  </aside>
+</div>
+<button class="mock-fab" id="mockfab">Mockup states</button>
+<div class="mock-sheet" id="mocksheet"></div>
+
+<script>
+'use strict';
+/* ================= Icons ================= */
+const ic = (d) => `<svg class="i" viewBox="0 0 24 24">${d}</svg>`;
+const I = {
+  stack: ic('<rect x="3" y="9" width="18" height="12" rx="3"/><path d="M6 6h12M8.5 3h7"/>'),
+  clock: ic('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  sliders: ic('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'),
+  plus: ic('<path d="M12 5v14M5 12h14"/>'),
+  chevL: ic('<path d="M15 5l-7 7 7 7"/>'),
+  chevR: ic('<path d="M9 5l7 7-7 7"/>'),
+  chevD: ic('<path d="M5 9l7 7 7-7"/>'),
+  check: ic('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  truck: ic('<path d="M2.5 6.5h11v9.5h-11zM13.5 9.5h4l3 3.5v3h-7"/><circle cx="6.5" cy="17" r="1.8"/><circle cx="16.8" cy="17" r="1.8"/>'),
+  bag: ic('<path d="M5 8h14l-1 12H6L5 8z"/><path d="M9 8V6.5a3 3 0 016 0V8"/>'),
+  bell: ic('<path d="M6 16v-5a6 6 0 0112 0v5l1.5 2h-15L6 16z"/><path d="M10 20.5a2 2 0 004 0"/>'),
+  spark: ic('<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/>'),
+  swap: ic('<path d="M7 7h12l-3.5-3.5M17 17H5l3.5 3.5"/>'),
+  x: ic('<path d="M6 6l12 12M18 6L6 18"/>'),
+  timer: ic('<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2.5 1.5M9.5 2.5h5"/>'),
+  flame: ic('<path d="M12 3c1 3 5 5 5 10a5 5 0 01-10 0c0-2.5 1.5-4 2.5-5 .3 1.5 1 2.5 2 3 0-3-1-5.5.5-8z"/>'),
+  users: ic('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.5-3.5 3-5.5 6.5-5.5s6 2 6.5 5.5M16 4.8a3.5 3.5 0 010 6.4M18 14.6c2 .6 3.3 2.4 3.5 5.4"/>'),
+  more: '<svg class="i" viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><circle cx="5.5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18.5" cy="12" r="1.8"/></svg>',
+  alert: ic('<path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.5v.01"/>'),
+  cal: ic('<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
+  list: ic('<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>'),
+  store: ic('<path d="M4 9.5L5.5 4h13L20 9.5M4 9.5h16M4 9.5v10.5h16V9.5M9.5 20v-5h5v5"/>'),
+};
+const CASTLE = '<svg viewBox="0 0 24 24"><path d="M4 21V9.5l2-1V5h2.5v2H10V5h4v2h1.5V5H18v3.5l2 1V21h-5.5v-4a2.5 2.5 0 00-5 0v4z"/></svg>';
+
+/* ================= Recipes ================= */
+// col: [base, a, b, c, bg]
+const R = {
+  fajitas: { name: 'Sheet-pan chicken fajitas', mins: 35, active: 15, kcal: 520, effort: 'Easy', why: 'One pan, build-your-own at the table',
+    desc: 'Chicken and peppers roast together on one pan while you set the table. Everyone builds their own.', col: ['#d9a15b', '#c8432f', '#e7c24a', '#6d8f3b', '#f4e9dc'],
+    ing: [[1.5, 'lb', 'boneless chicken breast'], [3, '', 'bell peppers, mixed colors'], [1, '', 'red onion'], [2, 'tbsp', 'olive oil'], [1.5, 'tbsp', 'fajita seasoning'], [8, '', 'flour tortillas'], [2, '', 'limes'], [0.5, 'cup', 'sour cream']],
+    steps: [['Heat the oven to 425°F and line a large sheet pan with foil.', 0], ['Slice the chicken, peppers, and onion into thin strips.', 0], ['Toss everything on the pan with the oil and seasoning. Spread it out so it roasts instead of steams.', 0], ['Roast until the chicken is cooked through and the peppers char at the edges.', 20], ['Warm the tortillas, squeeze lime over the pan, and serve with sour cream.', 0]] },
+  salmon: { name: 'Lemon garlic salmon & green beans', mins: 25, active: 10, kcal: 480, effort: 'Easy', why: 'Fast weeknight fish',
+    desc: 'Salmon and green beans share one pan with lemon, garlic, and butter.', col: ['#e9906a', '#f2b28f', '#5d8f3e', '#f3d36b', '#eef0e6'],
+    ing: [[4, '', 'salmon fillets, 6 oz'], [1, 'lb', 'green beans'], [3, 'tbsp', 'butter, melted'], [3, 'cloves', 'garlic'], [1, '', 'lemon'], [1, 'cup', 'instant rice']],
+    steps: [['Heat the oven to 400°F.', 0], ['Put the salmon in the middle of a sheet pan and the green beans around it.', 0], ['Mix the butter, garlic, and lemon zest; spoon it over everything. Season with salt and pepper.', 0], ['Roast until the salmon flakes easily. Make the rice while it roasts.', 12]] },
+  lettuce: { name: 'Turkey taco lettuce cups', mins: 20, active: 15, kcal: 390, effort: 'Easy', why: 'No oven, ready in 20 minutes',
+    desc: 'Crunchy, fast, and no oven. Kids can fill their own.', col: ['#b0703f', '#6fa24a', '#e2c35a', '#c7442f', '#eef3e6'],
+    ing: [[1, 'lb', 'ground turkey'], [1, 'packet', 'taco seasoning'], [2, 'heads', 'butter lettuce'], [1, 'cup', 'shredded cheddar'], [1, 'cup', 'pico de gallo'], [1, '', 'avocado']],
+    steps: [['Brown the turkey in a skillet over medium-high heat, breaking it up.', 8], ['Add the seasoning and ½ cup water; simmer until thick.', 4], ['Separate the lettuce leaves and set out the toppings.', 0], ['Spoon the turkey into the leaves and top at the table.', 0]] },
+  orzo: { name: 'One-pot creamy tomato orzo', mins: 25, active: 10, kcal: 540, effort: 'Easy', why: 'One pot to wash',
+    desc: 'The orzo cooks right in the sauce, so there is one pot to wash.', col: ['#d0553a', '#f0e3c8', '#4f8a3c', '#e97f52', '#f6e8e2'],
+    ing: [[2, 'tbsp', 'olive oil'], [3, 'cloves', 'garlic'], [1, 'can', 'crushed tomatoes, 28 oz'], [1.5, 'cups', 'orzo'], [3, 'cups', 'chicken broth'], [0.5, 'cup', 'heavy cream'], [0.5, 'cup', 'grated parmesan'], [2, 'cups', 'baby spinach']],
+    steps: [['Warm the oil in a wide pot and cook the garlic for 30 seconds.', 0], ['Add the tomatoes, orzo, and broth. Bring to a boil.', 0], ['Simmer, stirring often, until the orzo is tender.', 12], ['Stir in the cream, parmesan, and spinach until it wilts.', 0]] },
+  honeysoy: { name: 'Honey-soy chicken thighs & rice', mins: 40, active: 10, kcal: 610, effort: 'Easy', why: 'Hands-off oven time',
+    desc: 'Sticky, sweet-salty thighs that bake while you do something else.', col: ['#9a5a2a', '#c98b3c', '#f3ecdf', '#5e8f3a', '#f4ebdf'],
+    ing: [[2, 'lb', 'boneless chicken thighs'], [0.33, 'cup', 'soy sauce'], [0.25, 'cup', 'honey'], [3, 'cloves', 'garlic'], [1.5, 'cups', 'jasmine rice'], [1, 'head', 'broccoli']],
+    steps: [['Heat the oven to 425°F and start the rice.', 0], ['Whisk the soy, honey, and garlic. Toss with the chicken in a baking dish.', 0], ['Bake, basting once, until sticky and cooked through.', 25], ['Steam the broccoli for the last few minutes. Serve over rice.', 5]] },
+  sausagebake: { name: 'Sausage, pepper & potato bake', mins: 45, active: 10, kcal: 590, effort: 'Easy', why: 'Ten minutes of prep, then hands-off',
+    desc: 'Crispy potatoes and smoky sausage from one hot oven.', col: ['#b7613a', '#e2b857', '#d24a32', '#6f8d3a', '#f3e6da'],
+    ing: [[1, 'lb', 'smoked sausage'], [1.5, 'lb', 'baby potatoes'], [2, '', 'bell peppers'], [1, '', 'yellow onion'], [2, 'tbsp', 'olive oil'], [1, 'tsp', 'smoked paprika']],
+    steps: [['Heat the oven to 425°F.', 0], ['Halve the potatoes; cut the sausage, peppers, and onion into chunks.', 0], ['Toss with oil, paprika, salt, and pepper on a sheet pan.', 0], ['Roast, stirring halfway, until the potatoes are golden.', 35]] },
+  friedrice: { name: 'Shrimp fried rice', mins: 20, active: 15, kcal: 470, effort: 'Easy', why: 'Best with day-old rice',
+    desc: 'Faster than takeout, and the kids pick out the peas either way.', col: ['#e6c77a', '#ec8f6a', '#7fae4f', '#f2d35c', '#f4efe0'],
+    ing: [[1, 'lb', 'peeled shrimp'], [4, 'cups', 'cooked rice, cold'], [3, '', 'eggs'], [1.5, 'cups', 'frozen peas and carrots'], [3, 'tbsp', 'soy sauce'], [3, '', 'green onions']],
+    steps: [['Scramble the eggs in a hot oiled skillet; set aside.', 0], ['Cook the shrimp until pink; set aside.', 3], ['Fry the rice and vegetables until hot and a little crisp.', 5], ['Add the soy sauce, shrimp, eggs, and green onions. Toss and serve.', 0]] },
+  quesadillas: { name: 'Black bean quesadillas', mins: 20, active: 15, kcal: 510, effort: 'Easy', why: 'Meatless and pantry-friendly',
+    desc: 'Crispy, cheesy, and on the table in twenty minutes.', col: ['#e3b24f', '#3d2f2a', '#f0d27a', '#6c9a3f', '#f5ecd9'],
+    ing: [[2, 'cans', 'black beans'], [2, 'cups', 'shredded Mexican cheese'], [8, '', 'flour tortillas'], [1, 'cup', 'corn'], [1, 'tsp', 'cumin'], [1, 'cup', 'salsa']],
+    steps: [['Mash half the beans with the cumin; stir in the rest and the corn.', 0], ['Spread on half of each tortilla, top with cheese, and fold.', 0], ['Cook in a dry skillet until golden on both sides.', 6], ['Cut into wedges and serve with salsa.', 0]] },
+  gnocchi: { name: 'Pesto gnocchi with cherry tomatoes', mins: 20, active: 10, kcal: 560, effort: 'Easy', why: 'Five ingredients, one skillet',
+    desc: 'Pan-crisped gnocchi, bursting tomatoes, and a jar of good pesto.', col: ['#e8d49b', '#5f9a3e', '#d8412f', '#f2e6c2', '#eef2e4'],
+    ing: [[2, 'packs', 'shelf-stable gnocchi, 16 oz'], [2, 'cups', 'cherry tomatoes'], [0.5, 'cup', 'basil pesto'], [8, 'oz', 'mozzarella pearls'], [2, 'tbsp', 'olive oil']],
+    steps: [['Crisp the gnocchi in oil in a large skillet, turning, until golden.', 8], ['Add the tomatoes and cook until they start to burst.', 4], ['Off the heat, stir in the pesto and mozzarella.', 0]] },
+  beefbroc: { name: 'Beef & broccoli stir-fry', mins: 25, active: 15, kcal: 560, effort: 'Medium', why: 'Takeout favorite, made at home',
+    desc: 'Tender beef and broccoli in a glossy ginger-soy sauce.', col: ['#6b3a22', '#4f8f36', '#a8663a', '#f3ecdf', '#efe9e0'],
+    ing: [[1.25, 'lb', 'flank steak'], [1, 'lb', 'broccoli florets'], [0.33, 'cup', 'soy sauce'], [2, 'tbsp', 'brown sugar'], [1, 'tbsp', 'cornstarch'], [1, 'tbsp', 'fresh ginger'], [1.5, 'cups', 'jasmine rice']],
+    steps: [['Start the rice. Slice the steak thinly across the grain.', 0], ['Whisk the soy, sugar, cornstarch, ginger, and ½ cup water.', 0], ['Sear the beef in a very hot pan in two batches; set aside.', 4], ['Stir-fry the broccoli, add the sauce and beef, and toss until glossy.', 4]] },
+  tortillasoup: { name: 'Chicken tortilla soup', mins: 35, active: 10, kcal: 430, effort: 'Easy', why: 'Cozy, and great leftovers',
+    desc: 'A brothy, smoky soup with every topping you like.', col: ['#c8552f', '#f0c35a', '#e8e0cf', '#6f9a3f', '#f5e5dc'],
+    ing: [[1, '', 'rotisserie chicken'], [1, 'can', 'fire-roasted tomatoes'], [1, 'can', 'black beans'], [4, 'cups', 'chicken broth'], [1, 'cup', 'corn'], [1, 'bag', 'tortilla chips'], [1, '', 'avocado']],
+    steps: [['Shred the chicken.', 0], ['Simmer the tomatoes, beans, broth, and corn with a pinch of cumin.', 15], ['Stir in the chicken to warm through.', 0], ['Serve over crushed chips with avocado.', 0]] },
+  ziti: { name: 'Baked ziti', mins: 45, active: 15, kcal: 640, effort: 'Easy', why: 'Feeds everyone, reheats well',
+    desc: 'Saucy pasta under a blanket of melted mozzarella.', col: ['#c9472f', '#f2e3b5', '#e9a23a', '#6b8f3a', '#f5e6df'],
+    ing: [[1, 'lb', 'ziti'], [1, 'jar', 'marinara, 24 oz'], [1, 'cup', 'ricotta'], [2, 'cups', 'shredded mozzarella'], [0.5, 'cup', 'parmesan']],
+    steps: [['Heat the oven to 400°F. Boil the ziti 2 minutes short of the package time.', 9], ['Toss with the marinara and ricotta in a baking dish.', 0], ['Top with mozzarella and parmesan; bake until bubbling.', 20]] },
+  teriyaki: { name: 'Teriyaki salmon bowls', mins: 25, active: 10, kcal: 560, effort: 'Easy', why: 'Different from last week’s lemon salmon',
+    desc: 'Glazed salmon over rice with crunchy cucumber and edamame.', col: ['#b85a2b', '#f1a178', '#f3ecdf', '#6fa34a', '#f2ebe2'],
+    ing: [[4, '', 'salmon fillets, 6 oz'], [0.5, 'cup', 'teriyaki sauce'], [1.5, 'cups', 'sushi rice'], [1, '', 'cucumber'], [1, 'cup', 'shelled edamame']],
+    steps: [['Start the rice. Heat the broiler.', 0], ['Brush the salmon with teriyaki and broil until just cooked.', 8], ['Slice the cucumber and warm the edamame.', 0], ['Build bowls and spoon over extra sauce.', 0]] },
+  greekpita: { name: 'Greek chicken pita plates', mins: 30, active: 15, kcal: 540, effort: 'Easy', why: 'Fresh and bright',
+    desc: 'Oregano-lemon chicken with warm pitas, tzatziki, and a chopped salad.', col: ['#e5c79a', '#f3f1e8', '#6f9a3f', '#c9412f', '#eef0e8'],
+    ing: [[1.5, 'lb', 'chicken thighs'], [1, '', 'lemon'], [1, 'tbsp', 'dried oregano'], [8, '', 'pitas'], [1, 'cup', 'tzatziki'], [1, '', 'cucumber'], [1, 'pint', 'cherry tomatoes']],
+    steps: [['Toss the chicken with lemon, oregano, oil, and salt.', 0], ['Sear in a skillet until charred and cooked through.', 12], ['Chop the cucumber and tomatoes; warm the pitas.', 0], ['Slice the chicken and serve with tzatziki.', 0]] },
+  curry: { name: 'Coconut chickpea curry', mins: 30, active: 10, kcal: 500, effort: 'Easy', why: 'Meatless and mild',
+    desc: 'Creamy, mild, and mostly pantry. Great over rice.', col: ['#e6a73e', '#f3e7c6', '#5d8f3a', '#d2552f', '#f6ecd6'],
+    ing: [[2, 'cans', 'chickpeas'], [1, 'can', 'coconut milk'], [2, 'tbsp', 'curry paste'], [1, '', 'yellow onion'], [3, 'cups', 'baby spinach'], [1.5, 'cups', 'basmati rice']],
+    steps: [['Start the rice. Soften the onion in a little oil.', 5], ['Stir in the curry paste for a minute, then the coconut milk and chickpeas.', 0], ['Simmer until thick.', 12], ['Fold in the spinach and serve over rice.', 0]] },
+  koreanbeef: { name: 'Korean beef rice bowls', mins: 20, active: 10, kcal: 590, effort: 'Easy', why: 'Kids loved the honey-soy chicken',
+    desc: 'Sweet, garlicky ground beef over rice with quick cucumbers.', col: ['#7a3d22', '#f3ecdf', '#5fa24a', '#e46a3a', '#efe7de'],
+    ing: [[1, 'lb', 'ground beef'], [0.25, 'cup', 'soy sauce'], [3, 'tbsp', 'brown sugar'], [3, 'cloves', 'garlic'], [1.5, 'cups', 'jasmine rice'], [1, '', 'cucumber']],
+    steps: [['Start the rice.', 0], ['Brown the beef with the garlic.', 6], ['Add the soy and sugar and simmer until glossy.', 3], ['Serve over rice with sliced cucumber.', 0]] },
+  smashtacos: { name: 'Smash burger tacos', mins: 25, active: 20, kcal: 650, effort: 'Easy', why: 'Fun Saturday dinner',
+    desc: 'Beef smashed right onto tortillas, then crisped in the pan.', col: ['#8d4b2a', '#f2c84b', '#7fb04f', '#c9412f', '#f5ead9'],
+    ing: [[1.25, 'lb', 'ground beef'], [8, '', 'small flour tortillas'], [8, 'slices', 'American cheese'], [1, '', 'white onion'], [1, 'cup', 'shredded lettuce'], [0.5, 'cup', 'burger sauce']],
+    steps: [['Press a thin layer of beef onto each tortilla. Season well.', 0], ['Cook beef-side down in a hot skillet until crusty.', 3], ['Flip, add cheese, and fold.', 1], ['Top with onion, lettuce, and sauce.', 0]] },
+  meatballs: { name: 'Sheet-pan meatball subs', mins: 30, active: 10, kcal: 680, effort: 'Easy', why: 'Frozen meatballs, zero chopping',
+    desc: 'Frozen meatballs, marinara, and melty provolone on toasted rolls.', col: ['#a8432c', '#f3e2b0', '#d9a35a', '#6a8f3a', '#f5e6dd'],
+    ing: [[24, '', 'frozen Italian meatballs'], [1, 'jar', 'marinara'], [4, '', 'hoagie rolls'], [8, 'slices', 'provolone'], [1, 'bag', 'salad kit']],
+    steps: [['Bake the meatballs at 400°F.', 15], ['Warm the marinara and toss the meatballs in it.', 0], ['Fill the rolls, top with provolone, and bake until melted.', 5], ['Serve with the salad kit.', 0]] },
+  shrimptacos: { name: 'Chipotle shrimp tacos', mins: 20, active: 15, kcal: 450, effort: 'Easy', why: 'Quick seafood night',
+    desc: 'Smoky shrimp, crunchy slaw, and lime crema.', col: ['#e98a5a', '#6fa34a', '#f3efe0', '#8a4a9a', '#f4ebe3'],
+    ing: [[1.25, 'lb', 'peeled shrimp'], [1, 'tbsp', 'chipotle in adobo'], [8, '', 'corn tortillas'], [3, 'cups', 'coleslaw mix'], [0.5, 'cup', 'sour cream'], [2, '', 'limes']],
+    steps: [['Toss the shrimp with chipotle, lime, and salt.', 0], ['Sear in a hot skillet until pink.', 4], ['Stir lime juice into the sour cream.', 0], ['Fill the tortillas with slaw and shrimp; drizzle with crema.', 0]] },
+};
+const SHORT = {"fajitas": "Chicken fajitas", "salmon": "Lemon salmon", "lettuce": "Taco lettuce cups", "orzo": "Tomato orzo", "honeysoy": "Honey-soy chicken", "sausagebake": "Sausage bake", "friedrice": "Shrimp fried rice", "quesadillas": "Quesadillas", "gnocchi": "Pesto gnocchi", "beefbroc": "Beef & broccoli", "tortillasoup": "Tortilla soup", "ziti": "Baked ziti", "teriyaki": "Teriyaki salmon", "greekpita": "Greek pitas", "curry": "Chickpea curry", "koreanbeef": "Korean beef bowls", "smashtacos": "Smash tacos", "meatballs": "Meatball subs", "shrimptacos": "Shrimp tacos"};
+for (const k in R) R[k].short = SHORT[k];
+// Cookware, shown on meal rows as "20 min · 1 pan" (mockup 1's list rows).
+const PANS = { fajitas: '1 pan', salmon: '1 pan', lettuce: '1 skillet', orzo: '1 pot', honeysoy: '2 pans', sausagebake: '1 pan', friedrice: '1 skillet', quesadillas: '1 skillet', gnocchi: '1 skillet', beefbroc: '2 pans', tortillasoup: '1 pot', ziti: '2 pans', teriyaki: '2 pans', greekpita: '1 skillet', curry: '2 pans', koreanbeef: '2 pans', smashtacos: '1 skillet', meatballs: '1 pan', shrimptacos: '1 skillet' };
+for (const k in R) R[k].pans = PANS[k];
+
+Object.assign(I, {
+  lock: ic('<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5"/>'),
+  minus: ic('<path d="M6 12h12"/>'),
+  undo: ic('<path d="M9 6.5L4.5 11 9 15.5"/><path d="M5 11h9.5a5 5 0 010 10H11"/>'),
+});
+
+/* Extra recipes, so the pick grid can show 20 ideas and Generate more can add 20 more. */
+const XPAL = [
+  ['#c9472f', '#f2e3b5', '#e9a23a', '#6b8f3a', '#f5e6df'], ['#b0703f', '#6fa24a', '#e2c35a', '#c7442f', '#eef3e6'],
+  ['#e6a73e', '#f3e7c6', '#5d8f3a', '#d2552f', '#f6ecd6'], ['#8d4b2a', '#f2c84b', '#7fb04f', '#c9412f', '#f5ead9'],
+  ['#e8d49b', '#5f9a3e', '#d8412f', '#f2e6c2', '#eef2e4'], ['#e98a5a', '#6fa34a', '#f3efe0', '#8a4a9a', '#f4ebe3'],
+  ['#d9a15b', '#c8432f', '#e7c24a', '#6d8f3b', '#f4e9dc'], ['#6b3a22', '#4f8f36', '#a8663a', '#f3ecdf', '#efe9e0'],
+];
+const XR = [
+  ['chickenparm', 'Sheet-pan chicken parm', 'Chicken parm', 35, 'Easy', 'Crispy without frying', ['1.5 lb chicken breast', '1 cup panko', '1 jar marinara, 24 oz', '2 cups shredded mozzarella', '1 lb spaghetti']],
+  ['porkchops', 'Apple-glazed pork chops', 'Pork chops', 30, 'Easy', 'Sweet and savory in one skillet', ['4 bone-in pork chops', '2 apples', '2 tbsp butter', '1.5 lb baby potatoes', '1 bag salad kit']],
+  ['padthai', 'Chicken pad thai', 'Pad thai', 30, 'Medium', 'Better than delivery', ['8 oz rice noodles', '1 lb chicken thighs', '3 eggs', '0.5 cup pad thai sauce', '1 cup bean sprouts', '0.5 cup peanuts']],
+  ['chili', 'Weeknight turkey chili', 'Turkey chili', 40, 'Easy', 'Big batch, better the next day', ['1 lb ground turkey', '2 cans kidney beans', '1 can crushed tomatoes, 28 oz', '1 yellow onion', '2 tbsp chili powder', '1 cup shredded cheddar']],
+  ['pizza', 'Flatbread pizzas', 'Flatbread pizzas', 20, 'Easy', 'Everyone tops their own', ['4 naan flatbreads', '1 cup pizza sauce', '2 cups shredded mozzarella', '4 oz pepperoni', '1 bell peppers']],
+  ['burrito', 'Chicken burrito bowls', 'Burrito bowls', 25, 'Easy', 'Build-your-own bowls', ['1.5 lb chicken thighs', '1.5 cups long-grain rice', '1 can black beans', '1 cup corn', '1 cup salsa', '1 avocado']],
+  ['carbonara', 'Bacon carbonara', 'Carbonara', 20, 'Medium', 'Pantry pasta in 20 minutes', ['1 lb spaghetti', '8 oz bacon', '3 eggs', '1 cup grated parmesan']],
+  ['minestrone', 'Minestrone with white beans', 'Minestrone', 35, 'Easy', 'Meatless and cozy', ['1 can cannellini beans', '1 can diced tomatoes', '4 cups vegetable broth', '1 cup ditalini', '2 zucchini', '2 carrots']],
+  ['souvlaki', 'Chicken souvlaki skewers', 'Souvlaki', 30, 'Easy', 'Grill or broiler', ['1.5 lb chicken breast', '1 lemon', '1 cup tzatziki', '8 pitas', '1 red onion']],
+  ['tofu', 'Crispy sesame tofu', 'Sesame tofu', 30, 'Easy', 'Meatless crowd-pleaser', ['2 blocks extra-firm tofu', '0.25 cup soy sauce', '2 tbsp honey', '1.5 cups jasmine rice', '1 head broccoli']],
+  ['sloppy', 'Sloppy joes', 'Sloppy joes', 25, 'Easy', 'Kid favorite', ['1 lb ground beef', '1 cup ketchup', '1 green bell pepper', '6 hamburger buns']],
+  ['lomein', 'Veggie lo mein', 'Lo mein', 20, 'Easy', 'Uses up vegetables', ['1 lb lo mein noodles', '3 cups stir-fry vegetables', '0.25 cup soy sauce', '2 tbsp oyster sauce']],
+  ['enchiladas', 'Chicken enchiladas', 'Enchiladas', 40, 'Easy', 'Freezes well', ['1 rotisserie chicken', '1 can red enchilada sauce', '8 flour tortillas', '2 cups shredded Mexican cheese']],
+  ['cod', 'Panko-crusted cod', 'Panko cod', 25, 'Easy', 'Mild fish kids eat', ['4 cod fillets', '1 cup panko', '2 tbsp mayonnaise', '1 lemon', '1 lb green beans']],
+  ['bbq', 'BBQ chicken drumsticks', 'BBQ drumsticks', 45, 'Easy', 'Hands-off oven time', ['3 lb chicken drumsticks', '1 cup barbecue sauce', '4 ears corn', '1 bag coleslaw mix']],
+  ['pestopasta', 'Pesto chicken pasta', 'Pesto pasta', 25, 'Easy', 'One pot of pasta', ['1 lb penne', '1 lb chicken breast', '0.5 cup basil pesto', '2 cups cherry tomatoes']],
+  ['shakshuka', 'Shakshuka with crusty bread', 'Shakshuka', 25, 'Easy', 'Breakfast for dinner', ['6 eggs', '1 can crushed tomatoes, 28 oz', '1 bell peppers', '1 yellow onion', '1 baguette', '4 oz feta']],
+  ['frittata', 'Potato & spinach frittata', 'Frittata', 30, 'Easy', 'Cheap and quick', ['8 eggs', '1.5 lb baby potatoes', '3 cups baby spinach', '1 cup shredded cheddar']],
+  ['potpie', 'Skillet chicken pot pie', 'Pot pie', 45, 'Medium', 'Comfort food in one skillet', ['1 rotisserie chicken', '1 bag frozen mixed vegetables', '2 cups chicken broth', '1 sheet puff pastry', '0.5 cup heavy cream']],
+  ['banhmi', 'Pork banh mi bowls', 'Banh mi bowls', 25, 'Easy', 'Bright and crunchy', ['1 lb ground pork', '1.5 cups jasmine rice', '2 carrots', '1 cucumber', '1 bunch cilantro', '2 tbsp sriracha mayo']],
+  ['jambalaya', 'Sausage jambalaya', 'Jambalaya', 40, 'Easy', 'One pot, a little spicy', ['1 lb andouille sausage', '1.5 cups long-grain rice', '1 can diced tomatoes', '1 green bell pepper', '3 cups chicken broth']],
+  ['peppers', 'Stuffed peppers', 'Stuffed peppers', 45, 'Easy', 'Make-ahead friendly', ['4 bell peppers', '1 lb ground beef', '1 cup long-grain rice', '1 jar marinara, 24 oz', '1 cup shredded mozzarella']],
+  ['bbsoup', 'Smoky black bean soup', 'Black bean soup', 30, 'Easy', 'Mostly pantry', ['3 cans black beans', '4 cups vegetable broth', '1 yellow onion', '1 tsp smoked paprika', '0.5 cup sour cream']],
+  ['mac', 'Stovetop mac & cheese with broccoli', 'Mac & cheese', 25, 'Easy', 'Hidden vegetables', ['1 lb elbow macaroni', '3 cups shredded cheddar', '2 cups milk', '1 head broccoli']],
+  ['tikka', 'Sheet-pan chicken tikka', 'Chicken tikka', 35, 'Easy', 'Mild spice, big flavor', ['2 lb chicken thighs', '1 cup plain yogurt', '2 tbsp tikka paste', '1.5 cups basmati rice', '4 naan']],
+  ['hawaiian', 'Hawaiian chicken & rice', 'Hawaiian chicken', 30, 'Easy', 'Sweet pineapple glaze', ['1.5 lb chicken thighs', '1 can pineapple chunks', '0.25 cup teriyaki sauce', '1.5 cups jasmine rice', '2 bell peppers']],
+  ['ramen', 'Miso ramen bowls', 'Miso ramen', 20, 'Easy', 'Fast and warming', ['4 packs ramen noodles', '2 tbsp miso paste', '6 cups chicken broth', '4 eggs', '2 baby bok choy']],
+];
+const UNITS = new Set(['lb', 'oz', 'cup', 'cups', 'tbsp', 'tsp', 'can', 'cans', 'cloves', 'packet', 'packs', 'jar', 'bag', 'head', 'heads', 'pint', 'slices', 'bunch', 'blocks', 'sheet', 'ears']);
+const parseIng = (s) => { const t = s.split(' '); const q = parseFloat(t[0]); const u = UNITS.has(t[1]) ? t[1] : ''; return [q, u, t.slice(u ? 2 : 1).join(' ')]; };
+XR.forEach(([k, name, short, mins, effort, why, ing], i) => {
+  const pans = /sheet-pan|bake|drumsticks|pizza/i.test(name) ? '1 pan' : /skillet|frittata|shakshuka|lo mein|pad thai/i.test(name) ? '1 skillet' : /soup|chili|minestrone|jambalaya|ramen|mac/i.test(name) ? '1 pot' : '2 pans';
+  R[k] = { name, short, mins, pans, active: Math.min(20, mins - 10), kcal: 440 + (i * 37) % 220, effort, why, desc: why + '.', col: XPAL[i % XPAL.length], ing: ing.map(parseIng),
+    steps: [['Prep everything first: chop, measure, and heat the pan or oven.', 0], ['Cook the main part of the dish.', Math.max(5, mins - 15)], ['Taste for salt, finish, and serve.', 0]] };
+});
+
+/* ================= Dates ================= */
+const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WDL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MOL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const dt = (o) => new Date(2026, 8, 24 + o);
+const F = {
+  wd: (o) => WD[dt(o).getDay()],
+  wdl: (o) => WDL[dt(o).getDay()],
+  d: (o) => dt(o).getDate(),
+  md: (o) => MO[dt(o).getMonth()] + ' ' + dt(o).getDate(),
+  wmd: (o) => F.wd(o) + ', ' + F.md(o),
+  wdd: (o) => F.wd(o) + ' ' + F.d(o),
+  full: (o) => F.wdl(o) + ', ' + MOL[dt(o).getMonth()] + ' ' + F.d(o),
+  rel: (o) => o === 0 ? 'today' : o === 1 ? 'tomorrow' : o === -1 ? 'yesterday' : (o > 1 && o < 7) ? F.wd(o) : F.wmd(o),
+  relL: (o) => o === 0 ? 'today' : o === 1 ? 'tomorrow' : (o > 1 && o < 7) ? F.wdl(o) : F.wmd(o),
+};
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const fmtTime = (t) => { const [h, m] = t.split(':').map(Number); return `${(h % 12) || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
+
+/* ================= Order colors ================= */
+const PAL = [
+  { c: '#6f9a78', soft: '#eef4ef', deep: '#4c7456' },
+  { c: '#6a8bb5', soft: '#eef2f8', deep: '#46668f' },
+  { c: '#9a78b0', soft: '#f4eff7', deep: '#74558a' },
+  { c: '#3f9795', soft: '#e8f3f3', deep: '#2c7371' },
+  { c: '#c8903a', soft: '#f8f1e3', deep: '#94661f' },
+];
+const pal = (n) => PAL[(n - 1) % PAL.length];
+const vars = (n) => { const p = pal(n); return `--c:${p.c};--soft:${p.soft};--deep:${p.deep}`; };
+
+function dish(r, cls = '', style = '') {
+  const k = R[r].col;
+  return `<span class="dish ${cls}" style="--base:${k[0]};--a:${k[1]};--b:${k[2]};--c:${k[3]};--bg:${k[4]};${style}"></span>`;
+}
+
+/* ================= Shopping list (derived from an order's meals) ================= */
+const AISLES = ['Produce', 'Meat & seafood', 'Dairy & eggs', 'Frozen', 'Pantry'];
+function aisleOf(n) {
+  n = n.toLowerCase();
+  if (/coconut|broth|sauce|paste|crushed|diced|fire-roasted|seasoning|mayo|salsa|pesto|marinara|ketchup|adobo|pineapple|(black|kidney|cannellini) beans|chickpeas/.test(n)) return 'Pantry';
+  if (/frozen/.test(n)) return 'Frozen';
+  if (/chicken|beef|turkey|pork|sausage|salmon|shrimp|cod|steak|meatball|bacon|pepperoni/.test(n)) return 'Meat & seafood';
+  if (/cheese|cheddar|mozzarella|parmesan|provolone|ricotta|feta|cream|butter|milk|eggs|yogurt|tzatziki|tofu/.test(n)) return 'Dairy & eggs';
+  if (/bean sprouts|edamame|lettuce|salad|coleslaw|spinach|bok choy|cilantro|basil|ginger|onion|garlic|pepper|lemon|lime|avocado|broccoli|cucumber|tomato|zucchini|carrot|potato|apple|corn|green beans|vegetables|pico/.test(n)) return 'Produce';
+  return 'Pantry';
+}
+function listFor(meals) {
+  const map = new Map();
+  meals.forEach((r) => R[r].ing.forEach(([q, u, name]) => {
+    const key = (name.split(',')[0] + '|' + u).toLowerCase();
+    const it = map.get(key) || { key, q: 0, u, name: name.split(',')[0], aisle: aisleOf(name), meals: [] };
+    it.q += q; if (!it.meals.includes(R[r].short)) it.meals.push(R[r].short);
+    map.set(key, it);
+  }));
+  return [...map.values()].sort((a, b) => AISLES.indexOf(a.aisle) - AISLES.indexOf(b.aisle) || a.name.localeCompare(b.name));
+}
+const keptCount = (o) => listFor(o.meals).filter((i) => !o.removed.includes(i.key)).length;
+
+/* ================= Scenarios ================= */
+// Offsets are days from today (Thu Sep 24). A placed order's meals cover delivery .. next-1.
+const mkP = (n, delivery, next, meals, o = {}) => Object.assign({ n, status: 'placed', delivery, next, meals, placedOn: delivery - 2, by: 'You', removed: [] }, o);
+// An unplaced order is a household draft: its suggestions, picks and dismissals stay when the flow is closed.
+const draft = (n, target) => ({ n, status: 'draft', delivery: target, meals: [], suggestions: null, added: [], dismissed: [], by: null, saved: null });
+const O1 = () => mkP(1, -9, -5, ['honeysoy', 'ziti', 'quesadillas'], { removed: ['soy sauce|cup', 'garlic|cloves'] });
+const O2 = (next = -1) => mkP(2, -5, next, ['smashtacos', 'salmon', 'orzo'], { by: 'Sam', removed: ['olive oil|tbsp'] });
+const O3 = (next = 3, meals = ['greekpita', 'fajitas', 'curry'], delivery = -1) => mkP(3, delivery, next, meals, { removed: ['olive oil|tbsp', 'dried oregano|tbsp'] });
+
+const SCEN = {
+  firstRun: { label: 'First run', sub: 'no orders', build: () => [] },
+  nothingDue: { label: 'Nothing due', sub: 'decide in 3 days', build: () => [O1(), O2(), O3(4, ['greekpita', 'fajitas', 'curry', 'beefbroc', 'tortillasoup']), draft(4, 4)] },
+  remind: { label: 'Reminders active', sub: 'decide in 2 days', build: () => [O1(), O2(), O3(), draft(4, 3)] },
+  decideSoon: { label: 'Decide by tomorrow', sub: 'delivery Sat', build: () => [O1(), O2(), O3(2), draft(4, 2)] },
+  decideToday: { label: 'Decide today', sub: 'delivery tomorrow', build: () => [O1(), O2(), O3(1), draft(4, 1)] },
+  overdue: { label: 'Overdue', sub: '2 days late', build: () => [O1(), O2(), draft(3, -1)] },
+  waiting: { label: 'Order placed', sub: 'arrives Sun', build: () => [O1(), O2(), O3(), mkP(4, 3, 6, ['teriyaki', 'gnocchi', 'meatballs'], { placedOn: 0 }), draft(5, 6)] },
+  deliveryDay: { label: 'Delivery day', sub: 'groceries today', build: () => [O1(), O2(0), O3(4, ['greekpita', 'fajitas', 'curry', 'koreanbeef'], 0), draft(4, 4)] },
+  generating: { label: 'Suggestions generating', sub: 'you left', build: () => [O1(), O2(), O3(), draft(4, 3)] },
+  ready: { label: 'Ideas ready', sub: 'none picked', build: () => [O1(), O2(), O3(), draft(4, 3)] },
+  resume: { label: 'Draft saved', sub: "Sam's picks", build: () => [O1(), O2(), O3(), draft(4, 3)] },
+  locked: { label: 'Someone else ordering', sub: 'Sam', build: () => [O1(), O2(), O3(), Object.assign(draft(4, 3), { status: 'locked', by: 'Sam', lock: { who: 'Sam', step: 3, mins: 6 } })] },
+};
+const STEPS = [['pick', 'Pick meals'], ['delivery', 'Delivery date'], ['next', 'Next delivery'], ['list', 'Shopping list']];
+
+/* ================= App state ================= */
+const S = {
+  scenario: 'remind', orders: [], tab: 'home', nav: { home: [], history: [], settings: [] },
+  anim: null, flow: null, flowAnim: null, sel: 0, fold: new Set(), histMode: 'orders', confirm: null,
+  servings: {}, pulse: null, scrollMem: {}, gen: null, timer: null, closing: false, appendFrom: null,
+  cfg: { off: 1, lead: 2, time: '08:00' }, // off, lead: household settings; time: personal
+
+};
+
+const isDraft = (o) => ['draft', 'generating', 'ready', 'locked'].includes(o.status);
+const order = (n) => S.orders.find((o) => o.n === n);
+const draftOrder = () => S.orders.find(isDraft);
+const placed = () => S.orders.filter((o) => !isDraft(o));
+const decideBy = (o) => o.delivery == null ? null : o.delivery - S.cfg.off;
+const remindFrom = (o) => o.delivery == null ? null : decideBy(o) - S.cfg.lead;
+// Reminders go out daily from remindFrom until the order is placed; after decide-by they continue (only known through today).
+const remindsOn = (p, day) => isDraft(p) && p.delivery != null && remindFrom(p) <= day && (day <= decideBy(p) || day <= 0);
+const phase = (o) => 0 < o.delivery ? 'waiting' : o.delivery === 0 ? 'arriving' : 0 < o.next ? 'onhand' : 'done';
+const archived = (o) => !isDraft(o) && phase(o) === 'done';
+const coverOf = (day) => placed().find((p) => p.delivery <= day && day < p.next);
+const lastCovered = () => { const p = placed(); return p.length ? Math.max(...p.map((o) => o.next - 1)) : null; };
+function tone(o) {
+  const d = decideBy(o);
+  if (d == null) return 'calm';
+  if (d < 0) return 'late';
+  if (d <= 1) return 'soon';
+  if (remindFrom(o) <= 0) return 'remind';
+  return 'calm';
+}
+
+// Stack order. The top card is the next step, by mockup 1's priority: another member ordering >
+// suggestions generating > draft to resume > first order > overdue > decide today/tomorrow >
+// reminders active > delivery day > order placed, waiting > all caught up.
+// The current order (meals on hand) is never the next step; it sits under the top card.
+function rank(o) {
+  if (isDraft(o)) {
+    if (o.status === 'locked') return 1;
+    if (o.status === 'generating') return 2;
+    if (o.status === 'ready') return 3;
+    if (decideBy(o) == null) return 4;
+    const t = tone(o);
+    return t === 'late' ? 5 : t === 'soon' ? 6 : t === 'remind' ? 7 : 10;
+  }
+  const p = phase(o);
+  return p === 'arriving' ? 8 : p === 'waiting' ? 9 : 9.5;
+}
+
+function loadScenario(key) {
+  $('#screen').innerHTML = '';
+  S.scenario = key;
+  S.orders = SCEN[key].build();
+  S.tab = 'home'; S.nav = { home: [], history: [], settings: [] };
+  S.flow = null; S.gen = null; S.sel = 0; S.fold = new Set(); S.confirm = null; S.scrollMem = {}; S.anim = 'fade';
+  const d = draftOrder();
+  if (key === 'generating') { Object.assign(d, { status: 'generating', by: 'You', saved: 'a few minutes ago' }); S.gen = { n: d.n, start: Date.now() - 9000, dur: 40000, kind: 'first' }; }
+  if (key === 'ready' || key === 'resume') { Object.assign(d, { status: 'ready', by: 'You', saved: 'today at 7:52 AM' }); d.suggestions = poolFor(d, 20); }
+  if (key === 'resume') Object.assign(d, { by: 'Sam', saved: 'yesterday at 8:40 PM', added: [d.suggestions[1], d.suggestions[4]], dismissed: [d.suggestions[2]] });
+  render();
+}
+
+/* ================= Home ================= */
+function renderStrip() {
+  const first = placed().length ? Math.min(-10, ...placed().map((o) => o.delivery)) : -3;
+  const reminderTime = fmtTime(S.cfg.time);
+  let h = '';
+  for (let o = first; o <= 90; o++) {
+    const cov = coverOf(o);
+    const dlv = S.orders.filter((p) => p.delivery === o);
+    const dec = S.orders.filter((p) => isDraft(p) && decideBy(p) === o);
+    const rem = S.orders.filter((p) => remindsOn(p, o) && o !== decideBy(p));
+    const decDone = placed().filter((p) => p.placedOn === o);
+    const isFirst = F.d(o) === 1;
+    let icons = dlv.map((p) => `<span style="color:${isDraft(p) ? 'var(--cc-ink-3)' : pal(p.n).c}">${I.truck}</span>`).join('');
+    icons += dec.map((p) => `<span class="dec ${decideBy(p) < 0 ? 'late' : ''}"></span>`).join('');
+    if (!dec.length && rem.length) icons += '<span class="rem"></span>';
+    if (!dec.length && decDone.length) icons += '<span class="dec done"></span>';
+    const bar = cov ? `cov ${o > cov.delivery ? 'cl' : ''} ${o < cov.next - 1 ? 'cr' : ''} ${phase(cov) === 'waiting' ? 'ahead' : ''}` : '';
+    h += `<button class="dc ${o < 0 ? 'past' : ''} ${o === 0 ? 'today' : ''} ${o === S.sel ? 'sel' : ''}" data-act="day" data-o="${o}" title="${reminderTime}">
+      <span class="w ${isFirst ? 'mo' : ''}">${isFirst ? MO[dt(o).getMonth()].toUpperCase() : F.wd(o)[0]}</span>
+      <span class="n">${F.d(o)}</span>
+      <span class="ic">${icons}</span>
+      <span class="bar ${bar}" style="${cov ? '--c:' + pal(cov.n).c : ''}"></span>
+    </button>`;
+  }
+  return h;
+}
+
+function stripCaption() {
+  const o = S.sel;
+  const bits = [];
+  let dot = null;
+  const cov = coverOf(o);
+  if (cov) { dot = pal(cov.n).c; bits.push(`Order ${cov.n} meals · day ${o - cov.delivery + 1} of ${cov.next - cov.delivery}`); }
+  S.orders.filter((p) => p.delivery === o).forEach((p) => { dot = dot || pal(p.n).c; bits.push(isDraft(p) ? `Order ${p.n} target delivery (not placed)` : `Order ${p.n} groceries arrive`); });
+  S.orders.filter((p) => isDraft(p) && decideBy(p) === o).forEach((p) => bits.push(`Decide Order ${p.n}`));
+  S.orders.filter((p) => remindsOn(p, o)).forEach(() => bits.push(`Reminder ${fmtTime(S.cfg.time)}`));
+  placed().filter((p) => p.placedOn === o).forEach((p) => bits.push(`Order ${p.n} placed`));
+  if (!bits.length) bits.push(S.orders.length ? 'No meals covered' : 'Nothing planned yet');
+  const label = o === 0 ? 'Today' : o === 1 ? 'Tomorrow' : F.wmd(o);
+  return `${dot ? `<span class="dot" style="background:${dot}"></span>` : ''}<b>${label}</b><span class="t">${bits.join(' · ')}</span>`;
+}
+
+// Track: Meals → List → Placed → Delivery → covered days (ring fills as the covered days pass).
+// In the order view (dated), each step's date sits under its node.
+const who = (x) => x === 'You' ? 'you' : x;
+const spanMd = (a, b) => dt(a).getMonth() === dt(b).getMonth() ? `${F.md(a)}–${F.d(b)}` : `${F.md(a)}–${F.md(b)}`;
+function trackHTML(o, p, dated = false) {
+  const labels = ['Meals', 'List', 'Placed', 'Delivery'];
+  const idx = p === 'waiting' || p === 'arriving' ? 3 : p === 'onhand' ? 4 : 5;
+  const D = o.next - o.delivery;
+  const k = p === 'onhand' ? 1 - o.delivery : p === 'done' ? D : 0;
+  const fill = Math.min(idx, 4) / 4 * 100;
+  const dates = dated ? [
+    [F.wdd(o.placedOn), plural(o.meals.length, 'meal')],
+    [F.wdd(o.placedOn), plural(keptCount(o), 'item')],
+    [F.wdd(o.placedOn), `by ${who(o.by)}`],
+    [F.wdd(o.delivery), p === 'arriving' ? 'today' : ''],
+    [spanMd(o.delivery, o.next - 1), ''],
+  ].map(([a, b]) => `<span class="dt">${a}${b ? `<small>${b}</small>` : ''}</span>`) : [];
+  let nodes = labels.map((t, i) => {
+    let cls = i < idx ? 'done' : i === idx ? 'cur' : '';
+    if (i === 3 && p === 'arriving') cls += ' pulsing';
+    const icon = i < idx ? I.check : (i === 3 && p === 'arriving') ? I.truck : '';
+    return `<div class="tn ${cls}"><span class="k">${icon}</span><span class="t">${t}</span>${dates[i] || ''}</div>`;
+  }).join('');
+  const C = 2 * Math.PI * 9.5;
+  nodes += `<div class="tn ${p === 'done' ? 'done' : p === 'onhand' ? 'cur' : ''}"><svg class="ring" viewBox="0 0 23 23"><circle cx="11.5" cy="11.5" r="9.5" fill="#fff" stroke="var(--cc-fill-strong)" stroke-width="3"/><circle cx="11.5" cy="11.5" r="9.5" fill="none" stroke="var(--c)" stroke-width="3" stroke-dasharray="${C * k / D} ${C}" transform="rotate(-90 11.5 11.5)" stroke-linecap="round"/></svg><span class="t">${p === 'onhand' ? `Day ${k}/${D}` : `${D} days`}</span>${dates[4] || ''}</div>`;
+  return `<div class="track ${dated ? 'dated' : ''}"><div class="ln"><i style="width:${fill}%"></i></div>${nodes}</div>`;
+}
+
+// Mockup 1's meal list rows and meal stack.
+function mealRows(meals, n) {
+  return meals.map((r) => `<button class="list-row" data-act="meal" data-r="${r}" data-n="${n}">${dish(r)}
+    <span class="tx"><span class="dl">${R[r].mins} min · ${R[r].pans}</span><span class="nm">${R[r].name}</span></span><span class="chev">${I.chevR}</span></button>`).join('');
+}
+function stackThumbs(meals, total = meals.length, cls = '') {
+  const show = meals.slice(0, 5), extra = total - show.length;
+  return `<span class="stack-thumbs ${cls}">${show.map((r) => dish(r)).join('')}${extra > 0 ? `<span class="more">+${extra} more</span>` : ''}</span>`;
+}
+// A card's meals: folded to the stack, or open as list rows. The top card starts open.
+function mealsSection(o, top) {
+  const open = top !== S.fold.has(o.n);
+  const N = o.meals.length;
+  if (!open) return `<div class="perf"></div><button class="mfold" data-act="fold" data-n="${o.n}" aria-expanded="false">${stackThumbs(o.meals, N)}<span class="ml">${plural(N, 'meal')}</span><span class="chev">${I.chevD}</span></button>`;
+  return `<div class="perf"></div><button class="mfold open" data-act="fold" data-n="${o.n}" aria-expanded="true"><span class="ml">${plural(N, 'meal')}</span><span class="chev">${I.chevD}</span></button>
+    <div class="rows">${mealRows(o.meals, o.n)}</div>`;
+}
+
+const onHandText = () => { const c = coverOf(0); return c ? plural(c.meals.length, 'meal') : null; };
+const through = (d) => d === 0 ? 'tonight' : F.relL(d);
+
+function placedCard(o, top = false, view = false) {
+  const p = phase(o);
+  const N = o.meals.length;
+  const range = `${F.wdd(o.delivery)} – ${F.wdd(o.next - 1)} · ${plural(N, 'meal')}`;
+  const chip = `<span class="chip">${I.bag} Order placed</span>`;
+  const nx = order(o.n + 1);
+  let title = plural(N, 'meal'), body = '';
+  const primary = `<button class="btn block" data-act="order" data-n="${o.n}" style="margin-top:14px">View order</button>`;
+  if (p === 'waiting') {
+    title = top ? `You're set through ${F.relL(lastCovered())}` : `Arrives ${F.relL(o.delivery)}`;
+    const next = nx && isDraft(nx) && nx.delivery != null ? ` Next, pick meals by ${F.wmd(decideBy(nx))}; reminders start ${F.relL(Math.max(remindFrom(nx), 0))}.` : '';
+    body = top ? `<div class="act"><span class="txt"><span class="ov" style="color:var(--cc-ink-3)">Placed ${F.rel(o.placedOn)} by ${who(o.by)} · ${keptCount(o)} items</span>
+        <span class="nm">Groceries for ${plural(N, 'meal')} arrive ${F.relL(o.delivery)}, ${F.md(o.delivery)}.</span><span class="mt">${next.trim()}</span></span></div>${primary}`
+      : `<div class="note" style="margin-top:0">${I.truck}<span>Placed ${F.rel(o.placedOn)} by ${who(o.by)}. Groceries arrive ${F.wmd(o.delivery)}.</span></div>`;
+  } else if (p === 'arriving') {
+    title = 'Groceries arrive today';
+    body = top ? `<div class="act"><span class="txt"><span class="nm">Everything for ${plural(N, 'meal')} arrives today.</span>
+        <span class="mt">They cover today through ${F.wdl(o.next - 1)}; cook them in any order.</span></span></div>${primary}`
+      : `<div class="note" style="margin-top:0">${I.truck}<span>Everything for ${plural(N, 'meal')} arrives today. Cook them in any order.</span></div>`;
+  } else if (p === 'onhand') {
+    title = `${plural(N, 'meal')} on hand`;
+    body = `<div class="note" style="margin-top:0">${I.cal}<span>Cook them in any order. ${nextOrderLine(o)}.</span></div>`;
+  }
+  return `<article class="pass ${S.pulse === o.n ? 'pulse' : ''}" id="${view ? 'view' : 'card'}-${o.n}" style="${vars(o.n)}">
+    <button class="pass-head" style="display:block;width:100%" data-act="${view ? 'none' : 'order'}" data-n="${o.n}">
+      <div class="pass-over"><span class="l"><i class="od"></i>Order ${o.n}</span>${chip}</div>
+      <div class="pass-title">${title}</div>
+      <div class="pass-sub">${range}</div>
+    </button>
+    <div style="padding:0 14px ${view ? 10 : 14}px">${trackHTML(o, p, view)}</div>
+    ${!view && body ? `<div class="perf"></div><div class="pass-body">${body}</div>` : ''}
+    ${view ? '' : mealsSection(o, top)}
+  </article>`;
+}
+
+function nextOrderLine(o) {
+  const nx = order(o.n + 1);
+  if (!nx) return `Next delivery <b>${F.wdd(o.next)}</b>`;
+  return isDraft(nx) ? `Order ${nx.n} is due <b>${F.wdd(o.next)}</b> (not placed yet)` : `Order ${nx.n} arrives <b>${F.wdd(o.next)}</b>`;
+}
+
+function countdown(o) {
+  const d = decideBy(o), t = tone(o);
+  const late = d < 0;
+  const frac = late ? 1 : Math.max(0.08, 1 - d / 5);
+  const C = 2 * Math.PI * 25;
+  const col = late ? 'var(--cc-danger)' : t === 'soon' || t === 'remind' ? 'var(--cc-accent)' : 'var(--cc-ink-3)';
+  const v = late ? `<b style="color:var(--cc-danger)">${-d}</b><small>late</small>` : d === 0 ? '<b>0</b><small>today</small>' : `<b>${d}</b><small>${d === 1 ? 'day' : 'days'}</small>`;
+  return `<div class="cd"><svg viewBox="0 0 58 58"><circle cx="29" cy="29" r="25" fill="none" stroke="var(--cc-fill-strong)" stroke-width="5"/><circle cx="29" cy="29" r="25" fill="none" stroke="${col}" stroke-width="5" stroke-linecap="round" stroke-dasharray="${C * frac} ${C}"/></svg><div class="v">${v}</div></div>`;
+}
+
+function stepDots(on, cls = '') { return `<div class="dots ${cls}">${STEPS.map((_, i) => `<i class="${i <= on ? 'on' : ''}"></i>`).join('')}</div>`; }
+
+function draftCard(o, top = false) {
+  const d = decideBy(o), t = tone(o), lc = lastCovered();
+  const time = fmtTime(S.cfg.time);
+  const late = d != null && d < 0;
+  const cls = o.status === 'locked' ? 'locked' : o.status === 'generating' ? 'gen' : o.status === 'ready' ? (late ? 'late' : 'ready') : t === 'calm' ? '' : t;
+  let chip = '<span class="chip">Draft</span>';
+  let title, sub, cta = '', extra = '', right = o.status === 'draft' && d != null ? countdown(o) : '';
+  const lines = [];
+  const b = (x) => `<b style="color:var(--cc-ink)">${x}</b>`;
+  const soonest = o.delivery == null ? null : Math.max(o.delivery, 1); // earliest delivery is tomorrow
+  const forDel = soonest == null ? 'your first delivery' : `${F.wdl(soonest)}'s delivery`;
+  const hand = onHandText();
+  const handLine = hand && lc >= 0 ? `Your ${hand} on hand last through ${through(lc)}. ` : '';
+  const discard = top ? `<button class="linkbtn" data-act="discard" data-n="${o.n}">Discard draft</button>` : '';
+  const everyone = `<div class="cover">${I.bell}<span>Reminders go to everyone daily until it's placed · yours at ${b(time)}</span></div>`;
+  if (o.status === 'locked') {
+    const L = o.lock;
+    chip = `<span class="chip dark"><span class="who sm">${L.who[0]}</span>${L.who} is ordering</span>`;
+    title = `${L.who} is placing an order`;
+    right = `<span class="who">${L.who[0]}</span>`;
+    sub = `${L.who} is picking meals${soonest != null ? ` for ${forDel}` : ''}. Only one person can order at a time; you'll see Order ${o.n} here once it's placed.`;
+    extra = `<div class="pstep" style="margin:0 0 14px">${stepDots(L.step)}<span>Started ${L.mins} min ago · <b>${STEPS[L.step][1]}</b></span></div>`;
+    if (d != null) lines.push(`<div class="cover">${I.cal}<span>Decide by ${b(F.wdd(d))} · delivery ${F.wdd(o.delivery)}</span></div>`);
+    lines.push(`<div class="cover">${I.bell}<span>Reminders keep going to everyone daily until it's placed</span></div>`);
+  } else if (o.status === 'generating') {
+    chip = `<span class="chip acc">${I.spark} Working</span>`;
+    title = 'Your meal ideas are on the way';
+    sub = `Chef is picking 20 ideas for ${forDel}. This takes a minute or two. You can leave; we'll notify you when they're ready.`;
+    extra = `<div class="gbar"><i data-genbar></i></div><div style="font-size:12.5px;color:var(--cc-ink-3)" data-genleft>About 1 min left</div>`;
+    cta = `<button class="btn block" data-act="flow" style="margin-top:14px">Watch progress</button>${discard}`;
+  } else if (o.status === 'ready') {
+    const n = o.added.length;
+    chip = late ? `<span class="chip warn">${I.alert} Overdue</span>` : `<span class="chip acc">${I.spark} ${n ? 'In progress' : 'Ready'}</span>`;
+    title = n ? 'Finish your order' : `${o.suggestions.length} meal ideas are ready`;
+    sub = n ? `${o.by === 'You' ? "You've" : `${o.by} has`} added ${plural(n, 'meal')} for ${forDel}. Next, choose the delivery dates and check the shopping list.`
+      : `Add the ones you want for ${forDel}. Pick as many as you'll cook before the next one.`;
+    extra = `<div style="margin:2px 0 14px">${stackThumbs(n ? o.added : o.suggestions, n ? n : o.suggestions.length, 'lg')}</div>`;
+    if (S.gen && S.gen.n === o.n) extra += `<div class="gbar" style="margin-top:0"><i data-genbar></i></div><div style="font-size:12.5px;color:var(--cc-ink-3);margin-bottom:14px">Generating 20 more · <span data-genleft>About 1 min left</span></div>`;
+    lines.push(`<div class="cover">${I.users}<span>${o.by === 'You' ? 'You' : o.by} started it${o.saved ? ' ' + o.saved : ''}. Saved for the household; anyone can continue it.</span></div>`);
+    if (d != null) lines.push(late
+      ? `<div class="cover" style="color:var(--cc-danger)">${I.bell}<span>Was due ${F.wdd(d)} · reminders keep going daily until it's placed</span></div>`
+      : `<div class="cover">${I.bell}<span>Decide by ${b(F.wdd(d))} · reminders daily at ${time}</span></div>`);
+    cta = `<button class="btn ${late ? 'dng' : 'acc'} block" data-act="flow" style="margin-top:2px">${n ? 'Continue order' : 'Pick meals'}</button>${discard}`;
+  } else if (d == null) {
+    title = "Let's plan your first meals";
+    sub = 'Pick a few easy meals, choose when groceries arrive, and Castle Chef reminds everyone before the next order is due.';
+    cta = `<button class="btn acc block" data-act="flow" style="margin-top:2px">Plan my first meals</button>`;
+  } else if (late) {
+    chip = `<span class="chip warn">${I.alert} Overdue</span>`;
+    title = `Pick meals for ${F.relL(soonest)}'s delivery`;
+    sub = `${F.wdl(d)} was the last day to pick meals for ${F.wdl(o.delivery)}'s delivery. The soonest delivery now is tomorrow, ${F.md(1)}.`;
+    if (lc !== null && lc < 0) lines.push(`<div class="cover" style="color:var(--cc-danger)">${I.alert}<span>No meals on hand since ${F.wdd(lc + 1)}</span></div>`);
+    lines.push(everyone);
+    cta = `<button class="btn dng block" data-act="flow" style="margin-top:2px">Pick meals now</button>`;
+  } else if (t === 'soon' || t === 'remind') {
+    title = `Pick meals for ${F.wdl(o.delivery)}'s delivery`;
+    sub = t === 'soon' ? `${handLine}Pick meals ${d === 0 ? 'today' : 'by tomorrow'} so groceries arrive ${F.relL(o.delivery)}.`
+      : `${handLine}Decide by ${F.wdl(d)}, ${F.md(d)}, and groceries arrive ${F.wdl(o.delivery)}.`;
+    chip = t === 'soon' ? `<span class="chip acc">${I.bell} Due ${F.rel(d)}</span>` : `<span class="chip" style="color:var(--cc-accent)">${I.bell} Reminders on</span>`;
+    lines.push(everyone);
+    cta = `<button class="btn acc block" data-act="flow" style="margin-top:2px">Pick meals</button>`;
+  } else if (top) {
+    title = "You're all caught up";
+    sub = `${hand && lc >= 0 ? `${hand[0].toUpperCase() + hand.slice(1)} on hand through ${through(lc)}. ` : ''}Reminders to pick ${F.wdl(o.delivery)}'s meals start ${F.relL(remindFrom(o))}.`;
+    lines.push(`<div class="cover">${I.cal}<span>Decide by ${b(F.wdd(d))} · delivery ${F.wdd(o.delivery)}</span></div>`);
+    lines.push(`<div class="cover">${I.bell}<span>Reminders start ${b(F.wdd(remindFrom(o)))}, daily · yours at ${time}</span></div>`);
+    cta = `<button class="btn white block" data-act="flow" style="margin-top:2px">Start early</button>`;
+  } else {
+    title = d === 0 ? 'Decide today' : d === 1 ? 'Decide by tomorrow' : `Decide in ${d} days`;
+    sub = `Pick meals by ${F.wdl(d)} for delivery ${F.wmd(o.delivery)}.`;
+    lines.push(`<div class="cover">${I.bell}<span>Reminders start ${b(F.wdd(remindFrom(o)))}, daily · yours at ${time}</span></div>`);
+    cta = `<button class="btn soft" data-act="flow" style="margin-top:2px">Start early ${I.chevR}</button>`;
+  }
+  return `<article class="pass draft ${cls} ${S.pulse === o.n ? 'pulse' : ''}" id="card-${o.n}" style="${vars(o.n)}">
+    <div class="pass-head">
+      <div class="pass-over"><span class="l"><i class="od" style="background:transparent;border:2px dashed var(--c)"></i>Order ${o.n}</span>${chip}</div>
+      <div class="draft-row" style="margin-top:10px"><div class="txt"><div class="pass-title" style="margin-top:0">${title}</div></div>${right}</div>
+      <div class="pass-sub" style="margin-top:6px">${sub}</div>
+    </div>
+    <div class="pass-body" style="padding-top:12px">${extra}${lines.join('')}${cta ? `<div>${cta}</div>` : ''}</div>
+  </article>`;
+}
+
+function welcomeCard() {
+  return `<article class="pass draft soon welcome" style="${vars(1)}">
+    <div class="art">${['fajitas', 'gnocchi', 'teriyaki'].map((r) => dish(r, '', 'width:52px;height:52px;border-radius:50%')).join('')}</div>
+    <div class="pass-title" style="margin-top:0">Let's plan your first meals</div>
+    <div class="pass-sub" style="margin-top:6px">Chef suggests 20 easy meals. Add the ones you want, choose a delivery date, check the shopping list, and the order shows up here as a card you can track. Castle Chef reminds everyone before the next order is due.</div>
+    <button class="btn acc block" data-act="flow" style="margin-top:18px">Plan my first meals</button>
+  </article>
+  <div class="ghost"></div><div class="ghost" style="opacity:.6"></div>`;
+}
+
+function renderHome() {
+  const live = S.orders.filter((o) => !archived(o)).sort((a, b) => rank(a) - rank(b) || (a.delivery ?? 99) - (b.delivery ?? 99));
+  const top = live.find((o) => isDraft(o) || phase(o) !== 'onhand');
+  const ordered = top ? [top, ...live.filter((o) => o !== top)] : live;
+  let cards = ordered.map((o) => isDraft(o) ? draftCard(o, o === top) : placedCard(o, o === top)).join('');
+  if (!S.orders.length) cards = welcomeCard();
+  return `<div class="view home"><div class="sbfade"></div><div class="scroll" data-scroll="home">
+    <header class="lt"><div class="over">Thursday, September 24</div>
+      <div class="lt-row"><h1>Orders</h1><button class="round-btn" data-act="flow" aria-label="New order">${I.plus}</button></div></header>
+    <div class="strip-box"><div class="strip" data-scroll="strip">${renderStrip()}</div><div class="strip-cap">${stripCaption()}</div></div>
+    <div class="stack">${cards}</div>
+  </div></div>`;
+}
+
+/* ================= Order view (read-only) ================= */
+function renderOrder(e) {
+  const o = order(e.n);
+  const items = listFor(o.meals), rem = items.filter((i) => o.removed.includes(i.key)).length;
+  const nx = order(o.n + 1);
+  return `<div class="view pushed" style="${vars(o.n)}">
+    ${navbar(`Order ${o.n}`)}
+    <div class="scroll" data-scroll="order-${o.n}">
+      <div class="ov-hero">${placedCard(o, false, true)}</div>
+      <div class="gh">Meals</div><div class="group">${mealRows(o.meals, o.n)}</div>
+      <div class="foot-note">${I.cal}<span>These meals cover ${F.wdd(o.delivery)} – ${F.wdd(o.next - 1)}. Cook them in any order.</span></div>
+      <div class="gh">Delivery</div><div class="group">
+        <div class="row"><span class="rl rt">Delivery date</span><span class="rv">${F.wmd(o.delivery)}</span></div>
+        <div class="row"><span class="rl rt">Next delivery</span><span class="rv">${F.wmd(o.next)}</span></div>
+        <button class="row" data-act="list" data-n="${o.n}"><span class="rl rt">Shopping list</span><span class="rv">${items.length - rem} items${rem ? ` · ${rem} removed` : ''}</span><span class="chev">${I.chevR}</span></button>
+        <div class="row"><span class="rl rt">Placed</span><span class="rv">${F.wmd(o.placedOn)} · ${who(o.by)}</span></div>
+      </div>
+      <div class="foot-note">${I.lock}<span>Placed orders are read-only.</span></div>
+      ${nx ? `<div class="gh">Next order</div><div class="group"><button class="row" data-act="${isDraft(nx) ? 'flow' : 'order'}" data-n="${nx.n}">
+        <span class="rl"><div class="rt">Order ${nx.n} · delivery ${F.wmd(nx.delivery)}</div><div class="rs">${isDraft(nx) ? (nx.status === 'locked' ? `${nx.lock.who} is placing it` : `Decide by ${F.wmd(decideBy(nx))}`) : 'Order placed'}</div></span><span class="chev">${I.chevR}</span></button></div>` : ''}
+    </div></div>`;
+}
+
+function listRows(items, removed, editable) {
+  let h = '';
+  AISLES.forEach((a) => {
+    const rows = items.filter((i) => i.aisle === a);
+    if (!rows.length) return;
+    h += `<div class="aisle"><span>${a}</span><span>${rows.filter((i) => !removed.includes(i.key)).length}</span></div>`;
+    h += rows.map((i) => {
+      const out = removed.includes(i.key);
+      const ctl = !editable ? '' : out
+        ? `<button class="rs" data-act="restore" data-k="${i.key}">${I.undo} Restore</button>`
+        : `<button class="rm" data-act="remove" data-k="${i.key}" aria-label="Remove ${i.name}">${I.minus}</button>`;
+      return `<div class="li-row ${out ? 'out' : ''}"><span class="q">${qty(i.q)} ${i.u}</span><span class="nm"><b>${i.name}</b><small>for ${i.meals.join(', ')}</small></span>${ctl}</div>`;
+    }).join('');
+  });
+  return h;
+}
+
+function renderListView(e) {
+  const o = order(e.n), items = listFor(o.meals);
+  return `<div class="view pushed" style="${vars(o.n)}">
+    ${navbar('Shopping list')}
+    <div class="scroll" data-scroll="list-${o.n}"><div class="slist">
+      <div class="lsum"><div><b>${items.length - o.removed.length}</b><small>items ordered</small></div><div><b>${o.removed.length}</b><small>removed</small></div><div><b>${o.meals.length}</b><small>meals</small></div></div>
+      ${listRows(items, o.removed, false)}
+    </div>
+    <div class="foot-note" style="padding-top:14px">${I.lock}<span>Order ${o.n} is placed, so its list is read-only.</span></div></div></div>`;
+}
+
+function navbar(title) {
+  const stack = S.nav[S.tab];
+  const prev = stack.length > 1 ? stack[stack.length - 2] : null;
+  const backLabel = prev ? (prev.type === 'order' ? `Order ${prev.n}` : 'Back') : ({ home: 'Orders', history: 'History', settings: 'Settings' })[S.tab];
+  return `<div class="navbar"><button class="nb-back" data-act="back">${I.chevL}<span>${backLabel}</span></button><div class="nb-title">${title}</div><div class="nb-r"></div></div>`;
+}
+
+/* ================= Meal + Instructions ================= */
+function qty(q) {
+  if (!q) return '';
+  const w = Math.floor(q + 1e-9), fr = q - w;
+  const map = [[0, ''], [0.25, '¼'], [0.33, '⅓'], [0.5, '½'], [0.67, '⅔'], [0.75, '¾'], [1, '']];
+  const best = map.reduce((a, b) => (Math.abs(b[0] - fr) < Math.abs(a[0] - fr) ? b : a));
+  const ww = w + (best[0] === 1 ? 1 : 0);
+  return ((ww ? ww : '') + best[1]) || '¼';
+}
+
+function renderMeal(e) {
+  const r = R[e.r], o = order(e.n);
+  const sv = S.servings[e.r] || 4;
+  const p = o && !isDraft(o) ? phase(o) : null;
+  const when = p === 'onhand' || p === 'arriving' ? ' · On hand' : p === 'waiting' ? ` · Arrives ${F.wdd(o.delivery)}` : '';
+  return `<div class="view pushed" style="${vars(e.n)}">
+    <div class="hero-btns"><button class="glass-btn" data-act="back">${I.chevL}</button><button class="glass-btn">${I.more}</button></div>
+    <div class="scroll" data-scroll="meal-${e.r}" style="padding-top:0;padding-bottom:120px">
+      <div class="hero">${dish(e.r)}</div>
+      <div class="mv">
+        <div class="over"><i></i>Order ${e.n}${when}</div>
+        <h1>${r.name}</h1>
+        <p class="desc">${r.desc}</p>
+        <div class="facts">
+          <div class="fact"><b>${r.mins}</b><small>min total</small></div>
+          <div class="fact"><b>${r.active}</b><small>hands-on</small></div>
+          <div class="fact"><b>${r.kcal}</b><small>kcal</small></div>
+          <div class="fact"><b>${r.effort}</b><small>effort</small></div>
+        </div>
+        <div class="serv"><span class="slab">${I.users} Servings</span><span class="stepper"><button data-act="serv" data-d="-1" data-r="${e.r}">−</button><b>${sv}</b><button data-act="serv" data-d="1" data-r="${e.r}">+</button></span></div>
+        <div class="h3">Ingredients</div>
+        <ul class="ing">${r.ing.map((x) => `<li><span class="q">${qty(x[0] * sv / 4)} ${x[1]}</span><span>${x[2]}</span></li>`).join('')}</ul>
+        <div class="h3">Steps</div>
+        <ul class="ing">${r.steps.map((s, i) => `<li><span class="q" style="width:28px;color:var(--cc-ink-3)">${i + 1}</span><span>${s[0]}</span></li>`).join('')}</ul>
+      </div>
+    </div>
+    <div class="sticky-cta"><button class="btn block" data-act="cook" data-r="${e.r}" data-n="${e.n}">${I.flame} Start cooking</button></div>
+  </div>`;
+}
+
+function renderCook(e) {
+  const r = R[e.r], s = r.steps[e.step], last = e.step === r.steps.length - 1;
+  const t = S.timer && S.timer.key === e.r + e.step;
+  const words = s[0].toLowerCase();
+  const uses = r.ing.filter((x) => words.includes(x[2].split(',')[0].split(' ').slice(-1)[0].toLowerCase()));
+  return `<div class="view pushed"><div class="cook">
+    <div class="cook-top"><button class="glass-btn" style="background:var(--cc-fill);box-shadow:none" data-act="back">${I.x}</button><span class="ttl">${r.name}</span><span style="width:40px"></span></div>
+    <div class="segs">${r.steps.map((_, i) => `<i class="${i <= e.step ? 'on' : ''}"></i>`).join('')}</div>
+    <div class="cook-body ${S.anim === 'step' ? 'in-fade' : ''}">
+      <div class="sn">Step ${e.step + 1} of ${r.steps.length}</div>
+      <p class="big">${s[0]}</p>
+      ${s[1] ? `<button class="timer ${t ? 'run' : ''}" data-act="timer" data-min="${s[1]}" data-key="${e.r + e.step}">${I.timer}<span data-timer>${t ? fmtTimer() : `Start ${s[1]} min timer`}</span></button>` : ''}
+      ${uses.length ? `<div class="uses"><h5>You'll need</h5>${uses.map((x) => `<div>${qty(x[0] * (S.servings[e.r] || 4) / 4)} ${x[1]} ${x[2]}</div>`).join('')}</div>` : ''}
+    </div>
+    <div class="cook-foot">
+      <button class="btn soft" style="flex:1" data-act="cstep" data-d="-1" ${e.step === 0 ? 'disabled' : ''}>Back</button>
+      <button class="btn ${last ? 'acc' : ''}" style="flex:2" data-act="${last ? 'cookdone' : 'cstep'}" data-d="1">${last ? `${I.check} Done` : 'Next step'}</button>
+    </div>
+  </div></div>`;
+}
+function fmtTimer() {
+  const left = Math.max(0, Math.round((S.timer.end - Date.now()) / 1000));
+  return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left`;
+}
+
+/* ================= History + Settings ================= */
+function renderHistory() {
+  const list = placed().sort((a, b) => b.delivery - a.delivery);
+  let body = '';
+  const pill = () => '<span class="pill ok">Order placed</span>';
+  if (!list.length) body = `<div style="text-align:center;color:var(--cc-ink-3);padding:80px 30px">Orders you place show up here, with their meals grouped by order.</div>`;
+  else if (S.histMode === 'orders') {
+    body = list.map((o) => `<div class="hcard" style="${vars(o.n)}">
+      <button class="hh" data-act="order" data-n="${o.n}"><span class="od"></span><span class="hl"><div class="a">Order ${o.n} · ${F.md(o.delivery)}</div><div class="b">${F.wdd(o.delivery)} – ${F.wdd(o.next - 1)}</div></span>
+      ${pill()}<span class="chev" style="color:var(--cc-ink-3)">${I.chevR}</span></button>
+      ${mealRows(o.meals, o.n)}
+    </div>`).join('');
+  } else {
+    body = list.map((o) => `<div class="hgroup" style="${vars(o.n)}"><div class="ghd"><span>Order ${o.n}</span><span>${F.md(o.delivery)} – ${F.md(o.next - 1)}</span></div>
+      <div class="grid2">${o.meals.map((r) => `<button class="gtile press" data-act="meal" data-r="${r}" data-n="${o.n}">${dish(r)}<div class="gl"><b>${R[r].name}</b><small>${R[r].mins} min</small></div></button>`).join('')}</div></div>`).join('');
+  }
+  return `<div class="view home"><div class="sbfade"></div><div class="scroll" data-scroll="history">
+    <header class="lt"><div class="over">${plural(list.length, 'order')} · ${plural(list.reduce((a, o) => a + o.meals.length, 0), 'meal')}</div><div class="lt-row"><h1>History</h1></div></header>
+    <div class="seg-ctl"><button class="${S.histMode === 'orders' ? 'on' : ''}" data-act="hmode" data-m="orders">By order</button><button class="${S.histMode === 'grid' ? 'on' : ''}" data-act="hmode" data-m="grid">All meals</button></div>
+    ${body}</div></div>`;
+}
+
+const LIMITS = { off: [1, 7], lead: [0, 7] };
+function renderSettings() {
+  const c = S.cfg;
+  const stub = (t, v) => `<div class="row"><span class="rl rt">${t}</span><span class="rv">${v}</span><span class="chev">${I.chevR}</span></div>`;
+  const step = (k, v) => `<span class="stepper"><button data-act="cfg" data-k="${k}" data-d="-1" ${v <= LIMITS[k][0] ? 'disabled style="opacity:.3"' : ''} aria-label="Fewer days">−</button><b>${v}</b><button data-act="cfg" data-k="${k}" data-d="1" ${v >= LIMITS[k][1] ? 'disabled style="opacity:.3"' : ''} aria-label="More days">+</button></span>`;
+  const d = draftOrder();
+  let preview = '';
+  if (d && d.delivery != null) {
+    const dby = decideBy(d), from = remindFrom(d);
+    preview = `<div class="gh">With these settings, Order ${d.n}</div><div class="preview"><div class="sets" style="margin:0;background:none">
+      <div class="sr">${I.truck}<span class="l">Delivery<small>Target date</small></span><b>${F.wmd(d.delivery)}</b></div>
+      <div class="sr acc">${I.cal}<span class="l">Decide by<small>${plural(c.off, 'day')} before delivery</small></span><b>${F.wmd(dby)}</b></div>
+      <div class="sr">${I.bell}<span class="l">Reminders<small>To everyone, daily until placed · yours at ${fmtTime(c.time)}</small></span><b>From ${from <= 0 ? 'today' : F.wdd(from)}</b></div>
+    </div></div>`;
+  }
+  return `<div class="view home"><div class="sbfade"></div><div class="scroll" data-scroll="settings">
+    <header class="lt"><div class="over">You · Conn household</div><div class="lt-row"><h1>Settings</h1></div></header>
+    <div class="gh">Household</div><div class="group">
+      <div class="row"><span class="rl"><div class="rt">Decide by</div><div class="rs">${plural(c.off, 'day')} before delivery</div></span>${step('off', c.off)}</div>
+      <div class="row"><span class="rl"><div class="rt">Reminders start</div><div class="rs">${c.lead === 0 ? 'On the decide-by day' : `${plural(c.lead, 'day')} before decide-by`}</div></span>${step('lead', c.lead)}</div>
+      ${stub('Members', 'You, Sam')}${stub('Default servings', '4')}${stub('Dislikes', 'Mushrooms')}
+    </div>
+    <div class="foot-note">${I.users}<span>Shared by everyone in the household. Changing the decide-by or reminder days moves them for you and Sam.</span></div>
+    <div class="gh">Personal</div><div class="group">
+      <div class="row"><span class="rl"><div class="rt">Notification time</div><div class="rs">Your daily reminder until the order is placed</div></span><input class="tinput" type="time" data-cfg="time" value="${c.time}" aria-label="Notification time"></div>
+      ${stub('Allow notifications', 'On')}
+    </div>
+    <div class="foot-note">${I.bell}<span>Just for you. Sam gets the same reminders at Sam's own time.</span></div>
+    ${preview}
+    <div class="gh">Account</div><div class="group"><div class="row"><span class="rl rt" style="color:var(--cc-danger)">Sign out</span></div></div>
+  </div></div>`;
+}
+
+/* ================= Create-order flow ================= */
+function pickCard(r, o, i) {
+  const on = o.added.includes(r), off = o.dismissed.includes(r);
+  const fresh = S.appendFrom !== null && i >= S.appendFrom ? 'in-fade' : '';
+  return `<div class="pc ${on ? 'on' : ''} ${off ? 'off' : ''} ${fresh}">${dish(r)}
+    <button class="dx" data-act="dismiss" data-r="${r}" aria-label="${off ? 'Show meals like this again' : 'Don\'t show meals like this'}">${off ? I.undo : I.x}</button>
+    ${off ? '<div class="gone">No more meals like this</div>' : ''}
+    <div class="pl"><b>${R[r].name}</b><small>${R[r].mins} min · ${R[r].effort}</small></div>
+    <button class="add" data-act="add" data-r="${r}" ${off ? 'disabled style="opacity:.4"' : ''}>${on ? `${I.check} Added` : `${I.plus} Add`}</button></div>`;
+}
+
+function renderFlow() {
+  const f = S.flow, o = order(f.n);
+  const stepIdx = Math.max(0, STEPS.findIndex((s) => s[0] === f.step));
+  const dots = f.step === 'locked' ? '<span></span>' : stepDots(stepIdx);
+  const back = ['delivery', 'next', 'list'].includes(f.step) ? `<button class="bk" data-act="fback">${I.chevL}Back</button>` : '<span style="width:32px"></span>';
+  const N = o.added ? o.added.length : 0;
+  const off = S.cfg.off, lead = S.cfg.lead;
+  let body = '', foot = '';
+  if (f.step === 'locked') {
+    const L = o.lock;
+    body = `<div class="wait"><div class="who lg">${L.who[0]}</div>
+      <h2>${L.who} is placing an order</h2>
+      <p class="lede">Only one person in the household can order at a time. ${L.who} started Order ${o.n} ${L.mins} min ago.</p>
+      <div class="pstep" style="justify-content:center;margin-top:22px">${stepDots(L.step)}<span><b>${STEPS[L.step][1]}</b></span></div>
+      <p class="lede" style="margin-top:26px;font-size:14px">Order ${o.n} shows up on Home as soon as ${L.who} places it. If ${L.who} closes it without placing, or ${L.who}'s app goes away for 2 minutes, you can pick up ${L.who}'s draft where it left off.</p>
+      <p class="lede" style="margin-top:12px;font-size:14px">Reminders keep going to everyone until the order is placed.</p></div>`;
+    foot = `<div class="sum">Nothing for you to do right now.</div><button class="btn" data-act="fclose">OK</button>`;
+  } else if (f.step === 'wait') {
+    const lines = ['Looking at what your household ordered lately', 'Skipping repeats from recent orders', 'Keeping hands-on time under 20 minutes', 'Choosing 20 ideas'];
+    body = `<div class="wait"><div class="orb">${dish('fajitas')}</div>
+      <h2>Finding meals for Order ${o.n}</h2>
+      <p class="lede">${o.delivery != null && o.delivery > 0 ? `For delivery around ${F.wmd(o.delivery)}. ` : ''}This usually takes a minute or two.</p>
+      <ul class="checks">${lines.map((l, i) => `<li data-check="${i}"><span class="cb">${I.check}</span>${l}</li>`).join('')}</ul>
+      <div class="gbar"><i data-genbar></i></div><div class="left" data-genleft>About 1 min left</div></div>`;
+    foot = `<div class="sum">You can leave. The card on Home keeps working and we'll notify you.</div><button class="btn soft" data-act="fclose">${I.bell} Notify me</button>`;
+  } else if (f.step === 'pick') {
+    const more = S.gen && S.gen.n === o.n && S.gen.kind === 'more';
+    const skel = more ? Array.from({ length: 4 }, () => `<div class="pc skel">${dish('fajitas')}<div class="pl"><b>.</b><small>.</small></div><span class="add"></span></div>`).join('') : '';
+    body = `<h2>Pick meals</h2><p class="lede">Add the meals you want in Order ${o.n}. Tap ✕ on anything you don't want: Chef stops suggesting meals like it to your household.</p>
+      <div class="pick-note">${I.users}<span>${o.by && o.by !== 'You' ? `${o.by} started this draft. ` : ''}Your picks are saved for the household as you go. Sam sees that you're ordering while this is open.</span></div>
+      <div class="pgrid">${o.suggestions.map((r, i) => pickCard(r, o, i)).join('')}${skel}</div>
+      <div class="more">${more
+        ? `<div class="gbar"><i data-genbar></i></div><div class="mt"><b style="color:var(--cc-ink-2)">Generating 20 more</b> · <span data-genleft>About 1 min left</span></div><div class="mt">You can leave; they'll be here when you come back.</div>`
+        : `<button class="btn soft" data-act="more">${I.spark} Generate more</button><div class="mt">20 more ideas below · takes a minute or two</div>`}</div>`;
+    foot = `<div class="sum"><b>${N ? `${plural(N, 'meal')} added` : 'No meals added yet'}</b>${N ? `Covers about ${plural(N, 'day')}` : 'Tap Add on the meals you want'}</div><button class="btn" data-act="fnext" ${N ? '' : 'disabled'}>Next</button>`;
+  } else if (f.step === 'delivery') {
+    const target = o.delivery;
+    const prev = placed().filter((p) => p.n < o.n).sort((a, b) => b.n - a.n)[0];
+    const lc = lastCovered();
+    let chips = '';
+    for (let d = 1; d <= 14; d++) {
+      const cov = coverOf(d);
+      const tag = d === target ? 'TARGET' : d === 1 && target != null && target < 1 ? 'SOONEST' : '';
+      chips += `<button class="dchip ${d === f.delivery ? 'on' : ''}" data-act="fdel" data-o="${d}"><small>${F.wd(d)}</small><b>${F.d(d)}</b>${cov ? `<span class="cv" style="--oc:${pal(cov.n).c}"></span>` : ''}${tag ? `<span class="tag">${tag}</span>` : ''}</button>`;
+    }
+    const lede = target == null ? 'This is your first order, so there\'s no target date. When should groceries arrive?'
+      : target < 1 ? `The target date, <b>${F.wmd(target)}</b>, has passed, so Order ${o.n} is set for the soonest delivery, <b>tomorrow</b>. Change it if you need to.`
+      : `Order ${prev.n} covers you through <b>${F.wdd(target - 1)}</b>, so Order ${o.n} is set for <b>${F.wmd(target)}</b>. Change it if you need to.`;
+    let rec = '';
+    if (f.delivery != null) {
+      const isT = f.delivery === target;
+      const gap = lc === null ? null : f.delivery - lc - 1;
+      const why = gap === null ? `Your ${plural(N, 'meal')} start ${F.wdl(f.delivery)}.`
+        : gap === 0 ? `Starts the day after Order ${prev.n}'s last covered day, ${F.wdd(lc)}.`
+        : gap > 0 ? `${plural(gap, 'day')} with no meals covered before it arrives (${F.wdd(lc + 1)}${gap > 1 ? ` – ${F.wdd(f.delivery - 1)}` : ''}).`
+        : `Arrives while Order ${prev.n} still covers ${plural(-gap, 'day')}. Groceries may overlap.`;
+      const isS = !isT && f.delivery === 1 && target != null && target < 1;
+      rec = `<div class="rec ${isT || isS ? '' : 'off'}" style="${vars(o.n)}"><div class="rt">${isT ? `${I.spark} Target date` : isS ? `${I.spark} Soonest delivery` : 'Your pick'}</div>
+        <div class="rd">${F.wdl(f.delivery)}, ${F.md(f.delivery)}</div><div class="rw">${why}</div></div>`;
+    }
+    body = `<h2>Delivery date</h2><p class="lede">${lede}</p>
+      ${rec}
+      <div class="lab">${f.delivery != null ? 'Other days' : 'Delivery day'}<span>Earliest: tomorrow, ${F.md(1)}</span></div><div class="dchips" data-scroll="dchips">${chips}</div>
+      ${prev && lc >= 1 ? `<div class="legend"><span><i style="background:${pal(prev.n).c}"></i>Covered by Order ${prev.n}</span></div>` : ''}`;
+    foot = `<div class="sum"><b>${f.delivery != null ? F.wmd(f.delivery) : 'No date yet'}</b>${f.delivery != null ? 'Delivery date' : 'Pick a delivery date'}</div><button class="btn" data-act="fnext" ${f.delivery != null ? '' : 'disabled'}>Next</button>`;
+  } else if (f.step === 'next') {
+    const rec = f.delivery + N;
+    const dby = f.next - off, from = dby - lead;
+    let chips = '';
+    for (let d = f.delivery + 1; d <= rec + 7; d++) chips += `<button class="dchip ${d === f.next ? 'on' : ''}" data-act="fnextday" data-o="${d}"><small>${F.wd(d)}</small><b>${F.d(d)}</b>${d === rec ? '<span class="tag">BEST</span>' : ''}</button>`;
+    let ms = '';
+    for (let d = f.delivery; d <= Math.max(f.next, rec); d++) ms += `<div class="${d < f.next ? 'm' : ''} ${d === f.next ? 'x' : ''}"><i></i><small>${F.wd(d)[0]}</small></div>`;
+    const days = f.next - f.delivery;
+    const why = f.next === rec ? `${plural(N, 'meal')}, one a day, cover ${F.wdd(f.delivery)} – ${F.wdd(f.next - 1)}.`
+      : `${plural(N, 'meal')} cover ${plural(days, 'day')}, ${F.wdd(f.delivery)} – ${F.wdd(f.next - 1)}.${days > N ? ' Some days need leftovers or takeout.' : ' Some meals carry past the next delivery.'}`;
+    body = `<h2>Next delivery</h2><p class="lede">This order's meals cover you from ${F.wmd(f.delivery)} until the next delivery. When should Order ${o.n + 1} arrive?</p>
+      <div class="rec ${f.next === rec ? '' : 'off'}" style="${vars(o.n)}"><div class="rt">${f.next === rec ? `${I.spark} Recommended` : 'Your pick'}</div>
+        <div class="rd">${F.wdl(f.next)}, ${F.md(f.next)}</div>
+        <div class="rw">${why}</div>
+        <div class="mini-strip">${ms}</div></div>
+      <div class="lab">Other days</div><div class="dchips" data-scroll="nchips">${chips}</div>
+      <div class="lab">What this sets for Order ${o.n + 1}</div>
+      <div class="sets">
+        <div class="sr acc">${I.cal}<span class="l">Decide by<small>${plural(off, 'day')} before delivery</small></span><b>${F.wmd(dby)}</b></div>
+        <div class="sr">${I.bell}<span class="l">Reminders start<small>${lead ? `${plural(lead, 'day')} before decide-by` : 'On the decide-by day'} · to everyone, daily · yours at ${fmtTime(S.cfg.time)}</small></span><b>${from <= 0 ? 'Today' : F.wmd(from)}</b></div>
+      </div>
+      <div class="foot-note" style="padding:8px 4px 0">${I.sliders}<span>These are household rules. Change them in Settings.</span></div>`;
+    foot = `<div class="sum"><b>Decide by ${F.wmd(dby)}</b>for Order ${o.n + 1} · delivery ${F.wdd(f.next)}</div><button class="btn" data-act="fnext">Next</button>`;
+  } else if (f.step === 'list') {
+    const items = listFor(o.added);
+    const removed = f.removed.filter((k) => items.some((i) => i.key === k));
+    const kept = items.length - removed.length;
+    body = `<h2>Shopping list</h2><p class="lede">Built from your ${plural(N, 'meal')}. Remove anything you already have.</p>
+      <div class="lsum"><div><b>${kept}</b><small>to order</small></div><div><b>${removed.length}</b><small>removed</small></div><div><b>${F.wdd(f.delivery)}</b><small>delivery</small></div></div>
+      ${listRows(items, removed, true)}`;
+    foot = `<div class="sum"><b>${kept} items · ${plural(N, 'meal')}</b>Arrives ${F.wmd(f.delivery)}</div><button class="btn acc" data-act="place">${f.placing ? 'Placing…' : 'Place order'}</button>`;
+  }
+  const animCls = S.flowAnim === 'step' ? 'in-step' : S.flowAnim === 'back' ? 'in-stepback' : '';
+  return `<div class="sheet-bd"></div><div class="sheet ${S.flowAnim === 'open' ? 'in-up' : ''} ${S.closing ? 'out-down' : ''}" style="${vars(o.n)}">
+    <div class="grab"></div>
+    <div class="sh-top">${back}${dots}<button class="x" data-act="fclose">${I.x}</button></div>
+    <div class="sh-body ${animCls}" data-scroll="flow-${f.step}">${body}</div>
+    <div class="sh-foot">${foot}</div></div>`;
+}
+
+function openFlow() {
+  let o = draftOrder();
+  if (!o) { const max = S.orders.reduce((a, x) => Math.max(a, x.n), 0); o = draft(max + 1, null); S.orders.push(o); }
+  S.flowAnim = 'open';
+  if (o.status === 'locked') { S.flow = { n: o.n, step: 'locked' }; render(); return; }
+  if (!o.by) { o.by = 'You'; o.saved = 'just now'; }
+  if (o.status === 'draft') startGen(o, 7000, 'first');
+  S.flow = { n: o.n, step: o.status === 'ready' ? 'pick' : 'wait', delivery: undefined, next: undefined, removed: [] };
+  delete S.scrollMem['flow-pick']; delete S.scrollMem['flow-delivery']; delete S.scrollMem['dchips']; delete S.scrollMem['nchips'];
+  render();
+}
+function startGen(o, dur, kind) { if (kind === 'first') o.status = 'generating'; S.gen = { n: o.n, start: Date.now(), dur, kind }; }
+function poolFor(o, count) {
+  const recent = new Set(placed().flatMap((x) => x.meals));
+  const have = new Set(o.suggestions || []);
+  const keys = Object.keys(R).filter((r) => !have.has(r));
+  return keys.filter((r) => !recent.has(r)).concat(keys.filter((r) => recent.has(r))).slice(0, count);
+}
+function finishGen() {
+  const g = S.gen; S.gen = null;
+  const o = order(g.n);
+  if (!o || !isDraft(o)) return;
+  const fresh = poolFor(o, 20);
+  if (g.kind === 'more') { S.appendFrom = o.suggestions.length; o.suggestions = o.suggestions.concat(fresh); }
+  else { o.suggestions = fresh; o.status = 'ready'; }
+  const here = S.flow && S.flow.n === o.n && !S.closing;
+  if (here && S.flow.step === 'wait') { S.flow.step = 'pick'; S.flowAnim = 'step'; }
+  else if (!here) showToast(g.kind === 'more' ? '20 more meal ideas' : 'Your meal ideas are ready', g.kind === 'more' ? `They're at the bottom of the list for Order ${o.n}.` : `20 ideas for Order ${o.n}.${decideBy(o) != null ? ` Pick yours by ${F.wdl(Math.max(decideBy(o), 0))}.` : ''}`, 'flow');
+  render();
+  S.appendFrom = null;
+}
+function closeFlow() {
+  S.closing = true; render();
+  setTimeout(() => { S.closing = false; S.flow = null; render(); }, 330);
+}
+function placeOrder() {
+  const f = S.flow, o = order(f.n);
+  f.placing = true; render();
+  setTimeout(() => {
+    const items = listFor(o.added);
+    Object.assign(o, { status: 'placed', placedOn: 0, by: 'You', delivery: f.delivery, next: f.next, meals: [...o.added], removed: f.removed.filter((k) => items.some((i) => i.key === k)) });
+    if (S.gen && S.gen.n === o.n) S.gen = null;
+    const nx = draft(o.n + 1, f.next);
+    S.orders.push(nx);
+    S.tab = 'home'; S.nav.home = []; S.pulse = o.n; S.sel = o.delivery;
+    closeFlow();
+    setTimeout(() => { delete o.suggestions; delete o.added; delete o.dismissed; }, 400); // after the sheet has slid away
+    setTimeout(() => showToast(`Order ${o.n} placed`, `Arrives ${F.wmd(o.delivery)}. Order ${nx.n} is in your stack: decide by ${F.wmd(decideBy(nx))}.`), 450);
+  }, 800);
+}
+
+/* ================= Rendering ================= */
+const $ = (s) => document.querySelector(s);
+function topEntry() { const st = S.nav[S.tab]; return st[st.length - 1]; }
+function render() {
+  document.querySelectorAll('#phone [data-scroll]').forEach((el) => { S.scrollMem[el.dataset.scroll] = [el.scrollTop, el.scrollLeft]; });
+  const t = topEntry();
+  let html;
+  if (!t) html = S.tab === 'home' ? renderHome() : S.tab === 'history' ? renderHistory() : renderSettings();
+  else html = t.type === 'order' ? renderOrder(t) : t.type === 'list' ? renderListView(t) : t.type === 'meal' ? renderMeal(t) : renderCook(t);
+  const animCls = S.anim === 'push' ? 'in-push' : S.anim === 'pop' ? 'in-pop' : S.anim === 'fade' ? 'in-fade' : '';
+  html = html.replace('class="view', `class="${animCls} view`);
+  const hideTabs = t && (t.type === 'meal' || t.type === 'cook');
+  const draftNeeds = S.orders.some((o) => isDraft(o) && o.status !== 'locked' && (tone(o) !== 'calm' || o.status === 'ready'));
+  const tabs = `<nav class="tabbar ${hideTabs ? 'hide' : ''}">
+    ${[['home', 'Orders', I.stack], ['history', 'History', I.clock], ['settings', 'Settings', I.sliders]].map(([k, l, icn]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-act="tab" data-tab="${k}">${icn}${l}${k === 'home' && draftNeeds && S.tab !== 'home' ? '<span class="badge"></span>' : ''}</button>`).join('')}
+  </nav>`;
+  $('#screen').innerHTML = html + tabs + confirmHTML();
+  $('#screen').classList.toggle('behind', !!S.flow && !S.closing);
+  $('#statusbar').classList.toggle('light', !!S.flow && !S.closing);
+  const sw = $('#sheetwrap');
+  sw.classList.toggle('open', !!S.flow);
+  sw.innerHTML = S.flow ? renderFlow() : '';
+  document.querySelectorAll('#phone [data-scroll]').forEach((el) => {
+    const m = S.scrollMem[el.dataset.scroll];
+    if (m) { el.scrollTop = m[0]; el.scrollLeft = m[1]; }
+    else if (el.dataset.scroll === 'strip') { const today = el.querySelector('.today'); if (today) el.scrollLeft = today.offsetLeft - 6 - 44 * 2; }
+  });
+  if (S.pulse) {
+    const c = document.getElementById('card-' + S.pulse);
+    if (c && !S.flow) { const sc = c.closest('.scroll'); const y = c.offsetTop - 120; if (sc.scrollTop > y || sc.scrollTop + sc.clientHeight < c.offsetTop + 120) sc.scrollTo({ top: Math.max(0, y), behavior: 'smooth' }); }
+    if (!S.flow) setTimeout(() => { S.pulse = null; }, 50);
+  }
+  S.anim = null; S.flowAnim = null;
+  tick();
+  renderSwitcher();
+  $('#lockslot').innerHTML = lockHTML();
+}
+
+// Discarding the household draft asks first; it affects everyone.
+function confirmHTML() {
+  if (!S.confirm) return '';
+  const o = order(S.confirm);
+  const bits = [o.suggestions ? plural(o.suggestions.length, 'meal idea') : null, o.added.length ? plural(o.added.length, 'pick') : null].filter(Boolean);
+  return `<div class="alert-wrap" data-act="cancelDiscard"><div class="alert" role="alertdialog" aria-label="Discard draft">
+    <h4>Discard the Order ${o.n} draft?</h4>
+    <p>${bits.length ? `Its ${bits.join(' and ')} are` : 'It is'} deleted for everyone in the household. "Don't show meals like this" choices are kept.</p>
+    <button class="dng" data-act="doDiscard">Discard draft</button><button data-act="cancelDiscard">Cancel</button>
+  </div></div>`;
+}
+function discardDraft(n) {
+  const o = order(n);
+  if (S.gen && S.gen.n === n) S.gen = null;
+  Object.assign(o, { status: 'draft', suggestions: null, added: [], dismissed: [], by: null, saved: null });
+  S.confirm = null; S.pulse = n; render();
+}
+
+function renderSwitcher() {
+  const h = Object.entries(SCEN).map(([k, v]) => `<button class="${k === S.scenario ? 'on' : ''}" data-scen="${k}">${v.label}<small>${v.sub}</small></button>`).join('');
+  $('#switcher').innerHTML = h;
+  const ms = $('#mocksheet');
+  if (ms.classList.contains('open')) ms.innerHTML = `<div class="mock-label">Home state · not part of the design</div><div class="switcher">${h}</div><div class="mock-label" style="margin-top:28px">Notifications · static examples</div>${lockHTML()}<button class="btn block" style="margin-top:24px" data-closemock>Close</button>`;
+}
+
+/* Live progress (agent wait, timers) without full re-renders */
+function tick() {
+  if (S.gen) {
+    const fr = Math.min(1, (Date.now() - S.gen.start) / S.gen.dur);
+    document.querySelectorAll('[data-genbar]').forEach((el) => { el.style.width = Math.max(4, fr * 100) + '%'; });
+    const left = S.gen.dur > 20000 ? Math.max(5, Math.round(90 * (1 - fr))) : Math.max(5, Math.round(80 * (1 - fr)));
+    document.querySelectorAll('[data-genleft]').forEach((el) => { el.textContent = fr > 0.85 ? 'Almost done' : left > 55 ? 'About 1 min left' : `About ${left} sec left`; });
+    document.querySelectorAll('[data-check]').forEach((el) => { const i = +el.dataset.check; el.classList.toggle('on', fr > (i + 1) / 4.3); el.classList.toggle('now', fr <= (i + 1) / 4.3 && fr > i / 4.3); });
+    if (fr >= 1) finishGen();
+  }
+  if (S.timer) document.querySelectorAll('[data-timer]').forEach((el) => { el.textContent = fmtTimer(); });
+}
+setInterval(tick, 400);
+
+let toastT;
+function showToast(title, body, act) {
+  const t = $('#toast');
+  t.innerHTML = `<span class="appicon">${CASTLE}</span><span class="tt"><b>${title}<small>now</small></b><div>${body}</div></span>`;
+  t.dataset.act = act || '';
+  t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 4200);
+}
+$('#toast').addEventListener('click', () => { const t = $('#toast'); t.classList.remove('show'); if (t.dataset.act === 'flow' && !S.flow) { S.tab = 'home'; S.nav.home = []; openFlow(); } });
+
+/* ================= Events ================= */
+function push(entry) { S.nav[S.tab].push(entry); delete S.scrollMem[entry.type + '-' + (entry.r || entry.n)]; S.anim = 'push'; render(); }
+
+document.getElementById('phone').addEventListener('click', (ev) => {
+  const el = ev.target.closest('[data-act]');
+  if (!el) return;
+  const a = el.dataset.act, n = +el.dataset.n;
+  ev.stopPropagation();
+  const f = S.flow;
+  const fo = f && order(f.n);
+  switch (a) {
+    case 'none': return;
+    case 'tab':
+      if (S.tab === el.dataset.tab && S.nav[S.tab].length) { S.nav[S.tab] = []; S.anim = 'pop'; }
+      else { S.tab = el.dataset.tab; S.anim = 'fade'; }
+      render(); return;
+    case 'back': S.nav[S.tab].pop(); S.timer = null; S.anim = 'pop'; render(); return;
+    case 'order': push({ type: 'order', n }); return;
+    case 'list': push({ type: 'list', n }); return;
+    case 'meal': push({ type: 'meal', r: el.dataset.r, n }); return;
+    case 'cook': push({ type: 'cook', r: el.dataset.r, n, step: 0 }); return;
+    case 'cstep': { const t = topEntry(); t.step = Math.max(0, Math.min(R[t.r].steps.length - 1, t.step + +el.dataset.d)); S.anim = 'step'; render(); return; }
+    case 'timer': S.timer = S.timer && S.timer.key === el.dataset.key ? null : { key: el.dataset.key, end: Date.now() + el.dataset.min * 60000 }; render(); return;
+    case 'cookdone': S.nav[S.tab] = []; S.timer = null; S.anim = 'pop'; render(); return;
+    case 'serv': S.servings[el.dataset.r] = Math.max(1, Math.min(12, (S.servings[el.dataset.r] || 4) + +el.dataset.d)); render(); return;
+    case 'day': {
+      S.sel = +el.dataset.o;
+      const o = S.sel;
+      const hit = coverOf(o) || S.orders.find((p) => p.delivery === o || (isDraft(p) && decideBy(p) === o));
+      if (hit && !archived(hit)) S.pulse = hit.n;
+      render(); return;
+    }
+    case 'fold': S.fold.has(n) ? S.fold.delete(n) : S.fold.add(n); render(); return;
+    case 'discard': S.confirm = n; render(); return;
+    case 'cancelDiscard': if (ev.target.closest('.alert') && !ev.target.closest('button')) return; S.confirm = null; render(); return;
+    case 'doDiscard': discardDraft(S.confirm); return;
+    case 'hmode': S.histMode = el.dataset.m; render(); return;
+    case 'cfg': { const k = el.dataset.k; S.cfg[k] = Math.max(LIMITS[k][0], Math.min(LIMITS[k][1], S.cfg[k] + +el.dataset.d)); render(); return; }
+    case 'flow': S.tab = 'home'; S.nav.home = []; openFlow(); return;
+    case 'fclose': closeFlow(); return;
+    case 'add': { const r = el.dataset.r; fo.added = fo.added.includes(r) ? fo.added.filter((x) => x !== r) : [...fo.added, r]; render(); return; }
+    case 'dismiss': {
+      const r = el.dataset.r;
+      if (fo.dismissed.includes(r)) fo.dismissed = fo.dismissed.filter((x) => x !== r);
+      else { fo.dismissed = [...fo.dismissed, r]; fo.added = fo.added.filter((x) => x !== r); }
+      render(); return;
+    }
+    case 'more': startGen(fo, 6000, 'more'); render(); return;
+    case 'fnext': {
+      if (f.step === 'pick') { f.step = 'delivery'; if (f.delivery === undefined) f.delivery = fo.delivery == null ? null : Math.max(fo.delivery, 1); } // earliest delivery: tomorrow
+      else if (f.step === 'delivery') { f.step = 'next'; const key = f.delivery + ':' + fo.added.length; if (f.nextKey !== key) { f.next = f.delivery + fo.added.length; f.nextKey = key; } }
+      else if (f.step === 'next') f.step = 'list';
+      S.flowAnim = 'step'; render(); return;
+    }
+    case 'fback': f.step = { delivery: 'pick', next: 'delivery', list: 'next' }[f.step]; S.flowAnim = 'back'; render(); return;
+    case 'fdel': f.delivery = +el.dataset.o; render(); return;
+    case 'fnextday': f.next = +el.dataset.o; render(); return;
+    case 'remove': f.removed = [...f.removed, el.dataset.k]; render(); return;
+    case 'restore': f.removed = f.removed.filter((k) => k !== el.dataset.k); render(); return;
+    case 'place': if (!f.placing) placeOrder(); return;
+  }
+});
+document.getElementById('phone').addEventListener('change', (ev) => {
+  const el = ev.target.closest('[data-cfg]');
+  if (!el || !el.value) return;
+  S.cfg[el.dataset.cfg] = el.value; render();
+});
+
+/* ================= Side panels ================= */
+// The lock screen shows the first pick-meals reminder for the reminders-active example:
+// Order 4, target delivery Sun Sep 27. Its dates follow the current Settings.
+function lockHTML() {
+  const c = S.cfg, target = 3, dby = target - c.off, from = dby - c.lead, time = fmtTime(c.time);
+  const last = from === dby;
+  const notif = (title, body, when, cls = '') => `<div class="notif ${cls}"><span class="appicon">${CASTLE}</span><div style="flex:1"><b>Castle Chef<small>${when}</small></b><div><b style="display:inline">${title}</b></div><div>${body}</div></div></div>`;
+  return `<div class="lock">
+  <div class="li"></div>
+  <div class="ld">${F.full(from)}</div>
+  <div class="lt2">${time.replace(/ [AP]M/, '')}</div>
+  <div class="ncount">Notification Center</div>
+  ${notif(last ? 'Last day to pick meals' : 'Pick meals for Order 4', `Decide by ${last ? 'today' : F.wdl(dby)} for delivery ${F.wdl(target)}, ${F.md(target)}.`, 'now')}
+  <div class="lock-foot"></div>
+</div>
+<p class="cap"><b>Pick-meals reminder.</b> Everyone in the household gets one a day at their own notification time (yours: ${time}, a personal setting), from ${F.wdd(from)}${c.lead ? ` (${plural(c.lead, 'day')} before decide-by, a household setting)` : ''} until someone places the order. That includes while another member is ordering and after the decide-by date. On ${F.wdd(dby)} it reads "Last day to pick meals"; after that, "Order 4 is overdue". Tapping one opens the create-order flow, or the "Sam is placing an order" screen if someone else is ordering.</p>
+<div style="margin-top:22px">${notif('Your meal ideas are ready', `20 ideas for Order 4. Pick yours by ${F.wdl(dby)}.`, '2m ago', 'solo')}</div>
+<p class="cap"><b>Suggestions ready.</b> Sent when suggestions finish generating, to whoever started them, if they left the flow. Tapping it opens the pick step. The same banner appears in the app if it is open.</p>`;
+}
+
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-scen]');
+  if (b) { loadScenario(b.dataset.scen); const ms = $('#mocksheet'); if (ms.classList.contains('open')) { ms.classList.remove('open'); } }
+  if (ev.target.closest('[data-closemock]')) $('#mocksheet').classList.remove('open');
+});
+$('#mockfab').addEventListener('click', () => { $('#mocksheet').classList.add('open'); renderSwitcher(); });
+
+loadScenario('remind');
+</script>
+</body>
+</html>
