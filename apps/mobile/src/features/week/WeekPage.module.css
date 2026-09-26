@@ -1,8 +1,5 @@
-/* spec/mockup.html: .stack (the order cards under the day strip) */
+/* The order cards under the day strip (ui/CardStack). */
 .stack {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
   padding-top: 14px;
 }
 

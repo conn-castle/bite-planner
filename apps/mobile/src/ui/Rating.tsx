@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { type AnimationEvent, useEffect, useRef, useState } from 'react'
 import type { MealRating } from '../lib/api/types'
 import { Icon, type IconName } from './Icon'
 import styles from './Rating.module.css'
@@ -24,13 +24,19 @@ interface RatingChoicesProps {
   /** What's rated, for screen readers, e.g. the meal's name. */
   label: string
   className?: string
+  onAnimationEnd?: (event: AnimationEvent<HTMLSpanElement>) => void
 }
 
 /** Thumbs down, thumbs up, and the heart: one choice of three, lit in its color; tapping it again clears it. */
-export function RatingChoices({ value, onChange, label, className }: RatingChoicesProps) {
+export function RatingChoices({ value, onChange, label, className, onAnimationEnd }: RatingChoicesProps) {
   const chosen = choice(value)?.rating
   return (
-    <span className={`${styles.choices} ${className ?? ''}`} role="group" aria-label={`Rate ${label}`}>
+    <span
+      className={`${styles.choices} ${className ?? ''}`}
+      role="group"
+      aria-label={`Rate ${label}`}
+      onAnimationEnd={onAnimationEnd}
+    >
       {CHOICES.map(({ rating, icon, label: name }) => (
         <button
           key={rating}
@@ -53,46 +59,56 @@ interface RatingButtonProps {
   label: string
 }
 
+type Stage = 'closed' | 'open' | 'closing'
+
+/** Where closing starts: its animation, or closed at once when motion is reduced (there's no animation to wait for). */
+const closing = (): Stage => (window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'closed' : 'closing')
+
 /**
  * One round button showing the rating ("?" before there is one). Tapped, it
- * grows sideways into the three choices; choosing one, or tapping anywhere
- * else, shrinks it back.
+ * grows sideways into the three choices. Choosing one, or tapping anywhere
+ * else, closes it: the button (with the new rating) is back at once, and the
+ * choices shrink into it over the top, the opening played backwards.
  */
 export function RatingButton({ value, onChange, label }: RatingButtonProps) {
-  const [open, setOpen] = useState(false)
+  const [stage, setStage] = useState<Stage>('closed')
   const root = useRef<HTMLSpanElement>(null)
   const shown = choice(value)
 
   useEffect(() => {
-    if (!open) return
-    const close = (event: PointerEvent) => {
-      if (!(event.target instanceof Node && root.current?.contains(event.target))) setOpen(false)
+    if (stage !== 'open') return
+    const closeOutside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node && root.current?.contains(event.target))) setStage(closing())
     }
-    document.addEventListener('pointerdown', close)
-    return () => document.removeEventListener('pointerdown', close)
-  }, [open])
+    document.addEventListener('pointerdown', closeOutside)
+    return () => document.removeEventListener('pointerdown', closeOutside)
+  }, [stage])
 
   return (
-    <span ref={root} className={`${styles.button} ${open ? styles.open : ''}`}>
-      {open ? (
-        <RatingChoices
-          value={value}
-          label={label}
-          onChange={(rating) => {
-            onChange(rating)
-            setOpen(false)
-          }}
-        />
-      ) : (
+    <span ref={root} className={styles.button}>
+      {stage !== 'open' && (
         <button
           type="button"
           className={`${styles.current} ${shown ? `${styles[shown.rating]} ${styles.on}` : ''} cc-hit`}
           aria-label={shown ? `${shown.label}. Change rating` : `Rate ${label}`}
           aria-expanded={false}
-          onClick={() => setOpen(true)}
+          onClick={() => setStage('open')}
         >
           {shown ? <Icon name={shown.icon} /> : <span className={styles.unrated}>?</span>}
         </button>
+      )}
+      {stage !== 'closed' && (
+        <RatingChoices
+          value={value}
+          label={label}
+          className={`${styles.pill} ${stage === 'closing' ? styles.closing : ''}`}
+          // The pill's own animation ending, not its icons'.
+          onAnimationEnd={(event) => event.target === event.currentTarget && stage === 'closing' && setStage('closed')}
+          onChange={(rating) => {
+            onChange(rating)
+            setStage(closing())
+          }}
+        />
       )}
     </span>
   )

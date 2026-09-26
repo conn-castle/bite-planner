@@ -139,7 +139,8 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
 /** Home before the household's first order (.welcome), with the cards to come sketched under it. */
 function WelcomeCard({ onStart }: { onStart: () => void }) {
   return (
-    <>
+    // One item of the card stack, so the sketched cards stay under it on a wide screen.
+    <div className={styles.welcomeGroup}>
       <article className={styles.welcome}>
         <div className={styles.art} aria-hidden="true">
           {[0, 1, 2].map((index) => (
@@ -159,7 +160,7 @@ function WelcomeCard({ onStart }: { onStart: () => void }) {
       </article>
       <div className={styles.ghost} aria-hidden="true" />
       <div className={`${styles.ghost} ${styles.faint}`} aria-hidden="true" />
-    </>
+    </div>
   )
 }
 

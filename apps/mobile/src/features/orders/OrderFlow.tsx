@@ -15,7 +15,7 @@ import { DeliveryStep, NextDeliveryStep } from './DateSteps'
 import { FlowFrame } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
 import styles from './OrderFlow.module.css'
-import { nextQuery, useOpenOrder, useOrder } from './orders'
+import { nextQuery, useNextOrder, useOpenOrder, useOrder } from './orders'
 import { PickStep } from './PickStep'
 import { PlacedStep, ReviewStep } from './ReviewStep'
 import { WaitStep } from './WaitStep'
@@ -81,7 +81,9 @@ interface OrderFlowProps {
 function OrderFlow({ onClose, onOpenMeal }: OrderFlowProps) {
   const open = useOpenOrder()
   const { mutate: openOrder } = open
-  const order = useOrder(open.data?.id)
+  // The household's draft shows at once when it's cached, while opening it confirms it (or makes one).
+  const cachedDraftId = useNextOrder().data?.draft?.id
+  const order = useOrder(open.data?.id ?? cachedDraftId)
   const { refetch } = order
   const [step, setStep] = useState<Step>('pick')
 
@@ -102,11 +104,16 @@ function OrderFlow({ onClose, onOpenMeal }: OrderFlowProps) {
     openOrder({ jobId: crypto.randomUUID() })
   }, [openOrder])
 
-  // A discarded draft wins over the copy still on screen.
-  const gone = order.error instanceof ApiError && order.error.status === 404
+  // A discarded draft wins over the copy still on screen, once opening has settled
+  // (it may be making a new draft to replace a cached one that's gone).
+  const gone = !open.isPending && order.error instanceof ApiError && order.error.status === 404
   if (order.shown && !gone) {
-    // The copy on screen stays usable when a refresh fails, with the failure shown above it.
-    const notice = order.isError ? (
+    // The copy on screen stays usable when opening or a refresh fails, with the failure shown above it.
+    const notice = open.isError ? (
+      <Notice action={<button onClick={() => openOrder({ jobId: crypto.randomUUID() })}>Try again</button>}>
+        Couldn't open the order: {open.error.message}
+      </Notice>
+    ) : order.isError ? (
       <Notice action={<button onClick={() => void refetch()}>Try again</button>}>
         Couldn't refresh the order: {order.error.message}
       </Notice>

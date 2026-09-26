@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { usePressIntent } from '../lib/usePressIntent'
 import styles from './Group.module.css'
 import { Icon, type IconName } from './Icon'
 
@@ -71,12 +72,15 @@ interface ListRowProps {
   /** A small mark before the chevron, e.g. the meal's rating. */
   mark?: ReactNode
   onClick: () => void
+  /** Once a press is held briefly, before the tap ends: e.g. to start loading what it opens. */
+  onPressIntent?: () => void
 }
 
 /** A row that opens something, with a picture: e.g. a meal in a list of meals. */
-export function ListRow({ art, overline, label, mark, onClick }: ListRowProps) {
+export function ListRow({ art, overline, label, mark, onClick, onPressIntent }: ListRowProps) {
+  const press = usePressIntent(() => onPressIntent?.())
   return (
-    <button type="button" className={`${styles.listRow} ${styles.pressable}`} onClick={onClick}>
+    <button type="button" className={`${styles.listRow} ${styles.pressable}`} onClick={onClick} {...press}>
       <span className={styles.art}>{art}</span>
       <span className={styles.label}>
         {overline != null && <span className={styles.overline}>{overline}</span>}

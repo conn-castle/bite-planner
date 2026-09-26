@@ -6,6 +6,7 @@ import { SettingsPage } from '../features/settings/SettingsPage'
 import { OrderPage } from '../features/week/OrderPage'
 import { WeekPage } from '../features/week/WeekPage'
 import { Icon, type IconName } from '../ui/Icon'
+import { useWarmCaches } from './warm'
 
 const TABS: { tab: string; label: string; icon: IconName }[] = [
   { tab: 'week', label: 'Orders', icon: 'stack' },
@@ -15,6 +16,7 @@ const TABS: { tab: string; label: string; icon: IconName }[] = [
 
 /** The signed-in app: three tabs, each with its own navigation stack. */
 export function Tabs() {
+  useWarmCaches()
   return (
     <IonTabs>
       <IonRouterOutlet>

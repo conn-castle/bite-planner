@@ -5,6 +5,7 @@ import type { GroceryOrder, ISODate, NextOrder, PlacedOrder } from '../../lib/ap
 import { addDays, formatDate, localDate, toLocalDate } from '../../lib/dates'
 import { useNow } from '../../lib/useNow'
 import { IconButton } from '../../ui/Button'
+import { CardStack } from '../../ui/CardStack'
 import { DateBar, type DayCaption } from '../../ui/DateBar'
 import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
@@ -168,7 +169,7 @@ function Home({ next, placed, today, onStart, onDiscard, discarding, onOpenOrder
   return (
     <>
       <DateBar days={days} selected={shownDay} onChoose={setChosenDay} label="Days" compact caption={caption} />
-      <div className={styles.stack}>
+      <CardStack className={styles.stack}>
         {cards.map((card) =>
           card.kind === 'placed' ? (
             <PlacedCard
@@ -198,7 +199,7 @@ function Home({ next, placed, today, onStart, onDiscard, discarding, onOpenOrder
             <NextCard key="next" next={next} placed={placed} today={today} top={card.top} onStart={onStart} />
           ),
         )}
-      </div>
+      </CardStack>
     </>
   )
 }

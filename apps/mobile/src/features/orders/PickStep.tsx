@@ -1,10 +1,12 @@
 import type { GroceryOrder, Job, MealSummary } from '../../lib/api/types'
 import { haptics } from '../../lib/haptics'
+import { usePressIntent } from '../../lib/usePressIntent'
 import { useNow } from '../../lib/useNow'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
+import { usePrefetchMeal } from '../meals/cached'
 import { formatMinutes } from '../meals/facts'
 import { newestBatchState, suggestions } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
@@ -115,12 +117,14 @@ interface MealCardProps {
  */
 function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
   const minutes = meal.total_time_minutes ?? meal.active_time_minutes
+  const prefetch = usePrefetchMeal()
+  const press = usePressIntent(() => prefetch(meal.id))
   // A meal marked "not for us" is never picked (see edits.ts), so it's never also added.
   const notForUs = meal.rating === 'not_for_us'
 
   return (
     <div className={`${styles.card} ${added ? styles.added : ''} ${notForUs ? styles.notForUs : ''}`}>
-      <button type="button" className={styles.open} onClick={onOpen}>
+      <button type="button" className={styles.open} onClick={onOpen} {...press}>
         <span className={styles.art}>
           <MealArt />
         </span>

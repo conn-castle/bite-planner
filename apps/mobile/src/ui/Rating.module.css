@@ -59,6 +59,7 @@
 
 /* The top bar's button: round like Back, growing sideways into the choices. */
 .button {
+  position: relative;
   display: inline-flex;
   justify-content: flex-end;
 }
@@ -77,7 +78,8 @@
   line-height: 1;
 }
 
-.open .choices {
+/* The choices: a pill that grows from the button's right edge. */
+.pill {
   height: 36px;
   padding: 0 1px;
   border-radius: var(--cc-radius-pill);
@@ -86,21 +88,21 @@
   animation: grow 260ms var(--cc-ease);
 }
 
-.open .choice {
+.pill .choice {
   color: var(--cc-ink);
   font-size: 18px;
 }
 
 /* The chosen one stays in its color, on white against the pill. */
-.open .on {
+.pill .on {
   background: var(--cc-bg);
 }
 
-.open .up.on {
+.pill .up.on {
   color: var(--cc-success);
 }
 
-.open .favorite.on {
+.pill .favorite.on {
   color: var(--cc-accent);
 }
 
@@ -111,8 +113,24 @@
   }
 }
 
+/* Closing: over the button, which is already back, the opening played
+   backwards (its easing too), with nothing inside it moving meanwhile. */
+.closing {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  margin-top: -18px;
+  pointer-events: none;
+  animation: grow 260ms var(--cc-ease) reverse forwards;
+}
+
+.closing .choice {
+  transition: none;
+}
+
+/* Without motion it opens and closes at once (RatingButton skips closing). */
 @media (prefers-reduced-motion: reduce) {
-  .open .choices {
+  .pill {
     animation: none;
   }
 }

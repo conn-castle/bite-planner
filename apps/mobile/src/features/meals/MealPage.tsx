@@ -1,11 +1,12 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import type { Meal } from '../../lib/api/types'
+import type { Meal, MealSummary } from '../../lib/api/types'
 import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { Stepper } from '../../ui/Stepper'
+import { cachedMealSummary } from './cached'
 import styles from './MealPage.module.css'
 import { mealQuery } from './meals'
 import { MealRatingButton } from './MealRating'
@@ -24,16 +25,22 @@ interface MealPageProps {
   rateable?: boolean
 }
 
-/** A full recipe, pushed onto a nav: facts, servings, ingredients scaled to them, and the steps. */
+/**
+ * A full recipe, pushed onto a nav: facts, servings, ingredients scaled to
+ * them, and the steps. The meal's name and facts show at once from a list
+ * already loaded (Home, History, the suggestions) while the rest loads.
+ */
 export function MealPage({ mealId, tab, rateable = false }: MealPageProps) {
   const meal = useQuery(mealQuery(mealId))
+  const queryClient = useQueryClient()
+  const summary = meal.data ?? cachedMealSummary(queryClient, mealId)
   const ratingError = useRatingError([mealId])
 
   return (
     <NavPage
-      title={meal.data?.name ?? 'Recipe'}
+      title={summary?.name ?? 'Recipe'}
       tab={tab}
-      actions={rateable && meal.data ? <MealRatingButton meal={meal.data} /> : undefined}
+      actions={rateable && summary ? <MealRatingButton meal={summary} /> : undefined}
     >
       {rateable && ratingError && <Notice>Couldn't save the rating: {ratingError.message}</Notice>}
       {meal.isError && (
@@ -41,34 +48,44 @@ export function MealPage({ mealId, tab, rateable = false }: MealPageProps) {
           Couldn't load this recipe: {meal.error.message}
         </Notice>
       )}
-      {meal.isPending && !meal.isError && (
-        <div className={styles.loading}>
-          <Skeleton height={44} width="80%" radius={10} />
-          <Skeleton height={20} width="95%" radius={8} />
-          <Skeleton height={84} />
-          <Skeleton height={220} />
-        </div>
+      {summary ? (
+        <article className={styles.recipe}>
+          <RecipeHeader meal={summary} ingredientCount={meal.data?.ingredients.length} />
+          {meal.data ? (
+            <RecipeBody meal={meal.data} />
+          ) : (
+            !meal.isError && (
+              <div className={styles.loading}>
+                <Skeleton height={60} />
+                <Skeleton height={220} />
+              </div>
+            )
+          )}
+        </article>
+      ) : (
+        !meal.isError && (
+          <div className={styles.loading}>
+            <Skeleton height={44} width="80%" radius={10} />
+            <Skeleton height={20} width="95%" radius={8} />
+            <Skeleton height={84} />
+            <Skeleton height={220} />
+          </div>
+        )
       )}
-      {meal.data && <Recipe meal={meal.data} />}
     </NavPage>
   )
 }
 
-function Recipe({ meal }: { meal: Meal }) {
-  const [servings, setServingsState] = useState(() => pickedServings.get(meal.id) ?? meal.servings)
-  const setServings = (value: number) => {
-    pickedServings.set(meal.id, value)
-    setServingsState(value)
-  }
-  const ingredients = meal.ingredients
+/** The name, description, and facts: all but the ingredient count come with the meal's summary. */
+function RecipeHeader({ meal, ingredientCount }: { meal: MealSummary; ingredientCount: number | undefined }) {
   const facts = [
     meal.total_time_minutes != null && { label: 'min total', value: meal.total_time_minutes },
     meal.active_time_minutes != null && { label: 'hands-on', value: meal.active_time_minutes },
-    { label: 'ingredients', value: ingredients.length },
+    { label: 'ingredients', value: ingredientCount },
   ].filter((fact) => fact !== false)
 
   return (
-    <article className={styles.recipe}>
+    <>
       <h1 className={styles.title}>{meal.name}</h1>
       {meal.description && <p className={styles.description}>{meal.description}</p>}
 
@@ -76,11 +93,30 @@ function Recipe({ meal }: { meal: Meal }) {
         {facts.map((fact) => (
           <div key={fact.label} className={styles.fact}>
             <dt>{fact.label}</dt>
-            <dd>{fact.value}</dd>
+            {fact.value != null ? (
+              <dd>{fact.value}</dd>
+            ) : (
+              <dd className={styles.pending}>
+                <Skeleton height={19} width={20} radius={5} />
+              </dd>
+            )}
           </div>
         ))}
       </dl>
+    </>
+  )
+}
 
+function RecipeBody({ meal }: { meal: Meal }) {
+  const [servings, setServingsState] = useState(() => pickedServings.get(meal.id) ?? meal.servings)
+  const setServings = (value: number) => {
+    pickedServings.set(meal.id, value)
+    setServingsState(value)
+  }
+  const ingredients = meal.ingredients
+
+  return (
+    <>
       <div className={styles.servings}>
         <span className={styles.servingsLabel}>
           <Icon name="users" />
@@ -129,6 +165,6 @@ function Recipe({ meal }: { meal: Meal }) {
           </li>
         ))}
       </ol>
-    </article>
+    </>
   )
 }

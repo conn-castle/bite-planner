@@ -6,6 +6,7 @@ import {
   useMutation,
   useMutationState,
   useQuery,
+  useQueryClient,
 } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api/client'
 import { ApiError, isRetryable } from '../../lib/api/errors'
@@ -61,8 +62,15 @@ export function usePlacedOrders(coveringFrom?: ISODate) {
  * being saved applied over it (see edits.ts).
  */
 export function useOrder(orderId: string | undefined) {
+  const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: orderKey(orderId ?? ''),
+    // The draft is usually cached already, as the next order: shown at once while
+    // the order itself loads (a placeholder, never stored as the order).
+    placeholderData: () => {
+      const draft = queryClient.getQueryData<NextOrder>(nextQuery.queryKey)?.draft
+      return draft && draft.id === orderId ? draft : undefined
+    },
     queryFn: orderId ? () => apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${orderId}`) : skipToken,
     refetchInterval: (query) => (query.state.data && hasRunningBatch(query.state.data) ? POLL_MS : false),
     // A 404 (the draft was discarded) won't change on a retry.
@@ -128,7 +136,8 @@ const DISCARD = ['orders', 'discard']
 
 // Changes to an order run one at a time, in the order they were made, so each
 // response (the whole order) includes every earlier change, and later ones
-// still being saved are applied over it. Placing and discarding wait for them.
+// still being saved are applied over it. Opening, placing, and discarding the
+// draft take their turn too.
 const EDITS = { id: 'grocery-order-edits' }
 
 export interface OpenOrder {
@@ -180,6 +189,9 @@ export function registerOrderMutations(queryClient: QueryClient) {
       }
     },
     retry,
+    // Changes made while it opens (the cached draft is on screen) are saved after it,
+    // so its answer (the draft as it was) never lands on top of theirs.
+    scope: EDITS,
     onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
   })
 

@@ -29,13 +29,22 @@
   padding: 0 var(--cc-card-x) 2px;
 }
 
-.card {
+/* The order cards, 12px apart (.hcard), side by side on a wider screen (ui/CardStack). */
+.cards {
+  --gap: 12px;
   margin-top: 12px;
 }
 
-/* All meals: one tinted group per order. */
-.group {
+/* All meals: one group per order, 14px apart (.hgroup). */
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   margin-top: 14px;
+}
+
+/* An order's group, tinted in its color. */
+.group {
   border-radius: 22px;
   background: var(--soft);
   overflow: hidden;
@@ -55,9 +64,10 @@
   color: var(--deep);
 }
 
+/* Two tiles across on a phone (.grid2); more on a wider screen. */
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 10px;
   padding: 12px;
 }

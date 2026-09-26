@@ -1,0 +1,15 @@
+/* spec/mockup.html: .stack. Not in the mockup: wider screens fit two or three
+   columns, each at least --min-card wide (a phone fits only one), so nothing
+   changes on a phone. A row with fewer cards fills the width, and a box
+   narrower than --min-card keeps one column of its own width. */
+.stack {
+  --gap: 14px;
+  --min-card: 340px;
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, max(var(--min-card), (100% - 2 * var(--gap)) / 3)), 1fr)
+  );
+  align-items: start;
+  gap: var(--gap);
+}

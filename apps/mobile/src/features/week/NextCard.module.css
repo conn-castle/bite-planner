@@ -1,5 +1,12 @@
 /* spec/mockup.html: .pass.draft.soon.welcome, .welcome .art, .ghost */
 
+/* The welcome card with the sketched cards under it, 14px apart like the stack's cards. */
+.welcomeGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .welcome {
   padding: 22px 20px 20px;
   border-radius: var(--cc-radius-lg);

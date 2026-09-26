@@ -2,7 +2,9 @@ import { useIonRouter } from '@ionic/react'
 import { useState } from 'react'
 import type { MealSummary, PlacedOrder } from '../../lib/api/types'
 import { addDays, formatDate } from '../../lib/dates'
+import { usePressIntent } from '../../lib/usePressIntent'
 import { MealArt } from '../../ui/art'
+import { CardStack } from '../../ui/CardStack'
 import { Pill } from '../../ui/Chip'
 import { ChoiceChips } from '../../ui/ChoiceChips'
 import { Notice } from '../../ui/Notice'
@@ -12,6 +14,7 @@ import { Page } from '../../ui/Page'
 import { SearchField } from '../../ui/SearchField'
 import { Segmented } from '../../ui/Segmented'
 import { Skeleton } from '../../ui/Skeleton'
+import { usePrefetchMeal } from '../meals/cached'
 import { formatMinutes } from '../meals/facts'
 import { MealRatingMark } from '../meals/MealRating'
 import { MealRow } from '../meals/MealRow'
@@ -100,21 +103,24 @@ interface ByOrderProps {
 
 /** Each order as a card of its meals (spec/mockup.html: .hcard). */
 function ByOrder({ shown, onOpenOrder, onOpenMeal }: ByOrderProps) {
-  return shown.map(({ order, meals }) => (
-    <div key={order.id} className={styles.card}>
-      <OrderListCard
-        number={order.number}
-        overline={`Order ${order.number} · ${formatDate(order.delivery_date, 'monthDay')}`}
-        title={coverage(order)}
-        end={<Pill tone="success">Order placed</Pill>}
-        onOpen={() => onOpenOrder(order)}
-      >
-        {meals.map((meal) => (
-          <MealRow key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal)} rated />
-        ))}
-      </OrderListCard>
-    </div>
-  ))
+  return (
+    <CardStack className={styles.cards}>
+      {shown.map(({ order, meals }) => (
+        <OrderListCard
+          key={order.id}
+          number={order.number}
+          overline={`Order ${order.number} · ${formatDate(order.delivery_date, 'monthDay')}`}
+          title={coverage(order)}
+          end={<Pill tone="success">Order placed</Pill>}
+          onOpen={() => onOpenOrder(order)}
+        >
+          {meals.map((meal) => (
+            <MealRow key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal)} rated />
+          ))}
+        </OrderListCard>
+      ))}
+    </CardStack>
+  )
 }
 
 interface AllMealsProps {
@@ -124,28 +130,34 @@ interface AllMealsProps {
 
 /** Every meal as a tile, grouped by order (spec/mockup.html: .hgroup, .grid2, .gtile). */
 function AllMeals({ shown, onOpenMeal }: AllMealsProps) {
-  return shown.map(({ order, meals }) => (
-    <section key={order.id} className={styles.group} style={orderColors(order.number)}>
-      <h2 className={styles.groupHeader}>
-        <span>Order {order.number}</span>
-        <span>
-          {formatDate(order.delivery_date, 'monthDay')} –{' '}
-          {formatDate(addDays(order.next_delivery_date, -1), 'monthDay')}
-        </span>
-      </h2>
-      <div className={styles.grid}>
-        {meals.map((meal) => (
-          <MealTile key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal)} />
-        ))}
-      </div>
-    </section>
-  ))
+  return (
+    <div className={styles.groups}>
+      {shown.map(({ order, meals }) => (
+        <section key={order.id} className={styles.group} style={orderColors(order.number)}>
+          <h2 className={styles.groupHeader}>
+            <span>Order {order.number}</span>
+            <span>
+              {formatDate(order.delivery_date, 'monthDay')} –{' '}
+              {formatDate(addDays(order.next_delivery_date, -1), 'monthDay')}
+            </span>
+          </h2>
+          <div className={styles.grid}>
+            {meals.map((meal) => (
+              <MealTile key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal)} />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
 }
 
 function MealTile({ meal, onOpen }: { meal: MealSummary; onOpen: () => void }) {
+  const prefetch = usePrefetchMeal()
+  const press = usePressIntent(() => prefetch(meal.id))
   const minutes = meal.total_time_minutes ?? meal.active_time_minutes
   return (
-    <button type="button" className={styles.tile} onClick={onOpen}>
+    <button type="button" className={styles.tile} onClick={onOpen} {...press}>
       <span className={styles.tileArt}>
         <MealArt />
       </span>

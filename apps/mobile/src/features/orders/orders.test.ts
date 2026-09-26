@@ -115,3 +115,41 @@ describe('marking a suggestion "not for us"', () => {
     ])
   })
 })
+
+describe('opening the draft', () => {
+  it('is saved before changes made while it opens, so its answer never replaces theirs', async () => {
+    const calls: string[] = []
+    const opened: GroceryOrder = {
+      ...draft([]),
+      jobs: [
+        {
+          id: 'job',
+          kind: 'generate_meals',
+          status: 'succeeded',
+          error: null,
+          requested_by: { user_id: 'sam', name: 'Sam' },
+          created_at: '2026-09-24T09:00:00Z',
+          meals: [],
+        },
+      ],
+    }
+    const picked = { ...opened, meal_ids: ['soup'] }
+    request.mockImplementation(async (method, path) => {
+      calls.push(`${method} ${path}`)
+      // Opening is slow; the pick would finish first if it didn't wait.
+      if (method === 'POST') await new Promise((resolve) => setTimeout(resolve, 20))
+      return method === 'POST' ? opened : picked
+    })
+    const open = new MutationObserver<GroceryOrder, Error, { jobId: string }>(queryClient, {
+      mutationKey: ['orders', 'open'],
+    }).mutate({ jobId: 'job' })
+    const pick = new MutationObserver<GroceryOrder, Error, { orderId: string; mealId: string; picked: boolean }>(
+      queryClient,
+      { mutationKey: ['orders', 'set-meal'] },
+    ).mutate({ orderId: 'draft', mealId: 'soup', picked: true })
+    await Promise.all([open, pick])
+
+    expect(calls).toEqual(['POST /v1/grocery-orders', 'PUT /v1/grocery-orders/draft/meals/soup'])
+    expect(queryClient.getQueryData<GroceryOrder>(queryKeys.order('draft'))?.meal_ids).toEqual(['soup'])
+  })
+})
