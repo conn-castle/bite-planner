@@ -4,10 +4,20 @@
 export type ISODate = string
 /** A UTC timestamp: "2026-09-24T20:41:00Z". */
 export type ISODateTime = string
+/** A clock time with no date or time zone: "08:00:00". */
+export type ClockTime = string
 
-export interface Household {
+export interface HouseholdRef {
   id: string
   name: string
+}
+
+/** Settings of one member, just for them. */
+export interface PersonalSettings {
+  /** When their daily reminder goes out, in `time_zone`. */
+  notification_time: ClockTime
+  /** The phone's IANA zone; null until the app first reports it. */
+  time_zone: string | null
 }
 
 export interface Me {
@@ -16,7 +26,33 @@ export interface Me {
   name: string | null
   /** Whether the account belongs to a household (`household` is set). */
   member: boolean
-  household: Household | null
+  household: HouseholdRef | null
+  /** Null when not in a household. */
+  settings: PersonalSettings | null
+}
+
+export interface HouseholdMember {
+  user_id: string
+  name: string | null
+  /** For when there's no name. */
+  email: string | null
+}
+
+/** The household's settings, shared by everyone in it (`GET /v1/household`). */
+export interface HouseholdSettings {
+  /** Days before an order's target date that it's decided by: 1–7. */
+  decide_by_offset_days: number
+  /** Days before the decide-by date that reminders start: 0–7 (0: on the decide-by day). */
+  reminder_lead_days: number
+  /** The servings each picked meal starts at: 1–12. */
+  default_servings: number
+}
+
+export interface Household extends HouseholdSettings {
+  id: string
+  name: string
+  /** In the order they were invited. */
+  members: HouseholdMember[]
 }
 
 export interface Member {

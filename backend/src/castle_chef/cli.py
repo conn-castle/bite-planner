@@ -135,8 +135,8 @@ def household_invite(
 def household_members(household_name: Annotated[str, typer.Argument(metavar="household")]) -> None:
     """List a household's members: email and name."""
     with household_session() as session:
-        for email, name in household.members(session, household_name):
-            typer.echo(f"{email}\t{name}")
+        for person in household.members(session, household_name):
+            typer.echo(f"{person.email}\t{person.name}")
 
 
 @household_app.command("remove")

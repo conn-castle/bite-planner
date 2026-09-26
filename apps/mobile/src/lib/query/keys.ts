@@ -13,4 +13,6 @@ export const queryKeys = {
   orders: ['grocery-order'],
   order: (orderId: string) => ['grocery-order', orderId],
   meal: (mealId: string) => ['meal', mealId],
+  /** The household's settings and members. */
+  household: ['household'],
 } as const

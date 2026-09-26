@@ -327,6 +327,7 @@ def test_me_reports_membership_household_and_account(client: TestClient) -> None
         "name": "Mom",
         "member": True,
         "household": {"id": str(CASTLE), "name": "Conn Castle"},
+        "settings": {"notification_time": "08:00:00", "time_zone": None},
     }
     assert ok(client.get("/v1/me", headers=as_user(NEIGHBOR)))["household"] == {
         "id": str(OTHER_HOUSE),
@@ -337,10 +338,11 @@ def test_me_reports_membership_household_and_account(client: TestClient) -> None
 def test_me_reports_accounts_without_a_household_as_non_members(client: TestClient) -> None:
     me = ok(client.get("/v1/me", headers=as_user(STRANGER)))
 
-    assert (me["user_id"], me["email"], me["member"], me["household"]) == (
+    assert (me["user_id"], me["email"], me["member"], me["household"], me["settings"]) == (
         str(STRANGER),
         "stranger@example.com",
         False,
+        None,
         None,
     )
 
@@ -381,6 +383,9 @@ MEMBER_ENDPOINTS = [
     ("put", "/v1/meals/{meal}/rating", {"rating": "up"}),
     ("delete", "/v1/meals/{meal}/rating", None),
     ("post", "/v1/logs", {"device": {}, "entries": []}),
+    ("get", "/v1/household", None),
+    ("patch", "/v1/household", {"reminder_lead_days": 3}),
+    ("patch", "/v1/me/settings", {"notification_time": "07:30"}),
 ]
 
 
@@ -547,7 +552,18 @@ def test_endpoints_that_need_today_require_a_known_time_zone(
 @pytest.mark.parametrize("zone", [None, UNKNOWN_ZONE], ids=["missing", "unknown"])
 @pytest.mark.parametrize(
     "endpoint",
-    ["me", "logs", "meal", "rate", "clear rating", "discard", "jobs"],
+    [
+        "me",
+        "logs",
+        "meal",
+        "rate",
+        "clear rating",
+        "discard",
+        "jobs",
+        "household",
+        "household settings",
+        "personal settings",
+    ],
     ids=lambda endpoint: endpoint,
 )
 def test_endpoints_that_do_not_need_today_ignore_the_time_zone(
@@ -573,6 +589,17 @@ def test_endpoints_that_do_not_need_today_ignore_the_time_zone(
             204,
         ),
         "discard": (lambda: client.delete(f"/v1/grocery-orders/{order_id}", headers=headers), 204),
+        "household": (lambda: client.get("/v1/household", headers=headers), 200),
+        "household settings": (
+            lambda: client.patch("/v1/household", headers=headers, json={"default_servings": 2}),
+            200,
+        ),
+        "personal settings": (
+            lambda: client.patch(
+                "/v1/me/settings", headers=headers, json={"notification_time": "07:30"}
+            ),
+            200,
+        ),
         "jobs": (
             lambda: client.post(
                 f"/v1/grocery-orders/{order_id}/jobs",
@@ -1070,15 +1097,155 @@ def test_the_next_order_is_decided_by_its_target_less_the_households_offset(
     )
 
     # A household that decides three days ahead.
-    session.execute(
-        text("UPDATE household SET decide_by_offset_days = 3 WHERE id = :id"), {"id": CASTLE}
-    )
-    session.commit()
+    ok(client.patch("/v1/household", headers=as_user(DAD), json={"decide_by_offset_days": 3}))
     decide_by = (target - timedelta(days=3)).isoformat()
     assert next_order(client)["decide_by_date"] == decide_by
     assert get_order(client, draft["id"])["decide_by_date"] == decide_by
     # The first order had nothing before it to decide by.
     assert get_order(client, first["id"])["decide_by_date"] is None
+
+
+# Settings.
+
+
+def household_settings(client: TestClient, user: UUID = MOM) -> dict[str, Any]:
+    return ok(client.get("/v1/household", headers=as_user(user)))
+
+
+def patch_household(client: TestClient, body: dict[str, Any], user: UUID = MOM) -> Response:
+    return client.patch("/v1/household", headers=as_user(user), json=body)
+
+
+def patch_personal(client: TestClient, body: dict[str, Any], user: UUID = MOM) -> Response:
+    return client.patch("/v1/me/settings", headers=as_user(user), json=body)
+
+
+def test_a_household_starts_with_the_default_settings_and_lists_its_members(
+    client: TestClient, session: Session
+) -> None:
+    # Dad was invited first.
+    session.execute(
+        text(
+            "UPDATE household_member SET invited_at = now() - interval '1 day' WHERE user_id = :id"
+        ),
+        {"id": DAD},
+    )
+    session.commit()
+
+    assert household_settings(client) == {
+        "id": str(CASTLE),
+        "name": "Conn Castle",
+        "decide_by_offset_days": 1,
+        "reminder_lead_days": 2,
+        "default_servings": 4,
+        "members": [
+            {"user_id": str(DAD), "name": "Dad", "email": "dad@example.com"},
+            {"user_id": str(MOM), "name": "Mom", "email": "mom@example.com"},
+        ],
+    }
+    assert [m["name"] for m in household_settings(client, NEIGHBOR)["members"]] == ["Neighbor"]
+
+
+def test_household_settings_are_shared_and_only_those_sent_change(client: TestClient) -> None:
+    changed = ok(patch_household(client, {"reminder_lead_days": 0}))
+    # Dad changing another setting meanwhile doesn't undo Mom's.
+    ok(patch_household(client, {"decide_by_offset_days": 7, "default_servings": 12}, DAD))
+
+    seen_by_mom = household_settings(client)
+    assert changed["reminder_lead_days"] == 0
+    assert (
+        seen_by_mom["decide_by_offset_days"],
+        seen_by_mom["reminder_lead_days"],
+        seen_by_mom["default_servings"],
+    ) == (7, 0, 12)
+    assert household_settings(client, DAD) == seen_by_mom
+    # Another household's are its own.
+    neighbors = household_settings(client, NEIGHBOR)
+    assert (neighbors["decide_by_offset_days"], neighbors["reminder_lead_days"]) == (1, 2)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"reminder_lead_days": None},
+        {"decide_by_offset_days": 0},
+        {"decide_by_offset_days": 8},
+        {"reminder_lead_days": -1},
+        {"reminder_lead_days": 8},
+        {"default_servings": 0},
+        {"default_servings": 13},
+        {"name": "Renamed"},
+    ],
+    ids=[
+        "nothing",
+        "null",
+        "offset 0",
+        "offset 8",
+        "lead -1",
+        "lead 8",
+        "servings 0",
+        "servings 13",
+        "not a setting",
+    ],
+)
+def test_household_settings_out_of_range_are_refused(
+    client: TestClient, body: dict[str, Any]
+) -> None:
+    before = household_settings(client)
+
+    detail(patch_household(client, body), 422)
+
+    assert household_settings(client) == before
+
+
+def test_members_set_their_own_notification_time_and_time_zone(client: TestClient) -> None:
+    assert ok(patch_personal(client, {"notification_time": "06:45"})) == {
+        "notification_time": "06:45:00",
+        "time_zone": None,
+    }
+    # The zone is set on its own (the app reports it), leaving the time.
+    assert ok(patch_personal(client, {"time_zone": FAR_EAST})) == {
+        "notification_time": "06:45:00",
+        "time_zone": FAR_EAST,
+    }
+
+    me = ok(client.get("/v1/me", headers=as_user(MOM)))
+    dad = ok(client.get("/v1/me", headers=as_user(DAD)))
+    assert me["settings"] == {"notification_time": "06:45:00", "time_zone": FAR_EAST}
+    assert dad["settings"] == {"notification_time": "08:00:00", "time_zone": None}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"time_zone": None},
+        {"time_zone": UNKNOWN_ZONE},
+        {"time_zone": "../etc/passwd"},
+        {"notification_time": "07:30:15"},
+        {"notification_time": "07:30+02:00"},
+        {"notification_time": "25:00"},
+    ],
+    ids=[
+        "nothing",
+        "null",
+        "unknown zone",
+        "not a zone name",
+        "seconds",
+        "with a zone",
+        "not a time",
+    ],
+)
+def test_personal_settings_that_are_not_valid_are_refused(
+    client: TestClient, body: dict[str, Any]
+) -> None:
+    detail(patch_personal(client, body), 422)
+
+    assert ok(client.get("/v1/me", headers=as_user(MOM)))["settings"] == {
+        "notification_time": "08:00:00",
+        "time_zone": None,
+    }
 
 
 def test_placed_orders_are_listed_from_the_day_they_cover(client: TestClient) -> None:

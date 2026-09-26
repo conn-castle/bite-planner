@@ -3,12 +3,12 @@ Web Adapter) in production, and with `uvicorn castle_chef.api:app` locally."""
 
 import json
 import logging
-import time
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from functools import lru_cache
-from typing import Annotated, Any
+from time import monotonic
+from typing import Annotated, Any, Self
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -16,10 +16,11 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import bindparam, text
 from sqlmodel import Session, col, select
 
+from castle_chef import household as households
 from castle_chef import log as logging_config
 from castle_chef import orders, ratings
 from castle_chef.auth import AuthError, AuthUnavailable, AuthVerifier, NeonAuthVerifier, Principal
@@ -35,6 +36,9 @@ from castle_chef.jobs import (
     submit_generate_meals,
 )
 from castle_chef.models import (
+    DECIDE_BY_OFFSET_DAYS,
+    DEFAULT_SERVINGS,
+    REMINDER_LEAD_DAYS,
     GroceryOrder,
     GroceryOrderStatus,
     Household,
@@ -147,9 +151,35 @@ class MealOut(MealSummaryOut):
     ingredients: list[IngredientOut]
 
 
-class HouseholdOut(BaseModel):
+class HouseholdRefOut(BaseModel):
     id: UUID
     name: str
+
+
+class HouseholdMemberOut(BaseModel):
+    user_id: UUID
+    name: str | None
+    # For when there's no name.
+    email: str | None
+
+
+class HouseholdOut(BaseModel):
+    """The household's settings, shared by everyone in it, and who's in it."""
+
+    id: UUID
+    name: str
+    decide_by_offset_days: int
+    reminder_lead_days: int
+    default_servings: int
+    # In the order they were invited.
+    members: list[HouseholdMemberOut]
+
+
+class PersonalSettingsOut(BaseModel):
+    # A clock time in `time_zone`.
+    notification_time: time
+    # The phone's IANA zone; none until the app first reports it.
+    time_zone: str | None
 
 
 class MeOut(BaseModel):
@@ -158,7 +188,64 @@ class MeOut(BaseModel):
     name: str | None
     # Whether the account is in a household (the API serves only those).
     member: bool
-    household: HouseholdOut | None
+    household: HouseholdRefOut | None
+    # None when not in a household.
+    settings: PersonalSettingsOut | None
+
+
+def zone(name: str) -> ZoneInfo:
+    """The IANA time zone with this name; ValueError if there's none."""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ValueError(f"Unknown time zone {name!r}.") from error
+
+
+class PartialUpdate(BaseModel):
+    """A PATCH body: only the fields sent are changed. At least one must be sent,
+    and none can be null (every setting has a value)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def some_values_sent(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("Send at least one setting to change.")
+        nulls = sorted(name for name in self.model_fields_set if getattr(self, name) is None)
+        if nulls:
+            raise ValueError(f"{', '.join(nulls)} can't be null.")
+        return self
+
+
+class HouseholdSettingsIn(PartialUpdate):
+    decide_by_offset_days: int | None = Field(
+        default=None, ge=DECIDE_BY_OFFSET_DAYS.low, le=DECIDE_BY_OFFSET_DAYS.high
+    )
+    reminder_lead_days: int | None = Field(
+        default=None, ge=REMINDER_LEAD_DAYS.low, le=REMINDER_LEAD_DAYS.high
+    )
+    default_servings: int | None = Field(
+        default=None, ge=DEFAULT_SERVINGS.low, le=DEFAULT_SERVINGS.high
+    )
+
+
+class PersonalSettingsIn(PartialUpdate):
+    notification_time: time | None = None
+    time_zone: str | None = None
+
+    @field_validator("notification_time")
+    @classmethod
+    def clock_minute(cls, value: time | None) -> time | None:
+        if value is not None and (value.second or value.microsecond or value.tzinfo):
+            raise ValueError("A notification time is hours and minutes, with no time zone.")
+        return value
+
+    @field_validator("time_zone")
+    @classmethod
+    def known_zone(cls, value: str | None) -> str | None:
+        if value is not None:
+            zone(value)
+        return value
 
 
 class JobIn(BaseModel):
@@ -227,12 +314,10 @@ def today(time_zone: Annotated[str | None, Header(alias="Time-Zone")] = None) ->
             status.HTTP_400_BAD_REQUEST, "Send the phone's time zone in the Time-Zone header."
         )
     try:
-        zone = ZoneInfo(time_zone)
-    except (ZoneInfoNotFoundError, ValueError) as error:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, f"Unknown time zone {time_zone!r}."
-        ) from error
-    return datetime.now(zone).date()
+        phone_zone = zone(time_zone)
+    except ValueError as error:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
+    return datetime.now(phone_zone).date()
 
 
 def names(session: Session, user_ids: set[UUID]) -> dict[UUID, str | None]:
@@ -406,6 +491,26 @@ def account(session: Session, user_id: UUID) -> tuple[str | None, str | None]:
     return (row.email, row.name) if row else (None, None)
 
 
+def personal_settings_out(membership: HouseholdMember) -> PersonalSettingsOut:
+    return PersonalSettingsOut(
+        notification_time=membership.notification_time, time_zone=membership.time_zone
+    )
+
+
+def household_out(session: Session, household: Household) -> HouseholdOut:
+    return HouseholdOut(
+        id=household.id,
+        name=household.name,
+        decide_by_offset_days=household.decide_by_offset_days,
+        reminder_lead_days=household.reminder_lead_days,
+        default_servings=household.default_servings,
+        members=[
+            HouseholdMemberOut(user_id=person.user_id, name=person.name, email=person.email)
+            for person in households.members_of(session, household.id)
+        ],
+    )
+
+
 # The app.
 
 
@@ -417,7 +522,7 @@ def create_app() -> FastAPI:
     api.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "Time-Zone"],
     )
 
@@ -425,7 +530,7 @@ def create_app() -> FastAPI:
     async def log_request(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        started = time.monotonic()
+        started = monotonic()
         response = await call_next(request)
         # The route's template, so the line carries no ids.
         route = getattr(request.scope.get("route"), "path", None)
@@ -435,7 +540,7 @@ def create_app() -> FastAPI:
                 "method": request.method,
                 "route": route,
                 "status": response.status_code,
-                "ms": round((time.monotonic() - started) * 1000),
+                "ms": round((monotonic() - started) * 1000),
             },
         )
         return response
@@ -464,8 +569,56 @@ def create_app() -> FastAPI:
             email=email,
             name=name,
             member=household is not None,
-            household=HouseholdOut(id=household.id, name=household.name) if household else None,
+            household=HouseholdRefOut(id=household.id, name=household.name) if household else None,
+            settings=(
+                personal_settings_out(session.get_one(HouseholdMember, principal.user_id))
+                if household
+                else None
+            ),
         )
+
+    @api.patch("/v1/me/settings")
+    def update_personal_settings(
+        body: PersonalSettingsIn,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> PersonalSettingsOut:
+        """Change the caller's own settings; only the fields sent."""
+        membership = session.get_one(HouseholdMember, caller.user_id)
+        if body.notification_time is not None:
+            membership.notification_time = body.notification_time
+        if body.time_zone is not None:
+            membership.time_zone = body.time_zone
+        session.commit()
+        log.info("settings.personal_updated", extra={"fields": sorted(body.model_fields_set)})
+        return personal_settings_out(membership)
+
+    @api.get("/v1/household")
+    def get_household(
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> HouseholdOut:
+        """The household's settings and members."""
+        return household_out(session, session.get_one(Household, caller.household_id))
+
+    @api.patch("/v1/household")
+    def update_household(
+        body: HouseholdSettingsIn,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> HouseholdOut:
+        """Change the household's settings; only the fields sent, so members changing
+        different settings at once don't undo each other."""
+        household = session.get_one(Household, caller.household_id)
+        if body.decide_by_offset_days is not None:
+            household.decide_by_offset_days = body.decide_by_offset_days
+        if body.reminder_lead_days is not None:
+            household.reminder_lead_days = body.reminder_lead_days
+        if body.default_servings is not None:
+            household.default_servings = body.default_servings
+        session.commit()
+        log.info("settings.household_updated", extra={"fields": sorted(body.model_fields_set)})
+        return household_out(session, household)
 
     def order_error(_: Request, error: Exception) -> JSONResponse:
         return JSONResponse({"detail": str(error)}, status_code=ORDER_ERRORS[type(error)])

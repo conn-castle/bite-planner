@@ -1,4 +1,5 @@
 import type { GroceryOrder, OrderDates } from '../../lib/api/types'
+import { isRecord } from '../../lib/isRecord'
 
 /**
  * Changes to an order that are still being saved. The cached order is only
@@ -30,8 +31,6 @@ export interface SetNotForUs {
 }
 
 export type OrderEdit = SetMeal | SetDates | SetNotForUs
-
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
 const isDate = (value: unknown): value is string | null => value === null || typeof value === 'string'
 

@@ -1,17 +1,156 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import type { Household, PersonalSettings } from '../../lib/api/types'
 import { errorFields, logger } from '../../lib/log'
 import { Group, Row } from '../../ui/Group'
+import { Notice } from '../../ui/Notice'
 import { Page } from '../../ui/Page'
+import { Skeleton } from '../../ui/Skeleton'
+import { Stepper } from '../../ui/Stepper'
+import { TimeField } from '../../ui/TimeField'
+import { plural } from '../orders/format'
 import { signOut, useSession } from '../session/session'
 import styles from './SettingsPage.module.css'
+import {
+  useChangeHousehold,
+  useChangePersonal,
+  useHousehold,
+  useHouseholdError,
+  usePersonalError,
+  usePersonalSettings,
+} from './settings'
 
 export function SettingsPage() {
+  const { data: session } = useSession()
+  const household = useHousehold()
+  const personal = usePersonalSettings()
+  const name = session?.household?.name
+
+  return (
+    <Page title="Settings" overline={name ? `You · ${name}` : undefined}>
+      {household.shown ? (
+        <HouseholdGroup household={household.shown} userId={session?.user.id} />
+      ) : household.isError ? (
+        <Group title="Household">
+          <Row label="Couldn't load the household's settings" sub={household.error.message} />
+        </Group>
+      ) : (
+        <Group title="Household">
+          <Row label={<Skeleton height={16} width="60%" />} />
+        </Group>
+      )}
+      {personal && <PersonalGroup settings={personal} />}
+      <AccountGroup />
+    </Page>
+  )
+}
+
+function HouseholdGroup({ household, userId }: { household: Household; userId: string | undefined }) {
+  const change = useChangeHousehold()
+  const error = useHouseholdError()
+  const { decide_by_offset_days: offset, reminder_lead_days: lead, default_servings: servings } = household
+  const members = household.members.map((member) =>
+    member.user_id === userId ? 'You' : (member.name ?? member.email ?? 'Someone'),
+  )
+
+  return (
+    <>
+      <Group
+        title="Household"
+        footerIcon="users"
+        footer="Shared by everyone in the household. Changing the decide-by or reminder days moves them for everyone."
+      >
+        <Row
+          label="Decide by"
+          sub={`${plural(offset, 'day')} before delivery`}
+          detail={
+            <Stepper
+              inRow
+              value={offset}
+              min={1}
+              max={7}
+              label="Days before delivery"
+              onChange={(value) => change.mutate({ decide_by_offset_days: value })}
+            />
+          }
+        />
+        <Row
+          label="Reminders start"
+          sub={lead === 0 ? 'On the decide-by day' : `${plural(lead, 'day')} before decide-by`}
+          detail={
+            <Stepper
+              inRow
+              value={lead}
+              min={0}
+              max={7}
+              label="Days before decide-by"
+              onChange={(value) => change.mutate({ reminder_lead_days: value })}
+            />
+          }
+        />
+        <Row
+          label="Default servings"
+          sub="Each meal you pick starts at this"
+          detail={
+            <Stepper
+              inRow
+              value={servings}
+              min={1}
+              max={12}
+              label="Servings"
+              onChange={(value) => change.mutate({ default_servings: value })}
+            />
+          }
+        />
+        <Row label="Members" detail={members.join(', ')} />
+      </Group>
+      {error && (
+        <div className={styles.notice}>
+          <Notice>Couldn't save the change: {error.message}</Notice>
+        </div>
+      )}
+    </>
+  )
+}
+
+function PersonalGroup({ settings }: { settings: PersonalSettings }) {
+  const change = useChangePersonal()
+  const error = usePersonalError()
+
+  return (
+    <>
+      <Group
+        title="Personal"
+        footerIcon="bell"
+        footer="Just for you. Everyone else in the household gets the same reminders at their own time."
+      >
+        <Row
+          label="Notification time"
+          sub="Your daily reminder until the order is placed"
+          detail={
+            <TimeField
+              // "08:00:00" from the server; the field shows hours and minutes.
+              value={settings.notification_time.slice(0, 5)}
+              label="Notification time"
+              onChange={(time) => change.mutate({ notification_time: time })}
+            />
+          }
+        />
+      </Group>
+      {error && (
+        <div className={styles.notice}>
+          <Notice>Couldn't save the change: {error.message}</Notice>
+        </div>
+      )}
+    </>
+  )
+}
+
+function AccountGroup() {
   const queryClient = useQueryClient()
   const { data: session } = useSession()
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
-  const household = session?.household?.name
 
   async function onSignOut() {
     setSigningOut(true)
@@ -26,13 +165,7 @@ export function SettingsPage() {
   }
 
   return (
-    <Page title="Settings" overline={household ? `You · ${household}` : undefined}>
-      {household && (
-        <Group title="Household">
-          <Row label={household} />
-        </Group>
-      )}
-
+    <>
       <Group title="Account" footer={signOutError ? `Couldn't sign out: ${signOutError}` : undefined}>
         {session && (
           <Row
@@ -42,10 +175,9 @@ export function SettingsPage() {
         )}
         <Row label="Sign out" tone="danger" onClick={() => void onSignOut()} disabled={signingOut} />
       </Group>
-
       <p className={styles.version}>
         Castle Chef {__APP_VERSION__} · {__APP_RELEASE__}
       </p>
-    </Page>
+    </>
   )
 }

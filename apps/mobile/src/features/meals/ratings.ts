@@ -2,6 +2,7 @@ import { type QueryClient, useMutation, useMutationState } from '@tanstack/react
 import { apiRequest } from '../../lib/api/client'
 import { isRetryable } from '../../lib/api/errors'
 import type { Meal, MealRating, MealSummary, PlacedOrder } from '../../lib/api/types'
+import { isRecord } from '../../lib/isRecord'
 import { queryKeys } from '../../lib/query/keys'
 
 /**
@@ -26,8 +27,6 @@ export interface RateMeal {
 }
 
 const RATING_VALUES: readonly MealRating[] = ['not_for_us', 'down', 'up', 'favorite']
-
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
 /** Whether a mutation's variables are a rating (they are stored untyped). */
 export function isRateMeal(value: unknown): value is RateMeal {

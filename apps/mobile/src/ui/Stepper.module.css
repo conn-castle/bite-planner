@@ -1,4 +1,4 @@
-/* spec/mockup.html: .stepper */
+/* spec/mockup.html: .stepper, .row .stepper */
 .stepper {
   display: inline-flex;
   align-items: center;
@@ -7,6 +7,8 @@
   border-radius: var(--cc-radius-pill);
   background: var(--cc-bg);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  /* Not the color of what it sits in (e.g. a row's quieter value). */
+  color: var(--cc-ink);
 }
 
 .step {
@@ -57,4 +59,19 @@
     opacity: 0.2;
     transform: translateY(4px) scale(0.96);
   }
+}
+
+.inRow {
+  background: var(--cc-fill);
+  box-shadow: none;
+}
+
+.inRow .step {
+  width: 30px;
+  height: 30px;
+}
+
+.inRow .value {
+  min-width: 20px;
+  font-size: 15px;
 }

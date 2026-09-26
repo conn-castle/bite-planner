@@ -3,7 +3,9 @@
   display: flex;
   padding: 2px;
   border-radius: 11px;
-  background: var(--cc-fill-strong);
+  /* A tint of ink, not the mockup's --cc-fill-strong, which all but vanishes on the
+     warm page behind the tab screens (spec/README.md). */
+  background: color-mix(in srgb, var(--cc-ink) 8%, transparent);
 }
 
 .segment {

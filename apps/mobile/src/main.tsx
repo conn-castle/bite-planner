@@ -18,6 +18,7 @@ import { App } from './app/App'
 import { ErrorBoundary } from './app/ErrorBoundary'
 import { registerRatingMutations } from './features/meals/ratings'
 import { registerOrderMutations } from './features/orders/orders'
+import { registerSettingsMutations } from './features/settings/settings'
 import { logger, logUncaughtErrors } from './lib/log'
 import { queryClient } from './lib/query/queryClient'
 
@@ -29,6 +30,7 @@ logger.info('app.start', {
 })
 registerOrderMutations(queryClient)
 registerRatingMutations(queryClient)
+registerSettingsMutations(queryClient)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -4,3 +4,7 @@
   font-size: 13px;
   color: var(--cc-ink-3);
 }
+
+.notice {
+  margin-top: 10px;
+}

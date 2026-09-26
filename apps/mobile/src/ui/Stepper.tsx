@@ -8,10 +8,12 @@ interface StepperProps {
   onChange: (value: number) => void
   /** Names the value for assistive technology, e.g. "Servings". */
   label: string
+  /** In a row of a group: on the fill, a little smaller. */
+  inRow?: boolean
 }
 
 /** A − value + control. The value animates as it changes. */
-export function Stepper({ value, min, max, onChange, label }: StepperProps) {
+export function Stepper({ value, min, max, onChange, label, inRow }: StepperProps) {
   function step(delta: number) {
     const next = Math.min(max, Math.max(min, value + delta))
     if (next === value) return
@@ -20,7 +22,7 @@ export function Stepper({ value, min, max, onChange, label }: StepperProps) {
   }
 
   return (
-    <div className={styles.stepper} role="group" aria-label={label}>
+    <div className={`${styles.stepper} ${inRow ? styles.inRow : ''}`} role="group" aria-label={label}>
       <button
         type="button"
         className={`${styles.step} cc-hit`}

@@ -9,15 +9,17 @@ function baseUrl(): string {
   return url.replace(/\/+$/, '')
 }
 
-// The phone's IANA time zone (e.g. `America/New_York`), sent with every request:
-// the API uses it wherever it needs "today" (e.g. the earliest delivery date).
-function timeZone(): string {
+/**
+ * The phone's IANA time zone (e.g. `America/New_York`), sent with every request:
+ * the API uses it wherever it needs "today" (e.g. the earliest delivery date).
+ */
+export function phoneTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
 }
 
 /** Sends a request with a fresh token; on 401 (e.g. an expired token), retries once. */
 export async function apiRequest<T>(
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -28,7 +30,7 @@ export async function apiRequest<T>(
       method,
       headers: {
         Authorization: `Bearer ${token}`,
-        'Time-Zone': timeZone(),
+        'Time-Zone': phoneTimeZone(),
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),

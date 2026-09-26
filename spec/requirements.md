@@ -15,6 +15,19 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 - [x] Delivery dates that overlap or leave a gap with the previous order are allowed.
 - [x] Orders cannot be edited once placed.
 
+## Ordering flow
+
+The flow being built toward, one piece at a time:
+
+1. Meal ideas are generated, and while they generate the user is asked to rate recent meals.
+2. The user picks meals.
+3. On one view, the user chooses the dates and reviews the picked meals, each with its servings shown and editable (− and + around the number).
+4. The backend generates the shopping list, asynchronously (it takes minutes). When it's done, the user sees every item to be shopped for, and can remove items or change their quantities.
+5. The user submits the order, it's placed, and the confirmation shows the store order(s) it's associated with.
+
+- [ ] The dates, the picked meals, and their servings are on one view (step 3).
+- [ ] Each picked meal's servings are stored in the order. A meal starts at the household's default servings and can be changed per meal.
+
 ## Draft order
 
 - [ ] An unplaced order is a household draft: its suggestions, picks, and dismissals are kept when the flow is closed.
@@ -47,14 +60,15 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 
 ## Shopping list
 
-- [ ] Before an order is placed, its shopping list is generated from the chosen meals (mocked for now).
-- [ ] The user can remove items from the shopping list, such as things they already have.
+- [ ] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings, asynchronously (it takes minutes); the user sees it when it's done.
+- [ ] The user can remove items from the shopping list, such as things they already have, and change their quantities.
 
 ## Placing and status
 
 - [x] Placing an order calls the API, which saves the order and its status in the database.
 - [x] The call to the grocery service is a stub that does nothing and returns success.
 - [x] An order's status is saved and shown; for now it is always "order placed".
+- [ ] The confirmation after placing shows the store order(s) the order is associated with.
 
 ## Calendar and tasks
 
@@ -67,16 +81,23 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 - [ ] Reminders to order start a set number of days before the decide-by date and go out daily at each member's notification time until the order is placed, including after the decide-by date.
 - [ ] Reminders go to every member, including while another member is ordering.
 
+## Household
+
+- [x] A person is in only one household.
+- [x] Settings lists the household's members by name.
+- [ ] Anyone in a household can add and remove its members. Not scheduled yet; until then, the admin command does it.
+
 ## Settings
 
 Household settings (shared by all members):
 
-- [ ] Decide-by offset: days before the target date, default 1.
-- [ ] Reminder lead: days before the decide-by date that reminders start, default 2.
+- [x] Decide-by offset: days before the target date, default 1.
+- [x] Reminder lead: days before the decide-by date that reminders start, default 2.
+- [x] Default servings: the servings each picked meal starts at, default 4.
 
 Personal settings:
 
-- [ ] Notification time, in the time zone of the member's phone (detected automatically, never shown or asked for).
+- [x] Notification time, in the time zone of the member's phone (detected automatically, never shown or asked for).
 
 ## Views
 

@@ -1,7 +1,8 @@
 """Database tables. Alembic migrations are generated from these models."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from enum import StrEnum
+from typing import NamedTuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import CheckConstraint, DateTime, Enum, Index, func, text
@@ -203,19 +204,47 @@ class MealPreference(TimestampMixin, SQLModel, table=True):
     )
 
 
+class Range(NamedTuple):
+    low: int
+    high: int
+
+
+# The household settings' ranges, checked by the database and the API alike.
+# The earliest delivery is tomorrow, so the decision comes at least a day before.
+DECIDE_BY_OFFSET_DAYS = Range(1, 7)
+REMINDER_LEAD_DAYS = Range(0, 7)  # 0: on the decide-by day
+DEFAULT_SERVINGS = Range(1, 12)
+
+
+def _between(column: str, allowed: Range) -> str:
+    return f"{column} BETWEEN {allowed.low} AND {allowed.high}"
+
+
 class Household(TimestampMixin, SQLModel, table=True):
     """A group of people who share orders and meals. Each household sees only its own."""
 
     __tablename__ = "household"
     __table_args__ = (
-        # The earliest delivery is tomorrow, so the decision comes at least a day before.
-        CheckConstraint("decide_by_offset_days >= 1", name="household_decide_by_offset_min"),
+        CheckConstraint(
+            _between("decide_by_offset_days", DECIDE_BY_OFFSET_DAYS),
+            name="household_decide_by_offset_range",
+        ),
+        CheckConstraint(
+            _between("reminder_lead_days", REMINDER_LEAD_DAYS), name="household_reminder_lead_range"
+        ),
+        CheckConstraint(
+            _between("default_servings", DEFAULT_SERVINGS), name="household_default_servings_range"
+        ),
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
     # Days before an order's target date that the household decides by.
     decide_by_offset_days: int = Field(default=1, sa_column_kwargs={"server_default": "1"})
+    # Days before the decide-by date that reminders start; 0 is the decide-by day.
+    reminder_lead_days: int = Field(default=2, sa_column_kwargs={"server_default": "2"})
+    # The servings each picked meal starts at.
+    default_servings: int = Field(default=4, sa_column_kwargs={"server_default": "4"})
 
 
 class HouseholdMember(SQLModel, table=True):
@@ -232,3 +261,10 @@ class HouseholdMember(SQLModel, table=True):
         sa_type=DateTime(timezone=True),
         sa_column_kwargs={"server_default": func.now()},
     )
+    # When their daily reminder goes out: a clock time in `time_zone`, not UTC,
+    # so it stays put through daylight saving changes and follows the phone.
+    notification_time: time = Field(
+        default=time(8, 0), sa_column_kwargs={"server_default": "08:00"}
+    )
+    # The phone's IANA zone, which the app reports; None until it first does.
+    time_zone: str | None = None

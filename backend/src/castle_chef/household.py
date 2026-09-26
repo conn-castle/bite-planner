@@ -9,6 +9,7 @@ one-time code emailed by Neon Auth.
 import json
 import logging
 import subprocess
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import text
@@ -142,15 +143,28 @@ def remove(session: Session, email: str) -> None:
     log.info("household.removed", extra={"email": email, "user_id": str(user_id)})
 
 
-def members(session: Session, household_name: str) -> list[tuple[str, str]]:
-    """(email, name) of everyone in the household, in invite order."""
-    household = get(session, household_name)
+@dataclass(frozen=True)
+class Person:
+    """Someone in a household, as Neon Auth knows them."""
+
+    user_id: UUID
+    email: str | None
+    name: str | None
+
+
+def members_of(session: Session, household_id: UUID) -> list[Person]:
+    """Everyone in the household, in the order they were invited."""
     rows = session.execute(
         text(
-            "SELECT u.email, u.name FROM household_member AS m "
+            "SELECT m.user_id, u.email, u.name FROM household_member AS m "
             'JOIN neon_auth."user" AS u ON u.id = m.user_id '
-            "WHERE m.household_id = :household_id ORDER BY m.invited_at"
+            "WHERE m.household_id = :household_id ORDER BY m.invited_at, m.user_id"
         ),
-        {"household_id": household.id},
+        {"household_id": household_id},
     ).all()
-    return [(row.email, row.name) for row in rows]
+    return [Person(user_id=row.user_id, email=row.email, name=row.name) for row in rows]
+
+
+def members(session: Session, household_name: str) -> list[Person]:
+    """Everyone in the named household, in the order they were invited."""
+    return members_of(session, get(session, household_name).id)

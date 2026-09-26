@@ -27,6 +27,15 @@ The mockup predates two requirements: it has no meal ratings (thumbs up, thumbs 
 - The prompt to rate last week's meals is on the "Finding meals" step while suggestions generate: one card per order, in the look of History's order cards, titled "How were these meals?", with the three choices beside each meal.
 - History has a search field and filter chips (All, Favorites, Liked, Didn't like, Not rated) under the "By order" / "All meals" switch, and each meal shows its rating as a small mark.
 
+Settings, as reviewed:
+
+- The mockup's Dislikes row isn't built, and won't be: ratings and "not for us" cover it.
+- Members is a read-only row listing everyone in the household ("You, Sam"), with no chevron; adding and removing members isn't scheduled yet.
+- Default servings is a stepper (1–12), like the decide-by and reminder days, not the mockup's placeholder row.
+- "Allow notifications" comes with Notifications (build step 6).
+- Settings has no preview of the next order's dates (the mockup's "With these settings, Order N"): settings hold settings.
+- The "By order" / "All meals" switch's track is a tint of ink (8%), not the mockup's `--cc-fill-strong`, which is all but the color of the warm page behind it.
+
 ## Build order
 
 One piece at a time, each through the UI with real data:
@@ -34,9 +43,10 @@ One piece at a time, each through the UI with real data:
 1. Create-order flow (done).
 2. Home (Orders): placed orders as cards, the days they cover in the day strip, and the next order with its target and decide-by dates. Adds the household's decide-by offset (default 1 day); its screen comes with Settings. (done)
 3. History and ratings: past orders and all meals with search and filters; thumbs up, thumbs down, and favorite; the prompt to rate last week's meals; and "don't show meals like this" while picking (a household meal preference, like ratings) (done)
-4. Settings: household (decide-by offset, reminder lead) and personal (notification time).
-5. Notifications: the daily reminders and "ideas ready". Needs an APNs key from the Apple Developer site.
-6. The rest of the order flow: the order lock and the shopping list step.
+4. Settings: household (decide-by offset, reminder lead, default servings, members) and personal (notification time).
+5. Dates, meals, and servings on one view: the order flow's step 3 (requirements "Ordering flow"), with each meal's servings stored in the order.
+6. Notifications: the daily reminders and "ideas ready", "Allow notifications" in Settings, and the mockup's reminder text on Home and in the order flow (the strip's reminder marks, "Reminders start …, daily · yours at 8:00 AM", the "Reminders on" chip, and "Reminders start" in the next-delivery step). Each member's reminder goes out at their clock time in their phone's zone: a time skipped by a daylight saving change goes out when the clock jumps, a repeated one only once, and a member whose zone isn't known yet (hasn't opened the app) gets none. Needs an APNs key from the Apple Developer site.
+7. The rest of the order flow: the order lock, the shopping list (generated in the background, then edited), and the confirmation with the store orders.
 
 ## Open questions
 
