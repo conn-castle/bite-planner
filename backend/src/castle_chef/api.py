@@ -55,6 +55,7 @@ from castle_chef.models import (
     JobStatus,
     Meal,
     MealRating,
+    OrderStep,
 )
 from castle_chef.settings import get_settings, load_ssm_parameters
 
@@ -113,6 +114,21 @@ class PlacedMealOut(MealSummaryOut):
     servings: int
 
 
+class OrderLockOut(BaseModel):
+    """Who is placing the order: one ordering session (an opening of the flow on
+    one phone) has its lock, until it's closed, placed, or 2 minutes pass
+    without a renewal."""
+
+    member: MemberOut
+    # The session that has it; shown only to its own member (their phones tell
+    # whether it's theirs), null for everyone else.
+    session: UUID | None
+    # When they took it: "Started 6 min ago".
+    since: datetime
+    step: OrderStep
+    expires_at: datetime
+
+
 class GroceryOrderOut(BaseModel):
     id: UUID
     number: int
@@ -132,6 +148,8 @@ class GroceryOrderOut(BaseModel):
     jobs: list[JobOut]
     # In the order their meals were suggested.
     picks: list[PickOut]
+    # Its live lock (a draft's), or null when no one is placing it.
+    lock: OrderLockOut | None
 
 
 class PlacedOrderOut(BaseModel):
@@ -307,6 +325,13 @@ class PlaceIn(BaseModel):
     next_delivery_date: date
 
 
+class LockIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # The step the flow shows, for the other members.
+    step: OrderStep
+
+
 class ServingsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -419,11 +444,40 @@ def job_out(
     )
 
 
-def order_out(session: Session, order: GroceryOrder, today: date) -> GroceryOrderOut:
-    """An order as the app sees it."""
+def lock_out(
+    order: GroceryOrder, viewer: UUID, people: dict[UUID, str | None]
+) -> OrderLockOut | None:
+    """The order's live lock as `viewer` sees it, or None."""
+    locked_by, lock_session, since = order.locked_by, order.lock_session, order.locked_at
+    step, expires = order.lock_step, orders.lock_expires_at(order)
+    if not orders.has_live_lock(order, datetime.now(UTC)):
+        return None
+    # Set together; the table's check guarantees it.
+    if locked_by is None or lock_session is None or since is None or step is None or not expires:
+        raise RuntimeError(f"Order {order.id} has an incomplete lock.")
+    return OrderLockOut(
+        member=MemberOut(user_id=locked_by, name=people[locked_by]),
+        session=lock_session if locked_by == viewer else None,
+        since=since,
+        step=step,
+        expires_at=expires,
+    )
+
+
+def own_lock(session: Session, order: GroceryOrder, user_id: UUID) -> OrderLockOut:
+    """The lock the user's session just took or renewed."""
+    lock = lock_out(order, user_id, names(session, {user_id}))
+    if lock is None:  # just taken or renewed, so live
+        raise RuntimeError(f"Order {order.id}'s lock isn't live just after taking it.")
+    return lock
+
+
+def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) -> GroceryOrderOut:
+    """An order as `viewer`, a member of its household, sees it."""
     jobs = orders.jobs(session, order.id)
     meals = orders.job_meals(session, [job.id for job in jobs])
-    people = names(session, {order.created_by, *(job.requested_by for job in jobs)})
+    lockers = {order.locked_by} if order.locked_by else set()
+    people = names(session, {order.created_by, *(job.requested_by for job in jobs), *lockers})
     rated = ratings.of_meals(
         session, order.household_id, [meal.id for batch in meals.values() for meal in batch]
     )
@@ -447,6 +501,7 @@ def order_out(session: Session, order: GroceryOrder, today: date) -> GroceryOrde
             PickOut(meal_id=pick.meal.id, servings=pick.servings)
             for pick in orders.picks(session, order.id)
         ],
+        lock=lock_out(order, viewer, people),
     )
 
 
@@ -484,6 +539,7 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     orders.MealNotFound: status.HTTP_404_NOT_FOUND,
     orders.NotPicked: status.HTTP_404_NOT_FOUND,
     orders.OrderPlaced: status.HTTP_409_CONFLICT,
+    orders.OrderLocked: status.HTTP_423_LOCKED,
     orders.NotReady: status.HTTP_409_CONFLICT,
     orders.NotForUs: status.HTTP_409_CONFLICT,
     JobIdTaken: status.HTTP_409_CONFLICT,
@@ -544,6 +600,26 @@ def member(
     return Member(user_id=principal.user_id, household_id=household.id)
 
 
+def order_session(
+    session_id: Annotated[UUID | None, Header(alias="Order-Session")] = None,
+) -> UUID | None:
+    """The ordering session a request comes from (one opening of the order flow,
+    on one phone), which the app sends with each change to a draft."""
+    return session_id
+
+
+def orderer(
+    caller: Annotated[Member, Depends(member)],
+    session_id: Annotated[UUID | None, Depends(order_session)],
+) -> orders.Orderer:
+    """The caller, in the ordering session a change to a draft comes from."""
+    if session_id is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Send the ordering session in the Order-Session header."
+        )
+    return orders.Orderer(user_id=caller.user_id, session=session_id)
+
+
 def constraint_name(error: IntegrityError) -> str | None:
     """The database constraint an insert or update broke."""
     diag = getattr(error.orig, "diag", None)
@@ -591,7 +667,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "Time-Zone"],
+        allow_headers=["Authorization", "Content-Type", "Time-Zone", "Order-Session"],
     )
 
     @api.middleware("http")
@@ -805,21 +881,24 @@ def create_app() -> FastAPI:
                 session, caller.household_id, decide_by
             ),
             earliest_delivery_date=orders.earliest_delivery_date(day),
-            draft=order_out(session, draft, day) if draft else None,
+            draft=order_out(session, draft, day, caller.user_id) if draft else None,
         )
 
     @api.post("/v1/grocery-orders", status_code=status.HTTP_201_CREATED)
     def open_draft(
         response: Response,
         caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
-        """The household's draft, created if it has none."""
-        draft, created = orders.get_or_create_draft(session, caller.household_id, caller.user_id)
+        """Open the household's draft, created if it has none: its lock is taken
+        for the caller's ordering session, unless another member has it (the
+        draft's `lock` then says who)."""
+        draft, created = orders.get_or_create_draft(session, caller.household_id, by)
         if not created:
             response.status_code = status.HTTP_200_OK
-        return order_out(session, draft, day)
+        return order_out(session, draft, day, caller.user_id)
 
     @api.get("/v1/grocery-orders/{order_id}")
     def get_order(
@@ -828,7 +907,8 @@ def create_app() -> FastAPI:
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
-        return order_out(session, orders.get_order(session, caller.household_id, order_id), day)
+        order = orders.get_order(session, caller.household_id, order_id)
+        return order_out(session, order, day, caller.user_id)
 
     @api.delete("/v1/grocery-orders/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
     def discard_draft(
@@ -836,7 +916,46 @@ def create_app() -> FastAPI:
         caller: Annotated[Member, Depends(member)],
         session: Annotated[Session, Depends(db)],
     ) -> None:
-        orders.discard(session, caller.household_id, order_id)
+        """Discard the draft, unless another member is placing it."""
+        orders.discard(session, caller.household_id, order_id, caller.user_id)
+
+    @api.post("/v1/grocery-orders/{order_id}/lock")
+    def take_lock(
+        order_id: UUID,
+        body: LockIn,
+        caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        session: Annotated[Session, Depends(db)],
+    ) -> OrderLockOut:
+        """Take the draft's lock for the caller's ordering session, as the flow
+        opens it (its own member's other session gives way); 423 if another
+        member has it."""
+        order = orders.take_lock(session, caller.household_id, order_id, by, body.step)
+        return own_lock(session, order, caller.user_id)
+
+    @api.put("/v1/grocery-orders/{order_id}/lock")
+    def renew_lock(
+        order_id: UUID,
+        body: LockIn,
+        caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        session: Annotated[Session, Depends(db)],
+    ) -> OrderLockOut:
+        """Renew the lock the caller's ordering session has, with the step it's at
+        (every 30 seconds while the flow is open); 423 if it no longer has it."""
+        order = orders.renew_lock(session, caller.household_id, order_id, by, body.step)
+        return own_lock(session, order, caller.user_id)
+
+    @api.delete("/v1/grocery-orders/{order_id}/lock", status_code=status.HTTP_204_NO_CONTENT)
+    def release_lock(
+        order_id: UUID,
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> None:
+        """Release the lock if the caller's ordering session has it, as the flow
+        closes; otherwise do nothing."""
+        orders.release_lock(session, caller.household_id, order_id, by.session)
 
     @api.post("/v1/grocery-orders/{order_id}/jobs", status_code=status.HTTP_201_CREATED)
     def generate_meals(
@@ -844,11 +963,12 @@ def create_app() -> FastAPI:
         body: JobIn,
         response: Response,
         caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
         session: Annotated[Session, Depends(db)],
         dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
     ) -> JobOut:
         """Start a batch of suggestions for the draft."""
-        draft = orders.lock_draft(session, caller.household_id, order_id)
+        draft = orders.lock_draft(session, caller.household_id, order_id, by)
         job, created = submit_generate_meals(
             session, draft, caller.user_id, body.job_id, stale_after()
         )
@@ -877,11 +997,13 @@ def create_app() -> FastAPI:
         order_id: UUID,
         meal_id: UUID,
         caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
-        orders.pick(session, caller.household_id, order_id, meal_id)
-        return order_out(session, orders.get_order(session, caller.household_id, order_id), day)
+        orders.pick(session, caller.household_id, order_id, meal_id, by)
+        order = orders.get_order(session, caller.household_id, order_id)
+        return order_out(session, order, day, caller.user_id)
 
     @api.put("/v1/grocery-orders/{order_id}/meals/{meal_id}/servings")
     def set_servings(
@@ -889,42 +1011,55 @@ def create_app() -> FastAPI:
         meal_id: UUID,
         body: ServingsIn,
         caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         """Change how many to make of one of the draft's picks."""
-        orders.set_servings(session, caller.household_id, order_id, meal_id, body.servings)
-        return order_out(session, orders.get_order(session, caller.household_id, order_id), day)
+        orders.set_servings(session, caller.household_id, order_id, meal_id, body.servings, by)
+        order = orders.get_order(session, caller.household_id, order_id)
+        return order_out(session, order, day, caller.user_id)
 
     @api.delete("/v1/grocery-orders/{order_id}/meals/{meal_id}")
     def unpick_meal(
         order_id: UUID,
         meal_id: UUID,
         caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
-        orders.unpick(session, caller.household_id, order_id, meal_id)
-        return order_out(session, orders.get_order(session, caller.household_id, order_id), day)
+        orders.unpick(session, caller.household_id, order_id, meal_id, by)
+        order = orders.get_order(session, caller.household_id, order_id)
+        return order_out(session, order, day, caller.user_id)
 
     @api.put("/v1/grocery-orders/{order_id}/dates")
     def set_dates(
         order_id: UUID,
         body: DatesIn,
         caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         orders.set_dates(
-            session, caller.household_id, order_id, body.delivery_date, body.next_delivery_date, day
+            session,
+            caller.household_id,
+            order_id,
+            body.delivery_date,
+            body.next_delivery_date,
+            day,
+            by,
         )
-        return order_out(session, orders.get_order(session, caller.household_id, order_id), day)
+        order = orders.get_order(session, caller.household_id, order_id)
+        return order_out(session, order, day, caller.user_id)
 
     @api.post("/v1/grocery-orders/{order_id}/place")
     def place_order(
         order_id: UUID,
         body: PlaceIn,
         caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
@@ -932,12 +1067,12 @@ def create_app() -> FastAPI:
             session,
             caller.household_id,
             order_id,
-            caller.user_id,
+            by,
             body.delivery_date,
             body.next_delivery_date,
             day,
         )
-        return order_out(session, placed, day)
+        return order_out(session, placed, day, caller.user_id)
 
     @api.get("/v1/meals/{meal_id}")
     def get_meal(
@@ -963,11 +1098,13 @@ def create_app() -> FastAPI:
         meal_id: UUID,
         body: RatingIn,
         caller: Annotated[Member, Depends(member)],
+        session_id: Annotated[UUID | None, Depends(order_session)],
         session: Annotated[Session, Depends(db)],
     ) -> None:
         """Set the household's rating of one of its meals. Not for us also unpicks it
-        from the draft."""
-        orders.rate_meal(session, caller.household_id, meal_id, body.rating)
+        from the draft, which only the ordering session with its lock can do."""
+        by = None if session_id is None else orders.Orderer(caller.user_id, session_id)
+        orders.rate_meal(session, caller.household_id, meal_id, body.rating, by)
 
     @api.delete("/v1/meals/{meal_id}/rating", status_code=status.HTTP_204_NO_CONTENT)
     def clear_meal_rating(

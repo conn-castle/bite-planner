@@ -44,6 +44,13 @@ Notifications, as decided:
 - Where the mockup says "yours at 8:00 AM", a member whose reminders are off (the switch, or iOS) sees "yours are off" (the draft card: "your reminders are off").
 - The Dates and servings step's next-delivery row says what it sets for the following order in one line ("Order 5: decide by …, reminders start …"), not the mockup's "What this sets" group.
 
+The order lock, as decided:
+
+- The lock belongs to one opening of the order flow on one phone, not just to the member. Opening the flow on another phone (or on the same phone after the app was closed) takes over the member's own lock at once; the phone that lost it shows "You're placing this order on another phone" with "Order here" (not in the mockup).
+- While the locked screen is open, it turns into the draft by itself once the other member closes the flow or their app goes away for 2 minutes.
+- Discarding the draft is refused while another member is ordering (the locked card has no Discard, as mocked).
+- The locked card and screen show the app's two steps (Pick meals, Dates and servings), not the mockup's four, and the card says what they're doing at that step ("Sam is choosing the dates and servings").
+
 ## Build order
 
 One piece at a time, each through the UI with real data:
@@ -54,8 +61,10 @@ One piece at a time, each through the UI with real data:
 4. Settings: household (decide-by offset, reminder lead, default servings, members, name) and personal (notification time, your name). (done)
 5. Dates, meals, and servings on one view: the order flow's step 3 (requirements "Ordering flow"), with each meal's servings stored in the order. (done)
 6. Notifications: the daily reminders and "ideas ready", "Allow notifications" in Settings, and the mockup's reminder text on Home and in the order flow (the strip's reminder marks, "Reminders start …, daily · yours at 8:00 AM", the "Reminders on" chip, and "Reminders start" in the next-delivery step). Each member's reminder goes out at their clock time in their phone's zone: a time skipped by a daylight saving change has no reminder that day (EventBridge Scheduler skips it), a repeated one goes out once, and a member whose zone isn't known yet (hasn't opened the app) gets none. (done)
-7. The rest of the order flow: the order lock, the shopping list (generated in the background, then edited), and the confirmation with the store orders.
-8. Household members from the app: adding and removing people (requirements "Household"). Needs its own design first: how someone is invited and joins (today the admin command creates their Neon Auth account and emailed codes sign them in), what happens to a person who leaves, and whether a household can end up empty.
+7. The order lock: one member ordering at a time (requirements "Order lock"), with the mockup's "Sam is placing an order" card and locked flow screen.
+8. The shopping list, stages 1 and 2 (requirements "Shopping list"): a flow step after Dates and servings, where Place order moves. Python scales each picked meal's ingredients to its servings, then the agent combines them into one list grouped by aisle, in the background like meal ideas. The user removes items and changes quantities; the order view shows the list. Placing still calls the stub grocery service.
+9. Grocery stores, stage 3: first research Instacart and Walmart (APIs, accounts, sign-in, preferences) and choose one or both; then an agent shops the list and chooses the exact products, the user sees them before placing, and the confirmation shows the store orders.
+10. Household members from the app: adding and removing people (requirements "Household"). Needs its own design first: how someone is invited and joins (today the admin command creates their Neon Auth account and emailed codes sign them in), what happens to a person who leaves, and whether a household can end up empty.
 
 ## Open questions
 

@@ -16,6 +16,7 @@ import { newestBatchState, suggestions } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { elapsed, plural } from './format'
 import { useEditsPending, useGenerateMeals, useSetMeal, useSetNotForUs } from './orders'
+import { useOrderSession } from './lock'
 import styles from './PickStep.module.css'
 
 // Placeholder cards shown below the grid while more suggestions are made.
@@ -31,6 +32,7 @@ interface PickStepProps {
 
 /** Step 1: the suggestions in a grid, each added to the order or not, and more on request. */
 export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) {
+  const session = useOrderSession()
   const setMeal = useSetMeal()
   const setNotForUs = useSetNotForUs()
   // The newest change that failed: a pick, or a ✕.
@@ -49,7 +51,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
   async function toggle(meal: MealSummary) {
     haptics.tap()
     if (picked.has(meal.id)) {
-      setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: false })
+      setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: false, session })
       return
     }
     // A new pick starts at the household's default servings (cached from launch;
@@ -65,12 +67,12 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
       return
     }
     setPickProblem(null)
-    setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: true, servings })
+    setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: true, servings, session })
   }
 
   function dismiss(meal: MealSummary) {
     haptics.tap()
-    setNotForUs.mutate({ orderId: order.id, mealId: meal.id, notForUs: meal.rating !== 'not_for_us' })
+    setNotForUs.mutate({ orderId: order.id, mealId: meal.id, notForUs: meal.rating !== 'not_for_us', session })
   }
 
   return (
@@ -191,9 +193,10 @@ function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
 
 /** Below the grid: "Generate more", the batch being made, or why the last one failed. */
 function MoreMeals({ order }: { order: GroceryOrder }) {
+  const session = useOrderSession()
   const generate = useGenerateMeals()
   const batch = newestBatchState(order)
-  const start = () => generate.mutate({ orderId: order.id, jobId: crypto.randomUUID() })
+  const start = () => generate.mutate({ orderId: order.id, jobId: crypto.randomUUID(), session })
 
   if (batch.status === 'running') return <MoreRunning job={batch.job} />
   return (

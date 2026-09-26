@@ -40,6 +40,7 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
     },
   ],
   picks: [],
+  lock: null,
 })
 
 const placed: PlacedOrder = {

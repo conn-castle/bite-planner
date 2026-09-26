@@ -31,11 +31,16 @@ export function requestRoute(path: string): string {
     .replace(/[0-9a-f]{64,}/gi, '{token}')
 }
 
-/** Sends a request with a fresh token; on 401 (e.g. an expired token), retries once. */
+/**
+ * Sends a request with a fresh token; on 401 (e.g. an expired token), retries
+ * once. A change to a draft names the ordering session it comes from (the
+ * order flow's, see features/orders/lock.ts).
+ */
 export async function apiRequest<T>(
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
+  orderSession?: string,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     const token = await auth.getToken()
@@ -51,6 +56,7 @@ export async function apiRequest<T>(
         headers: {
           Authorization: `Bearer ${token}`,
           'Time-Zone': phoneTimeZone(),
+          ...(orderSession === undefined ? {} : { 'Order-Session': orderSession }),
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),

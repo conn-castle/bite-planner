@@ -1,5 +1,5 @@
 /*
- * spec/mockup.html: .pass, .pass.draft (.remind, .soon, .late, .gen, .ready), .pass-head,
+ * spec/mockup.html: .pass, .pass.draft (.remind, .soon, .late, .gen, .ready, .locked), .pass-head,
  * .pass-over, .pass-title, .pass-sub, .pass-body, .perf, .draft-row, .cover, .note
  */
 
@@ -53,6 +53,11 @@
   box-shadow: 0 12px 30px -16px rgba(210, 59, 44, 0.45);
 }
 
+/* .pass.draft.locked */
+.locked {
+  border-color: var(--cc-other-line);
+}
+
 .head {
   appearance: none;
   border: 0;
@@ -76,6 +81,10 @@
 
 .late .head {
   background: var(--cc-danger-soft);
+}
+
+.locked .head {
+  background: var(--cc-other-soft);
 }
 
 .pressable {

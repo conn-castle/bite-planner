@@ -63,23 +63,6 @@
   width: 32px;
 }
 
-.dots {
-  display: flex;
-  gap: 5px;
-}
-
-.dots i {
-  width: 22px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--cc-fill-strong);
-  transition: background-color 300ms var(--cc-ease);
-}
-
-.dots i.on {
-  background: var(--cc-ink);
-}
-
 /* At the bottom, Ionic's fullscreen content already leaves the footer's height
    (--offset-bottom); 34px more is the mockup's 130px less its footer. */
 .body {

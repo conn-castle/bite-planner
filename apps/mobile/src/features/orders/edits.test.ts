@@ -16,6 +16,7 @@ const order: GroceryOrder = {
   next_delivery_date: '2026-10-02',
   jobs: [],
   picks: [{ meal_id: 'tacos', servings: 4 }],
+  lock: null,
 }
 
 const picked = (shown: GroceryOrder) => shown.picks.map((pick) => pick.meal_id)
@@ -27,9 +28,9 @@ describe('applyEdits', () => {
 
   it('shows picks and dates still being saved', () => {
     const shown = applyEdits(order, [
-      { orderId: 'order-2', mealId: 'soup', picked: true, servings: 4 },
-      { orderId: 'order-2', mealId: 'tacos', picked: false },
-      { orderId: 'order-2', dates: { delivery_date: '2026-09-30', next_delivery_date: null } },
+      { session: 'phone', orderId: 'order-2', mealId: 'soup', picked: true, servings: 4 },
+      { session: 'phone', orderId: 'order-2', mealId: 'tacos', picked: false },
+      { session: 'phone', orderId: 'order-2', dates: { delivery_date: '2026-09-30', next_delivery_date: null } },
     ])
     expect(picked(shown)).toEqual(['soup'])
     expect(shown.delivery_date).toBe('2026-09-30')
@@ -38,17 +39,17 @@ describe('applyEdits', () => {
 
   it('lets the latest change to a meal win, whatever came before', () => {
     const shown = applyEdits(order, [
-      { orderId: 'order-2', mealId: 'soup', picked: true, servings: 4 },
-      { orderId: 'order-2', mealId: 'soup', picked: false },
-      { orderId: 'order-2', mealId: 'soup', picked: true, servings: 4 },
+      { session: 'phone', orderId: 'order-2', mealId: 'soup', picked: true, servings: 4 },
+      { session: 'phone', orderId: 'order-2', mealId: 'soup', picked: false },
+      { session: 'phone', orderId: 'order-2', mealId: 'soup', picked: true, servings: 4 },
     ])
     expect(picked(shown)).toEqual(['tacos', 'soup'])
   })
 
   it('shows servings still being saved, and a new pick at the servings it starts at', () => {
     const shown = applyEdits(order, [
-      { orderId: 'order-2', mealId: 'tacos', servings: 6 },
-      { orderId: 'order-2', mealId: 'soup', picked: true, servings: 2 },
+      { session: 'phone', orderId: 'order-2', mealId: 'tacos', servings: 6 },
+      { session: 'phone', orderId: 'order-2', mealId: 'soup', picked: true, servings: 2 },
     ])
     expect(shown.picks).toEqual([
       { meal_id: 'tacos', servings: 6 },
@@ -58,24 +59,24 @@ describe('applyEdits', () => {
 
   it("keeps a pick's servings when it's picked again, and gives a meal that isn't picked none", () => {
     const shown = applyEdits(order, [
-      { orderId: 'order-2', mealId: 'tacos', servings: 6 },
-      { orderId: 'order-2', mealId: 'tacos', picked: true, servings: 4 },
+      { session: 'phone', orderId: 'order-2', mealId: 'tacos', servings: 6 },
+      { session: 'phone', orderId: 'order-2', mealId: 'tacos', picked: true, servings: 4 },
       // Refused by the server (not picked), so not shown either.
-      { orderId: 'order-2', mealId: 'soup', servings: 3 },
+      { session: 'phone', orderId: 'order-2', mealId: 'soup', servings: 3 },
     ])
     expect(shown.picks).toEqual([{ meal_id: 'tacos', servings: 6 }])
   })
 
   it('drops servings still being saved when the meal is unpicked', () => {
     const shown = applyEdits(order, [
-      { orderId: 'order-2', mealId: 'tacos', servings: 6 },
-      { orderId: 'order-2', mealId: 'tacos', picked: false },
+      { session: 'phone', orderId: 'order-2', mealId: 'tacos', servings: 6 },
+      { session: 'phone', orderId: 'order-2', mealId: 'tacos', picked: false },
     ])
     expect(shown.picks).toEqual([])
   })
 
   it('ignores changes to other orders', () => {
-    const shown = applyEdits(order, [{ orderId: 'order-1', mealId: 'soup', picked: true, servings: 4 }])
+    const shown = applyEdits(order, [{ session: 'phone', orderId: 'order-1', mealId: 'soup', picked: true, servings: 4 }])
     expect(picked(shown)).toEqual(['tacos'])
   })
 
@@ -101,19 +102,19 @@ describe('applyEdits', () => {
         },
       ],
     }
-    const marked = applyEdits(withIdeas, [{ orderId: 'order-2', mealId: 'tacos', notForUs: true }])
+    const marked = applyEdits(withIdeas, [{ session: 'phone', orderId: 'order-2', mealId: 'tacos', notForUs: true }])
     expect(picked(marked)).toEqual([])
     expect(marked.jobs[0]?.meals.map((meal) => meal.rating)).toEqual(['not_for_us', null])
 
     // A pick made while the mark is still being saved isn't shown: the server refuses it.
     const pickedAfter = applyEdits(withIdeas, [
-      { orderId: 'order-2', mealId: 'soup', notForUs: true },
-      { orderId: 'order-2', mealId: 'soup', picked: true, servings: 4 },
+      { session: 'phone', orderId: 'order-2', mealId: 'soup', notForUs: true },
+      { session: 'phone', orderId: 'order-2', mealId: 'soup', picked: true, servings: 4 },
     ])
     expect(picked(pickedAfter)).toEqual(['tacos'])
 
     // Undoing it leaves the meal unpicked, as the server does.
-    const undone = applyEdits(marked, [{ orderId: 'order-2', mealId: 'tacos', notForUs: false }])
+    const undone = applyEdits(marked, [{ session: 'phone', orderId: 'order-2', mealId: 'tacos', notForUs: false }])
     expect(picked(undone)).toEqual([])
     expect(undone.jobs[0]?.meals.map((meal) => meal.rating)).toEqual([null, null])
   })
@@ -121,16 +122,18 @@ describe('applyEdits', () => {
 
 describe('isOrderEdit', () => {
   it('recognizes a pick, an unpick, servings, a "not for us" mark, and a change of dates', () => {
-    expect(isOrderEdit({ orderId: 'o', mealId: 'm', picked: true, servings: 4 })).toBe(true)
-    expect(isOrderEdit({ orderId: 'o', mealId: 'm', picked: false })).toBe(true)
-    expect(isOrderEdit({ orderId: 'o', mealId: 'm', servings: 6 })).toBe(true)
-    expect(isOrderEdit({ orderId: 'o', mealId: 'm', notForUs: false })).toBe(true)
-    expect(isOrderEdit({ orderId: 'o', dates: { delivery_date: '2026-09-30', next_delivery_date: null } })).toBe(true)
+    expect(isOrderEdit({ session: 's', orderId: 'o', mealId: 'm', picked: true, servings: 4 })).toBe(true)
+    expect(isOrderEdit({ session: 's', orderId: 'o', mealId: 'm', picked: false })).toBe(true)
+    expect(isOrderEdit({ session: 's', orderId: 'o', mealId: 'm', servings: 6 })).toBe(true)
+    expect(isOrderEdit({ session: 's', orderId: 'o', mealId: 'm', notForUs: false })).toBe(true)
+    expect(isOrderEdit({ session: 's', orderId: 'o', dates: { delivery_date: '2026-09-30', next_delivery_date: null } })).toBe(true)
   })
 
   it('rejects anything else a pending mutation may hold', () => {
     expect(isOrderEdit(undefined)).toBe(false)
     expect(isOrderEdit({ orderId: 'o' })).toBe(false)
+    // Made outside an ordering session (e.g. saved by an older version of the app).
+    expect(isOrderEdit({ orderId: 'o', mealId: 'm', picked: false })).toBe(false)
     expect(isOrderEdit({ orderId: 'o', jobId: 'j' })).toBe(false)
     expect(isOrderEdit({ orderId: 'o', mealId: 'm' })).toBe(false)
     expect(isOrderEdit({ orderId: 'o', mealId: 'm', picked: true })).toBe(false)

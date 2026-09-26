@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { GroceryOrder, Job, NextOrder, PlacedOrder } from '../../lib/api/types'
 import { dayCaption, followingOrder, homeCards, homeStrip, phase, urgency } from './home'
 
+const ME = 'me'
 const TODAY = '2026-09-24'
 
 // Time zones are set with vi.stubEnv('TZ', ...), which Node applies at once.
@@ -53,6 +54,7 @@ function draft(number: number, jobs: Job[]): GroceryOrder {
     next_delivery_date: null,
     jobs,
     picks: [],
+    lock: null,
   }
 }
 
@@ -114,7 +116,7 @@ describe('homeCards', () => {
 
   it('puts the next order first when it is due, with the meals on hand under it', () => {
     const onHand = placed(3, '2026-09-22', '2026-09-26')
-    expect(kinds(homeCards([onHand], nextOrder(4, '2026-09-26', '2026-09-25'), TODAY))).toEqual([
+    expect(kinds(homeCards([onHand], nextOrder(4, '2026-09-26', '2026-09-25'), TODAY, ME))).toEqual([
       'next (top)',
       'order 3',
     ])
@@ -123,7 +125,7 @@ describe('homeCards', () => {
   it('puts groceries on the way before an order not due yet', () => {
     const onHand = placed(3, '2026-09-22', '2026-09-26')
     const waiting = placed(4, '2026-09-26', '2026-10-01')
-    expect(kinds(homeCards([onHand, waiting], nextOrder(5, '2026-10-01', '2026-09-30'), TODAY))).toEqual([
+    expect(kinds(homeCards([onHand, waiting], nextOrder(5, '2026-10-01', '2026-09-30'), TODAY, ME))).toEqual([
       'order 4 (top)',
       'order 3',
       'next',
@@ -132,7 +134,7 @@ describe('homeCards', () => {
 
   it('never makes meals on hand the next step', () => {
     const onHand = placed(3, '2026-09-22', '2026-09-30')
-    expect(kinds(homeCards([onHand], nextOrder(4, '2026-09-30', '2026-09-29'), TODAY))).toEqual([
+    expect(kinds(homeCards([onHand], nextOrder(4, '2026-09-30', '2026-09-29'), TODAY, ME))).toEqual([
       'next (top)',
       'order 3',
     ])
@@ -142,19 +144,38 @@ describe('homeCards', () => {
     const arriving = placed(3, TODAY, '2026-09-28')
     for (const batch of [job('running', 0), job('succeeded', 20)]) {
       const next = nextOrder(4, '2026-09-28', '2026-09-27', draft(4, [batch]))
-      expect(kinds(homeCards([arriving], next, TODAY))).toEqual(['next (top)', 'order 3'])
+      expect(kinds(homeCards([arriving], next, TODAY, ME))).toEqual(['next (top)', 'order 3'])
     }
   })
 
   it('puts an order on reminders before groceries on the way', () => {
     const waiting = placed(4, '2026-09-26', '2026-10-01')
     const next = nextOrder(5, '2026-10-01', '2026-09-28', null, '2026-09-24')
-    expect(kinds(homeCards([waiting], next, TODAY))).toEqual(['next (top)', 'order 4'])
+    expect(kinds(homeCards([waiting], next, TODAY, ME))).toEqual(['next (top)', 'order 4'])
+  })
+
+  it('puts another member placing the next order above everything, even ideas on the way', () => {
+    const arriving = placed(3, TODAY, '2026-09-28')
+    const locked = (user_id: string): GroceryOrder => ({
+      ...draft(4, [job('running', 0)]),
+      lock: {
+        member: { user_id, name: 'Sam' },
+        session: null,
+        since: '2026-09-24T09:00:00Z',
+        step: 'pick',
+        expires_at: '2026-09-24T09:02:00Z',
+      },
+    })
+    const theirs = nextOrder(4, '2026-10-05', '2026-10-04', locked('sam'))
+    expect(kinds(homeCards([arriving], theirs, TODAY, ME))).toEqual(['next (top)', 'order 3'])
+    // The member's own lock (another phone of theirs) ranks as the draft would.
+    const calm = nextOrder(4, '2026-10-05', '2026-10-04', { ...locked(ME), jobs: [] })
+    expect(kinds(homeCards([arriving], calm, TODAY, ME))).toEqual(['order 3 (top)', 'next'])
   })
 
   it('leaves out orders whose meals are all behind', () => {
     const finished = placed(2, '2026-09-18', '2026-09-22')
-    expect(kinds(homeCards([finished], nextOrder(3, '2026-09-22', '2026-09-21'), TODAY))).toEqual(['next (top)'])
+    expect(kinds(homeCards([finished], nextOrder(3, '2026-09-22', '2026-09-21'), TODAY, ME))).toEqual(['next (top)'])
   })
 })
 

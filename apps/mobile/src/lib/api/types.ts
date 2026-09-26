@@ -113,6 +113,26 @@ export interface GroceryOrder {
   jobs: Job[]
   /** In the order their meals were suggested. */
   picks: MealPick[]
+  /** Who is placing it (a draft's live lock), or null when no one is. */
+  lock: OrderLock | null
+}
+
+/** The create-order flow's steps, as a lock reports where its holder is. */
+export type OrderStep = 'pick' | 'dates'
+
+/**
+ * The order lock: one ordering session (an opening of the flow, on one phone)
+ * has it until the flow closes, the order is placed, or 2 minutes pass without
+ * a renewal.
+ */
+export interface OrderLock {
+  member: Member
+  /** The session that has it; only its own member sees it (null for everyone else). */
+  session: string | null
+  /** When they took it. */
+  since: ISODateTime
+  step: OrderStep
+  expires_at: ISODateTime
 }
 
 /** A meal picked for an order, and how many to make of it (the recipe is for `Meal.servings`). */

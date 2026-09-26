@@ -16,7 +16,7 @@ Failures (dead-letter queue, task stopped) ──► failure-handler Lambda ─�
 Error log lines, Lambda and Pipe failures ──► CloudWatch alarms ──► email
 ```
 
-1. A member opens the create-order flow: the API gets or creates the household's draft `grocery_order` (one per household).
+1. A member opens the create-order flow: the API gets or creates the household's draft `grocery_order` (one per household) and gives that opening of the flow its order lock. Only the session holding it (one opening of the flow, on one phone, sent as the `Order-Session` header) can change the draft; the app renews it every 30 s and it lapses 2 minutes after the last renewal, so everyone else sees who is ordering and can take over once they stop.
 2. The app asks for a batch of suggestions (`POST /v1/grocery-orders/{id}/jobs` with a job id it generates, so retries are safe). The API stores a `pending` `generate_meals` job for the draft (one batch at a time per draft) and sends its id to the queue.
 3. The Pipe starts one Fargate task per message. The worker claims the job and runs Grok with a prompt asking for 20 low-effort meals (`meals_per_batch`).
 4. Grok calls `castle-chef meal add` once per meal. The CLI validates the meal and saves it as JSON in the job directory; the agent never touches the database.
@@ -201,7 +201,8 @@ Data handling (`src/lib/query/queryClient.ts` and each feature's queries):
 - Server data lives in TanStack Query: shown from cache immediately, refreshed in the background (stale-while-revalidate).
 - The cache is persisted on the device (Capacitor Preferences) for 7 days, so a relaunch shows the last data instantly. Sign-out deletes it.
 - Refreshes when the app returns to the foreground (`@capacitor/app`) and pauses while offline (`@capacitor/network`), with an offline banner. Requests made offline are sent when the connection returns.
-- An order refreshes every 3 s while a batch of suggestions is pending or running.
+- An order refreshes every 3 s while a batch of suggestions is pending or running; Home refreshes the next order every 30 s while it shows (to see who is ordering), and the order flow every 30 s while someone else has the order's lock.
+- Changes to a draft carry the order flow's session (`Order-Session` header). Requests that only the open flow can make (opening it, taking and releasing the lock) aren't kept for after a relaunch.
 - Every request sends the phone's time zone (`Time-Zone` header); the API uses it for "today".
 - Render errors show a recovery screen and are logged.
 

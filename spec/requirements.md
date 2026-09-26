@@ -23,7 +23,8 @@ The flow being built toward, one piece at a time:
 2. The user picks meals.
 3. On one view, the user chooses the dates and reviews the picked meals, each with its servings shown and editable (− and + around the number).
 4. The backend generates the shopping list, asynchronously (it takes minutes). When it's done, the user sees every item to be shopped for, and can remove items or change their quantities.
-5. The user submits the order, it's placed, and the confirmation shows the store order(s) it's associated with.
+5. An agent shops the list at the grocery store(s) and chooses the exact products to order; the user sees those exact items before placing.
+6. The user submits the order, it's placed, and the confirmation shows the store order(s) it's associated with.
 
 - [x] The dates, the picked meals, and their servings are on one view (step 3).
 - [x] Each picked meal's servings are stored in the order. A meal starts at the household's default servings and can be changed per meal.
@@ -53,15 +54,22 @@ The flow being built toward, one piece at a time:
 
 ## Order lock
 
-- [ ] Only one household member can be creating an order at a time.
-- [ ] The lock is held from when order creation starts until it is closed or the order is placed.
-- [ ] The open app renews the lock every 30 seconds; the lock expires 2 minutes after the last renewal.
-- [ ] While one member has order creation open, other members are told that another household member is ordering.
+- [x] Only one household member can be creating an order at a time.
+- [x] The lock is held from when order creation starts until it is closed or the order is placed.
+- [x] The open app renews the lock every 30 seconds; the lock expires 2 minutes after the last renewal.
+- [x] While one member has order creation open, other members are told that another household member is ordering.
 
 ## Shopping list
 
-- [ ] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings, asynchronously (it takes minutes); the user sees it when it's done.
+The list is made in three stages:
+
+1. Python scales each picked meal's ingredients to its servings (deterministic).
+2. An AI agent combines those ingredients into one list of things to buy (e.g. "1 onion" and "1 cup diced onion" become onions), grouped by aisle.
+3. An agent shops that list at the grocery store(s) (Instacart and/or Walmart, whichever is easier to set up; both is ideal) and chooses the exact products to order, using the household's store accounts and preferences.
+
+- [ ] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings (stages 1 and 2), asynchronously (it takes minutes); the user sees it when it's done.
 - [ ] The user can remove items from the shopping list, such as things they already have, and change their quantities.
+- [ ] Before placing, the user sees the exact products that will be ordered (stage 3).
 
 ## Placing and status
 
@@ -109,11 +117,10 @@ Personal settings:
 
 ## Deferred
 
-- Placing orders with a real grocery service.
+- Placing orders with a real grocery service (with shopping list stage 3).
 - Real delivery status updates.
 - Delivery time windows.
 - Handling gaps between orders (for now, reminders go out every day).
-- Real shopping list generation (combining ingredients across meals).
 - The suggestion agent using ratings.
 - Meal icons v2 (generated combinations of icons) and v3 (AI-generated images).
 - Adding free-form items to the shopping list (done in the grocery app instead).

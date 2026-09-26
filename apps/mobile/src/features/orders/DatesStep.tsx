@@ -26,6 +26,7 @@ import styles from './DatesStep.module.css'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { plural } from './format'
 import { useEditsPending, usePlaceOrder, useSetDates, useSetServings } from './orders'
+import { useOrderSession } from './lock'
 
 // How often the step checks the time, so "today" moves on at midnight.
 const TODAY_CHECK_MS = 60_000
@@ -46,6 +47,7 @@ interface DatesStepProps {
  */
 export function DatesStep({ order, onOpenMeal, onBack, onClose }: DatesStepProps) {
   const household = useHousehold().shown
+  const session = useOrderSession()
   const setDates = useSetDates()
   const setServings = useSetServings()
   const place = usePlaceOrder()
@@ -70,20 +72,20 @@ export function DatesStep({ order, onOpenMeal, onBack, onClose }: DatesStepProps
 
   function chooseDelivery(date: ISODate) {
     haptics.tap()
-    setDates.mutate({ orderId: order.id, dates: datesForDelivery(date, order.next_delivery_date) })
+    setDates.mutate({ orderId: order.id, dates: datesForDelivery(date, order.next_delivery_date), session })
   }
 
   function chooseNext(date: ISODate) {
     if (delivery === null) return
     haptics.tap()
-    setDates.mutate({ orderId: order.id, dates: { delivery_date: delivery, next_delivery_date: date } })
+    setDates.mutate({ orderId: order.id, dates: { delivery_date: delivery, next_delivery_date: date }, session })
   }
 
   function placeOrder() {
     if (delivery === null || next === null) return
     // The dates shown are saved with it: they may be untouched defaults.
     place.mutate(
-      { orderId: order.id, dates: { delivery_date: delivery, next_delivery_date: next } },
+      { orderId: order.id, dates: { delivery_date: delivery, next_delivery_date: next }, session },
       { onSuccess: () => haptics.success(), onError: () => haptics.error() },
     )
   }
@@ -173,7 +175,7 @@ export function DatesStep({ order, onOpenMeal, onBack, onClose }: DatesStepProps
                   min={SERVINGS.min}
                   max={SERVINGS.max}
                   label="Servings"
-                  onChange={(value) => setServings.mutate({ orderId: order.id, mealId: meal.id, servings: value })}
+                  onChange={(value) => setServings.mutate({ orderId: order.id, mealId: meal.id, servings: value, session })}
                 />
               }
             />

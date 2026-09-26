@@ -5,9 +5,10 @@ import { Icon, type IconName } from './Icon'
 interface ChipProps {
   /**
    * Outlined (the default), outlined with accent text (e.g. reminders on),
-   * accent for something ready to act on, success, or danger (e.g. overdue).
+   * accent for something ready to act on, success, danger (e.g. overdue), or
+   * dark (someone else at work, e.g. "Sam is ordering").
    */
-  tone?: 'default' | 'accentText' | 'accent' | 'success' | 'danger'
+  tone?: 'default' | 'accentText' | 'accent' | 'success' | 'danger' | 'dark'
   icon?: IconName
   children: ReactNode
 }

@@ -1,4 +1,5 @@
 import {
+  MutationObserver,
   type QueryClient,
   queryOptions,
   skipToken,
@@ -10,12 +11,30 @@ import {
 } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api/client'
 import { ApiError, isRetryable } from '../../lib/api/errors'
-import type { GroceryOrder, ISODate, Job, NextOrder, OrderDates, PlacedOrder } from '../../lib/api/types'
+import type {
+  GroceryOrder,
+  ISODate,
+  Job,
+  NextOrder,
+  OrderDates,
+  OrderLock,
+  OrderStep,
+  PlacedOrder,
+} from '../../lib/api/types'
 import { logger } from '../../lib/log'
 import { queryKeys } from '../../lib/query/keys'
 import { storeMealRating } from '../meals/ratings'
 import { hasRunningBatch } from './batches'
-import { applyEdits, isOrderEdit, type SetDates, type SetMeal, type SetNotForUs, type SetServings } from './edits'
+import {
+  applyEdits,
+  type InSession,
+  isOrderEdit,
+  type SetDates,
+  type SetMeal,
+  type SetNotForUs,
+  type SetServings,
+} from './edits'
+import { LOCK_RENEW_MS } from './lock'
 
 /**
  * Grocery orders: the household's next order and its draft, everything the
@@ -46,9 +65,12 @@ export const placedQuery = (coveringFrom?: ISODate) =>
 
 const orderKey = queryKeys.order
 
-/** The household's next order, with its draft once someone has started one. */
-export function useNextOrder() {
-  return useQuery(nextQuery)
+/**
+ * The household's next order, with its draft once someone has started one;
+ * checked every `refetchInterval` ms if given (Home, to see who is ordering).
+ */
+export function useNextOrder(refetchInterval: number | false = false) {
+  return useQuery({ ...nextQuery, refetchInterval })
 }
 
 /** The household's placed orders whose meals cover `coveringFrom` or a later day, or all of them. */
@@ -59,9 +81,11 @@ export function usePlacedOrders(coveringFrom?: ISODate) {
 /**
  * One order as the server has it, checked every few seconds while a batch of
  * suggestions is being made, and `shown`: that order with the changes still
- * being saved applied over it (see edits.ts).
+ * being saved applied over it (see edits.ts). In the order flow (its ordering
+ * `session` given), it's also checked every 30 seconds while someone else has
+ * its lock, to see when they're done.
  */
-export function useOrder(orderId: string | undefined) {
+export function useOrder(orderId: string | undefined, session?: string) {
   const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: orderKey(orderId ?? ''),
@@ -72,7 +96,12 @@ export function useOrder(orderId: string | undefined) {
       return draft && draft.id === orderId ? draft : undefined
     },
     queryFn: orderId ? () => apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${orderId}`) : skipToken,
-    refetchInterval: (query) => (query.state.data && hasRunningBatch(query.state.data) ? POLL_MS : false),
+    refetchInterval: ({ state: { data } }) =>
+      data && hasRunningBatch(data)
+        ? POLL_MS
+        : session !== undefined && data?.lock && data.lock.session !== session
+          ? LOCK_RENEW_MS
+          : false,
     // A 404 (the draft was discarded) won't change on a retry.
     retry: (failureCount, error) => isRetryable(error, failureCount),
   })
@@ -135,6 +164,22 @@ const SET_DATES = ['orders', 'set-dates']
 const SET_NOT_FOR_US = ['orders', 'set-not-for-us']
 const PLACE = ['orders', 'place']
 const DISCARD = ['orders', 'discard']
+const TAKE = ['orders', 'take']
+const RELEASE = ['orders', 'release']
+
+// Requests that only make sense while the flow that made them is open: never
+// saved to be sent after a relaunch (they'd take the lock with no flow open).
+export const NOT_PERSISTED = { persist: false }
+
+// Ordering sessions whose flow has closed: nothing takes the lock for them any more.
+const closedSessions = new Set<string>()
+
+/** Taking the lock (or opening) for a flow that has closed meanwhile: not sent. */
+export class FlowClosed extends Error {
+  constructor() {
+    super('The order flow was closed.')
+  }
+}
 
 // Changes to an order run one at a time, in the order they were made, so each
 // response (the whole order) includes every earlier change, and later ones
@@ -142,11 +187,11 @@ const DISCARD = ['orders', 'discard']
 // draft take their turn too.
 const EDITS = { id: 'grocery-order-edits' }
 
-export interface OpenOrder {
+export interface OpenOrder extends InSession {
   /** For the first batch, if the draft has none; chosen here so a resent request can't start a second. */
   jobId: string
 }
-export interface GenerateMeals {
+export interface GenerateMeals extends InSession {
   orderId: string
   /** Chosen here, so a resent request (e.g. after going offline) can't start a second batch. */
   jobId: string
@@ -154,14 +199,14 @@ export interface GenerateMeals {
 export interface OrderAction {
   orderId: string
 }
-export interface PlaceOrder {
+export interface PlaceOrder extends InSession {
   orderId: string
   /** The dates shown when Place was tapped (they may be untouched defaults), saved with it. */
   dates: OrderDates
 }
 
-async function startBatch(orderId: string, jobId: string): Promise<Job> {
-  const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/jobs`, { job_id: jobId })
+async function startBatch(orderId: string, jobId: string, session: string): Promise<Job> {
+  const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/jobs`, { job_id: jobId }, session)
   logger.info('orders.batch_started', { orderId, jobId: job.id })
   return job
 }
@@ -180,30 +225,39 @@ const isEdit = (mutation: { options: { scope?: { id: string } } }) => mutation.o
  * itself and where its answer goes.
  */
 export function registerOrderMutations(queryClient: QueryClient) {
-  const retry = (failureCount: number, error: Error) => isRetryable(error, failureCount)
+  const retry = (failureCount: number, error: Error) => !(error instanceof FlowClosed) && isRetryable(error, failureCount)
 
   queryClient.setMutationDefaults(OPEN, {
-    // Gets or creates the household's draft, and starts its first batch if it has none.
-    mutationFn: async ({ jobId }: OpenOrder): Promise<GroceryOrder> => {
-      const order = await apiRequest<GroceryOrder>('POST', '/v1/grocery-orders')
-      if (order.jobs.length > 0) return order
+    // Gets or creates the household's draft, taking its lock (unless another
+    // member has it), and starts its first batch if it has none.
+    mutationFn: async ({ jobId, session }: OpenOrder): Promise<GroceryOrder> => {
+      if (closedSessions.has(session)) throw new FlowClosed()
+      const order = await apiRequest<GroceryOrder>('POST', '/v1/grocery-orders', undefined, session)
+      if (order.jobs.length > 0 || order.lock?.session !== session) return order
       try {
-        return withJob(order, await startBatch(order.id, jobId))
+        return withJob(order, await startBatch(order.id, jobId, session))
       } catch (error) {
-        // Another member opened the same draft a moment earlier and started its batch.
-        if (!(error instanceof ApiError && error.status === 429)) throw error
+        // Someone started its batch a moment earlier (429), or took the lock (423): show it as it is.
+        if (!(error instanceof ApiError && (error.status === 429 || error.status === 423))) throw error
         return apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${order.id}`)
       }
     },
     retry,
+    meta: NOT_PERSISTED,
     // Changes made while it opens (the cached draft is on screen) are saved after it,
     // so its answer (the draft as it was) never lands on top of theirs.
     scope: EDITS,
-    onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
+    onSuccess: async (order: GroceryOrder, { session }: OpenOrder) => {
+      await storeOrder(queryClient, order)
+      // Closed while it opened: the lock it took goes at once.
+      if (closedSessions.has(session) && order.lock?.session === session) {
+        releaseLock(queryClient, { orderId: order.id, session })
+      }
+    },
   })
 
   queryClient.setMutationDefaults(GENERATE, {
-    mutationFn: ({ orderId, jobId }: GenerateMeals) => startBatch(orderId, jobId),
+    mutationFn: ({ orderId, jobId, session }: GenerateMeals) => startBatch(orderId, jobId, session),
     retry,
     onSuccess: async (job: Job, { orderId }: GenerateMeals) => {
       await cancelFetches(queryClient, orderId)
@@ -215,8 +269,13 @@ export function registerOrderMutations(queryClient: QueryClient) {
   })
 
   queryClient.setMutationDefaults(SET_MEAL, {
-    mutationFn: ({ orderId, mealId, picked }: SetMeal) =>
-      apiRequest<GroceryOrder>(picked ? 'PUT' : 'DELETE', `/v1/grocery-orders/${orderId}/meals/${mealId}`),
+    mutationFn: ({ orderId, mealId, picked, session }: SetMeal) =>
+      apiRequest<GroceryOrder>(
+        picked ? 'PUT' : 'DELETE',
+        `/v1/grocery-orders/${orderId}/meals/${mealId}`,
+        undefined,
+        session,
+      ),
     retry,
     scope: EDITS,
     onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
@@ -225,8 +284,13 @@ export function registerOrderMutations(queryClient: QueryClient) {
   })
 
   queryClient.setMutationDefaults(SET_SERVINGS, {
-    mutationFn: ({ orderId, mealId, servings }: SetServings) =>
-      apiRequest<GroceryOrder>('PUT', `/v1/grocery-orders/${orderId}/meals/${mealId}/servings`, { servings }),
+    mutationFn: ({ orderId, mealId, servings, session }: SetServings) =>
+      apiRequest<GroceryOrder>(
+        'PUT',
+        `/v1/grocery-orders/${orderId}/meals/${mealId}/servings`,
+        { servings },
+        session,
+      ),
     retry,
     scope: EDITS,
     onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
@@ -238,8 +302,8 @@ export function registerOrderMutations(queryClient: QueryClient) {
   queryClient.setMutationDefaults(SET_NOT_FOR_US, {
     // The mark is the household's rating of the meal; the server also unpicks
     // it. Its answer has no order, so the order is fetched after it.
-    mutationFn: async ({ orderId, mealId, notForUs }: SetNotForUs) => {
-      if (notForUs) await apiRequest<void>('PUT', `/v1/meals/${mealId}/rating`, { rating: 'not_for_us' })
+    mutationFn: async ({ orderId, mealId, notForUs, session }: SetNotForUs) => {
+      if (notForUs) await apiRequest<void>('PUT', `/v1/meals/${mealId}/rating`, { rating: 'not_for_us' }, session)
       else await apiRequest<void>('DELETE', `/v1/meals/${mealId}/rating`)
       return apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${orderId}`)
     },
@@ -258,8 +322,8 @@ export function registerOrderMutations(queryClient: QueryClient) {
   })
 
   queryClient.setMutationDefaults(SET_DATES, {
-    mutationFn: ({ orderId, dates }: SetDates) =>
-      apiRequest<GroceryOrder>('PUT', `/v1/grocery-orders/${orderId}/dates`, dates),
+    mutationFn: ({ orderId, dates, session }: SetDates) =>
+      apiRequest<GroceryOrder>('PUT', `/v1/grocery-orders/${orderId}/dates`, dates, session),
     retry,
     scope: EDITS,
     onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
@@ -271,8 +335,8 @@ export function registerOrderMutations(queryClient: QueryClient) {
     // With the dates on screen, which the server saves as it places the order, so
     // what's placed is what was shown. Placing an order that is already placed
     // returns it unchanged, so a resend is safe.
-    mutationFn: ({ orderId, dates }: PlaceOrder) =>
-      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/place`, dates),
+    mutationFn: ({ orderId, dates, session }: PlaceOrder) =>
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/place`, dates, session),
     retry,
     scope: EDITS,
     onSuccess: async (order: GroceryOrder) => {
@@ -309,6 +373,68 @@ export function registerOrderMutations(queryClient: QueryClient) {
         queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders }),
       ]),
   })
+
+  queryClient.setMutationDefaults(TAKE, {
+    mutationFn: ({ orderId, session, step }: TakeLock) => {
+      if (closedSessions.has(session)) throw new FlowClosed()
+      return apiRequest<OrderLock>('POST', `/v1/grocery-orders/${orderId}/lock`, { step }, session)
+    },
+    // The flow tries again at its next check.
+    retry: false,
+    // A release sent as the flow closes goes after it.
+    scope: EDITS,
+    meta: NOT_PERSISTED,
+    onSuccess: (lock: OrderLock, { orderId }: TakeLock) =>
+      queryClient.setQueryData<GroceryOrder>(orderKey(orderId), (order) => order && { ...order, lock }),
+  })
+
+  queryClient.setMutationDefaults(RELEASE, {
+    // Lets the others in the household order once the flow closes; the lock
+    // lapses anyway 2 minutes after its last renewal.
+    mutationFn: ({ orderId, session }: ReleaseLock) =>
+      apiRequest<void>('DELETE', `/v1/grocery-orders/${orderId}/lock`, undefined, session),
+    retry,
+    // After the changes made before closing, which need the lock.
+    scope: EDITS,
+    meta: NOT_PERSISTED,
+    onSuccess: (_result: void, { orderId, session }: ReleaseLock) =>
+      queryClient.setQueryData<GroceryOrder>(
+        orderKey(orderId),
+        (order) => order && (order.lock?.session === session ? { ...order, lock: null } : order),
+      ),
+  })
+}
+
+export interface ReleaseLock extends InSession {
+  orderId: string
+}
+
+export interface TakeLock extends InSession {
+  orderId: string
+  step: OrderStep
+}
+
+/** Takes the order's lock for the flow's session (after the changes still being saved). */
+export function takeLock(queryClient: QueryClient, take: TakeLock): Promise<OrderLock> {
+  return new MutationObserver<OrderLock, Error, TakeLock>(queryClient, { mutationKey: TAKE }).mutate(take)
+}
+
+/**
+ * The flow has closed: nothing takes the order's lock for its session any more,
+ * and the lock it has (on `orderId`, the order it showed, if any) is released.
+ * One still being taken (opening) is released as soon as it's taken.
+ */
+export function closeFlowSession(queryClient: QueryClient, session: string, orderId: string | undefined) {
+  closedSessions.add(session)
+  if (orderId !== undefined) releaseLock(queryClient, { orderId, session })
+}
+
+/** Releases the order's lock, if the flow's session still has it. */
+function releaseLock(queryClient: QueryClient, release: ReleaseLock) {
+  new MutationObserver<void, Error, ReleaseLock>(queryClient, { mutationKey: RELEASE })
+    .mutate(release)
+    // A failure is logged by the mutation cache; the lock lapses on its own.
+    .catch(() => undefined)
 }
 
 export function useOpenOrder() {

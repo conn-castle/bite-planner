@@ -1,0 +1,41 @@
+/* spec/mockup.html: the flow's locked step (.wait, .who.lg, .pstep, .lede) */
+.locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-top: 40px;
+}
+
+.who {
+  margin-bottom: 22px;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--cc-font-display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.lede {
+  margin: 6px 0 0;
+  font-size: 15px;
+  color: var(--cc-ink-2);
+}
+
+.step {
+  margin-top: 22px;
+}
+
+.small {
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.small.after {
+  margin-top: 26px;
+}

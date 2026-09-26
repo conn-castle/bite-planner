@@ -293,6 +293,7 @@ describe('what a tap leads to', () => {
     next_delivery_date: null,
     jobs: [],
     picks: [],
+    lock: null,
   })
   const next = (number: number, current: GroceryOrder | null): NextOrder => ({
     number,

@@ -1,4 +1,4 @@
-/* spec/mockup.html: .chip, .chip.acc, .chip.ok, .chip.warn */
+/* spec/mockup.html: .chip, .chip.acc, .chip.ok, .chip.warn, .chip.dark */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -41,6 +41,12 @@
 
 .danger {
   background: var(--cc-danger);
+  color: var(--cc-on-ink);
+}
+
+/* .chip.dark */
+.dark {
+  background: var(--cc-ink);
   color: var(--cc-on-ink);
 }
 

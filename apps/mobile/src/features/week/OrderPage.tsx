@@ -14,6 +14,7 @@ import { Skeleton } from '../../ui/Skeleton'
 import { MealRow } from '../meals/MealRow'
 import { plural } from '../orders/format'
 import { OrderFlowModal } from '../orders/OrderFlow'
+import { lockedByOther } from '../orders/lock'
 import { useNextOrder, usePlacedOrders } from '../orders/orders'
 import { useSession } from '../session/session'
 import { byWhom, coverage, coveringFrom, followingOrder, placedOn, placedTitle } from './home'
@@ -74,6 +75,7 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
   const [flowOpen, setFlowOpen] = useState(false)
   const meals = plural(order.meals.length, 'meal')
   const following = followingOrder(order, placed, next)
+  const theirLock = lockedByOther(next?.draft, userId)
 
   function openFlow() {
     setPresentingElement(page.current?.closest<HTMLElement>('.ion-page') ?? undefined)
@@ -131,9 +133,11 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
           <Row
             label={`Order ${following.next.number} · delivery ${formatDate(following.next.target_date, 'medium')}`}
             sub={
-              following.next.decide_by_date
-                ? `Decide by ${formatDate(following.next.decide_by_date, 'medium')}`
-                : undefined
+              theirLock
+                ? `${theirLock.member.name ?? 'Someone in your household'} is placing it`
+                : following.next.decide_by_date
+                  ? `Decide by ${formatDate(following.next.decide_by_date, 'medium')}`
+                  : undefined
             }
             chevron
             onClick={openFlow}

@@ -27,6 +27,11 @@
   --cc-success-soft: #e8f5ee;
   --cc-danger: #d23b2c;
   --cc-danger-soft: #fcecea;
+  /* Another member at work (e.g. placing an order): their initial, the lock's card and progress. */
+  --cc-other: #5b7fa8;
+  --cc-other-soft: #eef2f8;
+  --cc-other-line: rgba(91, 127, 168, 0.45);
+  --cc-other-ring: rgba(91, 127, 168, 0.3);
 
   /* Each order's color, in turn by order number: the days its meals cover.
      -soft is its card's tinted head, -deep its text on that tint. */

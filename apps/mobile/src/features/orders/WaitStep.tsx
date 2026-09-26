@@ -12,6 +12,7 @@ import { newestBatchState } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { elapsed } from './format'
 import { useGenerateMeals } from './orders'
+import { useOrderSession } from './lock'
 import styles from './WaitStep.module.css'
 
 interface WaitStepProps {
@@ -24,10 +25,11 @@ interface WaitStepProps {
  * two, and the flow can be closed meanwhile), or why it failed.
  */
 export function WaitStep({ order, onClose }: WaitStepProps) {
+  const session = useOrderSession()
   const generate = useGenerateMeals()
   const batch = newestBatchState(order)
   const now = useNow(1000)
-  const start = () => generate.mutate({ orderId: order.id, jobId: crypto.randomUUID() })
+  const start = () => generate.mutate({ orderId: order.id, jobId: crypto.randomUUID(), session })
   const running = batch.status === 'running' || generate.isPending
   // "Ideas ready" reaches this phone only for its own batch, with notifications on.
   const userId = useSession().data?.user.id ?? null

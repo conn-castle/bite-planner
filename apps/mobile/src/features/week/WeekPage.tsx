@@ -1,10 +1,11 @@
 import { placedMealPath } from '../meals/meals'
-import { useIonAlert, useIonRouter } from '@ionic/react'
+import { useIonAlert, useIonRouter, useIonViewDidEnter, useIonViewDidLeave } from '@ionic/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GroceryOrder, ISODate, NextOrder, PlacedMeal, PlacedOrder } from '../../lib/api/types'
 import { addDays, formatDate, localDate, toLocalDate } from '../../lib/dates'
 import { errorFields, logger } from '../../lib/log'
+import { queryKeys } from '../../lib/query/keys'
 import { useNow } from '../../lib/useNow'
 import { IconButton } from '../../ui/Button'
 import { CardStack } from '../../ui/CardStack'
@@ -16,6 +17,8 @@ import { Skeleton } from '../../ui/Skeleton'
 import { suggestions } from '../orders/batches'
 import { DraftCard } from '../orders/DraftCard'
 import { plural } from '../orders/format'
+import { LOCK_RENEW_MS, lockedByOther } from '../orders/lock'
+import { LockedCard } from '../orders/LockedCard'
 import { OrderFlowModal } from '../orders/OrderFlow'
 import { nextQuery, useDiscardOrder, useNextOrder, usePlacedOrders } from '../orders/orders'
 import {
@@ -48,7 +51,12 @@ export function WeekPage() {
   const page = useRef<HTMLElement>(null)
   const [presentingElement, setPresentingElement] = useState<HTMLElement>()
   const [flowOpen, setFlowOpen] = useState(false)
-  const next = useNextOrder()
+  // While Home shows, the next order is checked every 30 seconds: someone else
+  // may start ordering, stop, or place it.
+  const [shown, setShown] = useState(true)
+  useIonViewDidEnter(() => setShown(true))
+  useIonViewDidLeave(() => setShown(false))
+  const next = useNextOrder(shown ? LOCK_RENEW_MS : false)
   const placed = usePlacedOrders(coveringFrom(today))
   const discard = useDiscardOrder()
   const router = useIonRouter()
@@ -61,6 +69,16 @@ export function WeekPage() {
     shownDay.current = today
     void queryClient.invalidateQueries({ queryKey: nextQuery.queryKey })
   }, [today, queryClient])
+
+  // Someone placed the next order (its number moved on): its card joins the placed ones.
+  const nextNumber = next.data?.number
+  const seenNumber = useRef(nextNumber)
+  useEffect(() => {
+    if (seenNumber.current !== undefined && nextNumber !== undefined && nextNumber !== seenNumber.current) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders })
+    }
+    seenNumber.current = nextNumber
+  }, [nextNumber, queryClient])
 
   // The order the flow opens: a notification's, or (undefined) the household's draft, made if there's none.
   const [flowOrderId, setFlowOrderId] = useState<string>()
@@ -218,7 +236,8 @@ function Home({ next, placed, today, onStart, onDiscard, discarding, onOpenOrder
   // Cards whose meals were folded or unfolded from how they start (the top card open, the rest folded).
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set())
   const days = useMemo(() => homeStrip(placed, next, today), [placed, next, today])
-  const cards = useMemo(() => homeCards(placed, next, today), [placed, next, today])
+  const cards = useMemo(() => homeCards(placed, next, today, userId), [placed, next, today, userId])
+  const theirLock = lockedByOther(next.draft, userId)
   const shownDay = chosenDay ?? today
 
   const reminder = useYourReminder()
@@ -256,6 +275,8 @@ function Home({ next, placed, today, onStart, onDiscard, discarding, onOpenOrder
               onOpen={() => onOpenOrder(card.order.id)}
               onOpenMeal={onOpenMeal}
             />
+          ) : next.draft && theirLock ? (
+            <LockedCard key="next" order={next.draft} lock={theirLock} />
           ) : next.draft ? (
             <DraftCard
               key="next"

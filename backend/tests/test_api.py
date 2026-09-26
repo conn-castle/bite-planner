@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_OID, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -123,9 +123,18 @@ def households(session: Session) -> None:
 # Helpers.
 
 
-def as_user(user_id: UUID, zone: str | None = ZONE) -> dict[str, str]:
-    """The headers the app sends: the member's token and the phone's time zone."""
-    headers = {"Authorization": f"Bearer {user_id}"}
+def phone(user_id: UUID) -> UUID:
+    """The ordering session of the member's phone: its order flow, open."""
+    return uuid5(NAMESPACE_OID, str(user_id))
+
+
+def as_user(user_id: UUID, zone: str | None = ZONE, session: UUID | None = None) -> dict[str, str]:
+    """The headers the app sends: the member's token, the phone's time zone, and
+    the ordering session (by default, their phone's)."""
+    headers = {
+        "Authorization": f"Bearer {user_id}",
+        "Order-Session": str(session or phone(user_id)),
+    }
     if zone is not None:
         headers["Time-Zone"] = zone
     return headers
@@ -159,6 +168,11 @@ def open_draft(client: TestClient, user: UUID = MOM) -> dict[str, Any]:
     return response.json()
 
 
+def close_flow(client: TestClient, order_id: str, user: UUID = MOM) -> None:
+    """The member closes the order flow on their phone, releasing the lock."""
+    no_content(client.delete(f"/v1/grocery-orders/{order_id}/lock", headers=as_user(user)))
+
+
 def get_order(client: TestClient, order_id: str, user: UUID = MOM) -> dict[str, Any]:
     return ok(client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(user)))
 
@@ -171,6 +185,10 @@ def set_servings(
         headers=as_user(user),
         json={"servings": servings},
     )
+
+
+def without_lock(order: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in order.items() if key != "lock"}
 
 
 def servings_of(order: dict[str, Any]) -> dict[str, int]:
@@ -478,12 +496,25 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "next_delivery_date": None,
         "jobs": [],
         "picks": [],
+        "lock": draft["lock"],
     }
-    # Reopening it, or another member opening the flow, resumes the same draft.
-    assert ok(client.post("/v1/grocery-orders", headers=as_user(MOM))) == draft
-    assert ok(client.post("/v1/grocery-orders", headers=as_user(DAD))) == draft
-    assert next_order(client, DAD)["draft"] == draft
-    assert get_order(client, draft["id"], DAD) == draft
+    # Opening it takes its lock for Mom's phone.
+    assert draft["lock"] | {"since": None, "expires_at": None} == {
+        "member": {"user_id": str(MOM), "name": "Mom"},
+        "session": str(phone(MOM)),
+        "since": None,
+        "step": "pick",
+        "expires_at": None,
+    }
+    # Reopening it, or another member opening the flow once she's closed it,
+    # resumes the same draft.
+    close_flow(client, draft["id"])
+    reopened = ok(client.post("/v1/grocery-orders", headers=as_user(MOM)))
+    close_flow(client, draft["id"])
+    dads = ok(client.post("/v1/grocery-orders", headers=as_user(DAD)))
+    assert without_lock(reopened) == without_lock(dads) == without_lock(draft)
+    assert next_order(client, DAD)["draft"] == dads
+    assert get_order(client, draft["id"], DAD) == dads
 
 
 def test_members_opening_the_flow_at_once_share_one_draft(
@@ -539,6 +570,7 @@ def test_households_see_and_change_only_their_own_orders(
 def test_writes_to_a_discarded_draft_do_not_reach_the_new_one(client: TestClient) -> None:
     # A stale screen still showing the discarded draft.
     old_id, [meal_id, _] = with_suggestions(client)
+    close_flow(client, old_id)
     assert client.delete(f"/v1/grocery-orders/{old_id}", headers=as_user(DAD)).status_code == 204
     new = open_draft(client)
 
@@ -675,7 +707,7 @@ def test_both_dates_are_set_each_time(client: TestClient) -> None:
     first = tomorrow()
 
     set_both = ok(put_dates(client, order_id, first, first + timedelta(days=4)))
-    only_delivery = ok(put_dates(client, order_id, first + timedelta(days=1), None, DAD))
+    only_delivery = ok(put_dates(client, order_id, first + timedelta(days=1), None))
     cleared = ok(put_dates(client, order_id, None, None))
 
     assert (set_both["delivery_date"], set_both["next_delivery_date"]) == (
@@ -792,14 +824,13 @@ def test_one_batch_at_a_time(client: TestClient) -> None:
     first = ok(request_batch(client, order_id), 201)["id"]
 
     detail(request_batch(client, order_id), 429)  # pending
-    detail(request_batch(client, order_id, DAD), 429)  # for anyone in the household
     with Session(get_engine()) as worker_session:
         claim_job(worker_session, UUID(first))
     detail(request_batch(client, order_id), 429)  # running
     finish_batch(first, ["Tacos"])
 
     # "Generate more": another batch once the first is done.
-    second = ok(request_batch(client, order_id, DAD), 201)
+    second = ok(request_batch(client, order_id), 201)
     assert [job["id"] for job in get_order(client, order_id)["jobs"]] == [first, second["id"]]
 
 
@@ -887,9 +918,7 @@ def test_concurrent_batch_requests_start_one_batch(
 ) -> None:
     order_id = open_draft(client)["id"]
 
-    responses = run_at_once(
-        [lambda user=user: request_batch(client, order_id, user) for user in [MOM, DAD] * 3]
-    )
+    responses = run_at_once([lambda: request_batch(client, order_id) for _ in range(6)])
 
     assert sorted(response.status_code for response in responses) == [201] + [429] * 5
     assert len(get_order(client, order_id)["jobs"]) == 1
@@ -900,7 +929,7 @@ def test_suggestions_are_the_batches_meals_oldest_batch_first(client: TestClient
     order_id = open_draft(client)["id"]
     first = ok(request_batch(client, order_id), 201)["id"]
     finish_batch(first, ["Tacos", "Soup"])
-    second = ok(request_batch(client, order_id, DAD), 201)["id"]
+    second = ok(request_batch(client, order_id), 201)["id"]
     finish_batch(second, ["Chili", "Stir Fry"])
 
     order = get_order(client, order_id)
@@ -928,13 +957,13 @@ def test_suggestions_are_the_batches_meals_oldest_batch_first(client: TestClient
 # Picking.
 
 
-def test_members_pick_and_unpick_the_drafts_suggestions(client: TestClient) -> None:
+def test_a_member_picks_and_unpicks_the_drafts_suggestions(client: TestClient) -> None:
     order_id, [first, second] = with_suggestions(client)
 
     assert picked(ok(pick(client, order_id, first))) == [first]
-    assert sorted(picked(ok(pick(client, order_id, second, DAD)))) == sorted([first, second])
+    assert sorted(picked(ok(pick(client, order_id, second)))) == sorted([first, second])
     assert sorted(picked(ok(pick(client, order_id, first)))) == sorted([first, second])
-    unpicked = client.delete(f"/v1/grocery-orders/{order_id}/meals/{first}", headers=as_user(DAD))
+    unpicked = client.delete(f"/v1/grocery-orders/{order_id}/meals/{first}", headers=as_user(MOM))
 
     assert picked(ok(unpicked)) == [second]
     assert picked(get_order(client, order_id)) == [second]
@@ -977,7 +1006,7 @@ def test_placing_needs_picks_and_both_dates(client: TestClient, grocer: list[UUI
 def test_placing_saves_the_dates_the_member_saw(client: TestClient, grocer: list[UUID]) -> None:
     order_id, [meal_id, _] = with_suggestions(client)
     ok(pick(client, order_id, meal_id))
-    ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=1), DAD))
+    ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=1)))
     shown = (tomorrow() + timedelta(days=1), tomorrow() + timedelta(days=4))
 
     placed = ok(place(client, order_id, dates=shown))
@@ -1017,12 +1046,15 @@ def test_a_member_places_the_draft(client: TestClient, grocer: list[UUID]) -> No
     delivery = tomorrow()
     ok(put_dates(client, order_id, delivery, delivery + timedelta(days=2)))
 
+    # Mom closes it; Dad opens it and places it.
+    close_flow(client, order_id)
+    open_draft(client, DAD)
     before = datetime.now(UTC)
     placed = ok(place(client, order_id, DAD))
     after = datetime.now(UTC)
 
     assert get_order(client, order_id) == placed
-    assert (placed["status"], picked(placed)) == ("placed", [meal_id])
+    assert (placed["status"], picked(placed), placed["lock"]) == ("placed", [meal_id], None)
     assert (placed["delivery_date"], placed["next_delivery_date"]) == (
         delivery.isoformat(),
         (delivery + timedelta(days=2)).isoformat(),
@@ -1093,7 +1125,7 @@ def test_a_pick_starts_at_the_households_default_servings_and_keeps_its_own(
     ok(client.patch("/v1/household", headers=as_user(DAD), json={"default_servings": 6}))
 
     assert servings_of(ok(pick(client, order_id, tacos))) == {tacos: 6}
-    changed = ok(set_servings(client, order_id, tacos, 2, DAD))
+    changed = ok(set_servings(client, order_id, tacos, 2))
     # Picking it again, or a new default, leaves the servings it has.
     ok(client.patch("/v1/household", headers=as_user(MOM), json={"default_servings": 3}))
     ok(pick(client, order_id, tacos))
@@ -1138,6 +1170,7 @@ def test_discarding_the_draft_deletes_it_and_its_batches_but_keeps_their_meals(
 ) -> None:
     order_id, [tacos, soup] = with_suggestions(client)
     ok(pick(client, order_id, tacos))
+    close_flow(client, order_id)
 
     discarded = client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(DAD))
 
@@ -1199,7 +1232,7 @@ def test_the_next_order_is_decided_by_its_target_less_the_households_offset(
     # Once started, its draft agrees.
     draft = open_draft(client)
     shown = next_order(client, DAD)
-    assert shown["draft"] == draft
+    assert without_lock(shown["draft"]) == without_lock(draft)
     assert (
         shown["number"],
         shown["target_date"],
@@ -1550,7 +1583,7 @@ def test_not_for_us_unpicks_the_meal_and_keeps_it_from_being_picked(client: Test
     ok(pick(client, order_id, first))
     ok(pick(client, order_id, second))
 
-    no_content(rate(client, first, "not_for_us", DAD))
+    no_content(rate(client, first, "not_for_us"))
 
     assert picked(get_order(client, order_id)) == [second]
     message = detail(pick(client, order_id, first), 409)
@@ -1593,13 +1626,298 @@ def test_a_pick_and_a_not_for_us_mark_at_once_never_leave_the_meal_picked(
         picking, marked = run_at_once(
             [
                 lambda meal_id=meal_id: pick(client, order_id, meal_id),
-                lambda meal_id=meal_id: rate(client, meal_id, "not_for_us", DAD),
+                lambda meal_id=meal_id: rate(client, meal_id, "not_for_us"),
             ]
         )
         assert picking.status_code in (200, 409), picking.text
         assert marked.status_code == 204, marked.text
 
     assert picked(get_order(client, order_id)) == []
+
+
+# The order lock.
+
+
+def lock_url(order_id: str) -> str:
+    return f"/v1/grocery-orders/{order_id}/lock"
+
+
+def take(client: TestClient, order_id: str, user: UUID, session: UUID | None = None) -> Response:
+    """The flow opening a given order (a notification's) takes its lock."""
+    return client.post(
+        lock_url(order_id), headers=as_user(user, session=session), json={"step": "pick"}
+    )
+
+
+def renew(
+    client: TestClient,
+    order_id: str,
+    user: UUID = MOM,
+    step: str = "pick",
+    session: UUID | None = None,
+) -> Response:
+    return client.put(
+        lock_url(order_id), headers=as_user(user, session=session), json={"step": step}
+    )
+
+
+def expire_lock(session: Session, order_id: str) -> None:
+    """Two minutes pass without a renewal (the phone went away)."""
+    session.execute(
+        text(
+            "UPDATE grocery_order SET lock_renewed_at = now() - interval '2 minutes 1 second' "
+            "WHERE id = :id"
+        ),
+        {"id": order_id},
+    )
+    session.commit()
+
+
+def dads_changes(client: TestClient, order_id: str, meal_id: str) -> dict[str, Response]:
+    """Every change Dad's phone could make to the draft."""
+    dad = as_user(DAD)
+    return {
+        "pick": pick(client, order_id, meal_id, DAD),
+        "unpick": client.delete(f"/v1/grocery-orders/{order_id}/meals/{meal_id}", headers=dad),
+        "servings": set_servings(client, order_id, meal_id, 2, DAD),
+        "dates": put_dates(client, order_id, tomorrow(), None, DAD),
+        "batch": request_batch(client, order_id, DAD),
+        "not for us": rate(client, meal_id, "not_for_us", DAD),
+        "place": place(client, order_id, DAD, dates=(tomorrow(), tomorrow() + timedelta(days=2))),
+        "discard": client.delete(f"/v1/grocery-orders/{order_id}", headers=dad),
+    }
+
+
+def test_while_one_member_orders_the_others_see_who_and_can_change_nothing(
+    client: TestClient, dispatcher: RecordingDispatcher
+) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    before = get_order(client, order_id)
+
+    # Dad opens the flow: the draft, showing Mom's lock, which he doesn't get.
+    dads = ok(client.post("/v1/grocery-orders", headers=as_user(DAD)))
+    refused = dads_changes(client, order_id, tacos)
+
+    assert dads["lock"] | {"since": None, "expires_at": None} == {
+        "member": {"user_id": str(MOM), "name": "Mom"},
+        "session": None,  # Mom's session is hers
+        "since": None,
+        "step": "pick",
+        "expires_at": None,
+    }
+    assert next_order(client, DAD)["draft"]["lock"] == dads["lock"]
+    for change, response in refused.items():
+        assert detail(response, 423) == "Someone else in your household is placing this order.", (
+            change
+        )
+    detail(take(client, order_id, DAD), 423)
+    detail(renew(client, order_id, DAD), 423)
+    assert without_lock(get_order(client, order_id)) == without_lock(before)
+    assert len(dispatcher.dispatched) == 1  # Mom's batch only
+
+
+def test_renewing_keeps_the_lock_and_says_where_the_member_is(
+    client: TestClient, session: Session
+) -> None:
+    opened = open_draft(client)
+    order_id = opened["id"]
+
+    renewed = ok(renew(client, order_id, step="dates"))
+
+    assert renewed["since"] == opened["lock"]["since"]
+    assert renewed["expires_at"] > opened["lock"]["expires_at"]
+    assert renewed["step"] == "dates"
+    assert get_order(client, order_id, DAD)["lock"]["step"] == "dates"
+    # Renewed after it lapsed, it's still hers while no one else has taken it.
+    expire_lock(session, order_id)
+    assert get_order(client, order_id, DAD)["lock"] is None
+    assert ok(renew(client, order_id))["member"]["user_id"] == str(MOM)
+    assert get_order(client, order_id, DAD)["lock"]["member"]["user_id"] == str(MOM)
+
+
+def test_a_lock_two_minutes_old_goes_to_whoever_opens_the_order_next(
+    client: TestClient, session: Session
+) -> None:
+    order_id, [tacos, soup] = with_suggestions(client)
+    expire_lock(session, order_id)
+
+    dads = open_draft(client, DAD)
+    ok(pick(client, order_id, soup, DAD))
+
+    assert dads["lock"]["member"]["user_id"] == str(DAD)
+    assert dads["lock"]["session"] == str(phone(DAD))
+    # Mom's phone comes back: its changes and renewals are refused, and nothing it
+    # sends takes the lock back.
+    assert detail(pick(client, order_id, tacos), 423) == (
+        "Someone else in your household is placing this order."
+    )
+    detail(renew(client, order_id), 423)
+    close_flow(client, order_id)  # releases only her own
+    assert get_order(client, order_id)["lock"]["member"]["user_id"] == str(DAD)
+    assert picked(get_order(client, order_id)) == [soup]
+
+
+def test_a_phone_that_slept_past_two_minutes_carries_on_if_no_one_took_over(
+    client: TestClient, session: Session
+) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    expire_lock(session, order_id)
+
+    # A change doesn't renew the lock; the app's renewal does.
+    assert picked(ok(pick(client, order_id, tacos))) == [tacos]
+    assert get_order(client, order_id)["lock"] is None
+
+
+def test_closing_the_flow_releases_the_lock_for_the_others(client: TestClient) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+
+    close_flow(client, order_id)
+
+    assert get_order(client, order_id, DAD)["lock"] is None
+    # A renewal or change sent before closing but arriving after it takes nothing.
+    detail(renew(client, order_id), 423)
+    assert detail(pick(client, order_id, tacos), 423) == (
+        "This order isn't open here any more. Open it again."
+    )
+    assert get_order(client, order_id, DAD)["lock"] is None
+    # Dad can open it now.
+    assert ok(take(client, order_id, DAD))["member"]["user_id"] == str(DAD)
+    ok(pick(client, order_id, tacos, DAD))
+
+
+def test_opening_the_order_on_another_phone_moves_the_members_lock_there(
+    client: TestClient,
+) -> None:
+    order_id, [tacos, soup] = with_suggestions(client)
+    ipad = uuid4()
+
+    moved = ok(client.post("/v1/grocery-orders", headers=as_user(MOM, session=ipad)))
+    ok(
+        client.put(
+            f"/v1/grocery-orders/{order_id}/meals/{soup}", headers=as_user(MOM, session=ipad)
+        )
+    )
+
+    assert moved["lock"]["session"] == str(ipad)
+    assert detail(pick(client, order_id, tacos), 423) == (
+        "You're placing this order on another phone."
+    )
+    detail(renew(client, order_id), 423)  # her phone's renewal doesn't take it back
+    # Taking it (opening the order on the phone again) moves it back.
+    assert ok(take(client, order_id, MOM))["session"] == str(phone(MOM))
+    ok(pick(client, order_id, tacos))
+    assert sorted(picked(get_order(client, order_id))) == sorted([tacos, soup])
+
+
+def test_placing_releases_the_lock(client: TestClient, grocer: list[UUID]) -> None:
+    placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
+
+    assert placed["lock"] is None
+    detail(renew(client, placed["id"]), 409)
+    detail(take(client, placed["id"], DAD), 409)
+    no_content(client.delete(lock_url(placed["id"]), headers=as_user(MOM)))
+    # The next draft is Dad's to open.
+    assert open_draft(client, DAD)["lock"]["member"]["user_id"] == str(DAD)
+
+
+def test_the_lock_of_a_discarded_or_unknown_order_is_not_found(client: TestClient) -> None:
+    order_id = open_draft(client)["id"]
+    no_content(client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(MOM)))
+
+    for missing in (order_id, str(uuid4())):
+        detail(take(client, missing, MOM), 404)
+        detail(renew(client, missing), 404)
+        no_content(client.delete(lock_url(missing), headers=as_user(MOM)))
+    # Another household's order is no one's here.
+    neighbors = open_draft(client, NEIGHBOR)["id"]
+    detail(take(client, neighbors, MOM), 404)
+
+
+def test_discarding_waits_for_the_member_ordering(client: TestClient, session: Session) -> None:
+    order_id = open_draft(client)["id"]
+
+    detail(client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(DAD)), 423)
+    expire_lock(session, order_id)
+    no_content(client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(DAD)))
+    assert next_order(client)["draft"] is None
+
+
+def test_not_for_us_outside_the_flow_leaves_a_pick_to_the_member_ordering(
+    client: TestClient,
+) -> None:
+    order_id, [tacos, soup] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    no_session = {"Authorization": f"Bearer {MOM}", "Time-Zone": ZONE}
+
+    refused = client.put(
+        f"/v1/meals/{tacos}/rating", headers=no_session, json={"rating": "not_for_us"}
+    )
+    not_picked = client.put(
+        f"/v1/meals/{soup}/rating", headers=no_session, json={"rating": "not_for_us"}
+    )
+
+    assert detail(refused, 423) == "It's picked for the next order: open the order to change it."
+    no_content(not_picked)
+    assert picked(get_order(client, order_id)) == [tacos]
+    assert get_meal(client, tacos)["rating"] is None
+
+
+def test_members_opening_the_flow_at_once_get_one_lock(client: TestClient) -> None:
+    order_id = open_draft(client)["id"]
+    close_flow(client, order_id)
+
+    responses = run_at_once(
+        [
+            lambda user=user: client.post("/v1/grocery-orders", headers=as_user(user))
+            for user in [MOM, DAD] * 2
+        ]
+    )
+
+    holders = {ok(response)["lock"]["member"]["user_id"] for response in responses}
+    assert len(holders) == 1
+    [holder] = holders
+    sessions = [ok(response)["lock"]["session"] for response in responses]
+    assert sessions.count(str(phone(UUID(holder)))) == 2 and sessions.count(None) == 2
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("post", "/v1/grocery-orders", None),
+        ("post", "/v1/grocery-orders/{order}/lock", {"step": "pick"}),
+        ("put", "/v1/grocery-orders/{order}/lock", {"step": "pick"}),
+        ("delete", "/v1/grocery-orders/{order}/lock", None),
+        ("put", "/v1/grocery-orders/{order}/meals/{meal}", None),
+        ("delete", "/v1/grocery-orders/{order}/meals/{meal}", None),
+        ("put", "/v1/grocery-orders/{order}/meals/{meal}/servings", {"servings": 2}),
+        (
+            "put",
+            "/v1/grocery-orders/{order}/dates",
+            {"delivery_date": None, "next_delivery_date": None},
+        ),
+        ("post", "/v1/grocery-orders/{order}/jobs", {"job_id": JOB_ID}),
+        (
+            "post",
+            "/v1/grocery-orders/{order}/place",
+            {"delivery_date": "2030-01-01", "next_delivery_date": "2030-01-02"},
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) else "",
+)
+def test_changes_from_the_flow_need_its_ordering_session(
+    client: TestClient, method: str, path: str, body: dict[str, Any] | None
+) -> None:
+    order_id, [meal_id, _] = with_suggestions(client)
+    before = get_order(client, order_id)
+    no_session = {"Authorization": f"Bearer {MOM}", "Time-Zone": ZONE}
+
+    response = client.request(
+        method, path.format(order=order_id, meal=meal_id), headers=no_session, json=body
+    )
+
+    assert detail(response, 400) == "Send the ordering session in the Order-Session header."
+    assert get_order(client, order_id) == before
 
 
 # Error bodies.

@@ -1,5 +1,6 @@
 import { IonApp, setupIonicReact } from '@ionic/react'
 import { IonReactRouter } from '@ionic/react-router'
+import { defaultShouldDehydrateMutation } from '@tanstack/react-query'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { useEffect } from 'react'
 import { NotInHousehold } from '../features/session/NotInHousehold'
@@ -23,7 +24,16 @@ export function App() {
   return (
     <PersistQueryClientProvider
       client={queryClient}
-      persistOptions={{ persister, maxAge: PERSIST_MAX_AGE_MS, buster: __APP_VERSION__ }}
+      persistOptions={{
+        persister,
+        maxAge: PERSIST_MAX_AGE_MS,
+        buster: __APP_VERSION__,
+        // Requests made offline are kept, except those only the open flow can send (e.g. taking the order's lock).
+        dehydrateOptions: {
+          shouldDehydrateMutation: (mutation) =>
+            defaultShouldDehydrateMutation(mutation) && mutation.meta?.persist !== false,
+        },
+      }}
       // Send requests made offline before the last relaunch, then refresh.
       onSuccess={() =>
         void queryClient.resumePausedMutations().then(() => queryClient.invalidateQueries())

@@ -1,10 +1,16 @@
 """Grocery orders: a household's draft, its suggestions and picks, its dates, and
 placing it. Every write to a draft locks its row first, so concurrent requests
-from the household's members apply one at a time."""
+from the household's members apply one at a time.
+
+The order lock: only one ordering session (one opening of the create-order flow,
+on one phone) changes the draft at a time. Opening the flow takes the lock when
+no one else has a live one; the app renews it every 30 seconds, and it expires 2
+minutes after the last renewal. Changes are accepted only from the session that
+has it."""
 
 import logging
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, text, tuple_
@@ -21,6 +27,7 @@ from castle_chef.models import (
     Job,
     Meal,
     MealRating,
+    OrderStep,
     utc_now,
 )
 
@@ -59,6 +66,69 @@ class NotReady(Exception):
     """The draft can't be placed yet; the message says why, for the member."""
 
 
+class OrderLocked(Exception):
+    """Another ordering session has the draft's lock (or this one no longer does)."""
+
+
+# A lock expires this long after its last renewal (the app renews every 30 s).
+LOCK_TTL = timedelta(minutes=2)
+
+
+@dataclass(frozen=True)
+class Orderer:
+    """A member making changes in one ordering session: one opening of the flow,
+    on one phone, identified by an id the app chooses."""
+
+    user_id: UUID
+    session: UUID
+
+
+def lock_expires_at(order: GroceryOrder) -> datetime | None:
+    """When the order's lock expires, or None if no one has taken it."""
+    return None if order.lock_renewed_at is None else order.lock_renewed_at + LOCK_TTL
+
+
+def has_live_lock(order: GroceryOrder, now: datetime) -> bool:
+    expires = lock_expires_at(order)
+    return expires is not None and expires > now
+
+
+def _refuse(order: GroceryOrder, user_id: UUID, now: datetime) -> OrderLocked:
+    if has_live_lock(order, now) and order.locked_by != user_id:
+        return OrderLocked("Someone else in your household is placing this order.")
+    if has_live_lock(order, now):
+        return OrderLocked("You're placing this order on another phone.")
+    return OrderLocked("This order isn't open here any more. Open it again.")
+
+
+def _take(order: GroceryOrder, orderer: Orderer, step: OrderStep, now: datetime) -> bool:
+    """Give the lock to the orderer's session if no one else has a live one; its
+    own member's other session (another phone, or this one before a relaunch)
+    gives way. Returns whether it did."""
+    if has_live_lock(order, now) and order.locked_by != orderer.user_id:
+        return False
+    if order.lock_session != orderer.session:
+        order.locked_at = now
+    order.locked_by, order.lock_session = orderer.user_id, orderer.session
+    order.lock_renewed_at, order.lock_step = now, step
+    return True
+
+
+def _check_session(session: Session, order: GroceryOrder, orderer: Orderer) -> None:
+    """Raise OrderLocked (rolling back) unless the orderer's session has the lock:
+    live, or expired with no one having taken it since (a phone that slept a
+    while carries on)."""
+    if order.lock_session == orderer.session and order.locked_by == orderer.user_id:
+        return
+    session.rollback()
+    raise _refuse(order, orderer.user_id, utc_now())
+
+
+def _clear_lock(order: GroceryOrder) -> None:
+    order.locked_by = order.lock_session = order.locked_at = None
+    order.lock_renewed_at = order.lock_step = None
+
+
 def earliest_delivery_date(today: date) -> date:
     """The soonest delivery date a member can choose. Later this asks the grocery
     service for its soonest slot."""
@@ -80,16 +150,18 @@ def get_draft(session: Session, household_id: UUID) -> GroceryOrder | None:
 
 
 def get_or_create_draft(
-    session: Session, household_id: UUID, member_id: UUID
+    session: Session, household_id: UUID, orderer: Orderer
 ) -> tuple[GroceryOrder, bool]:
-    """The household's draft, created if it has none, and committed. Returns
-    (draft, created). Two members opening the flow at once get the same draft."""
+    """Open the household's draft: created if it has none, its lock taken for the
+    orderer's session unless someone else has it (the draft then shows who), and
+    committed. Returns (draft, created). Two members opening the flow at once get
+    the same draft, and one of them the lock."""
     created_id = session.execute(
         insert(GroceryOrder)
         .values(
             id=uuid4(),
             household_id=household_id,
-            created_by=member_id,
+            created_by=orderer.user_id,
             status=GroceryOrderStatus.DRAFT,
         )
         .on_conflict_do_nothing(
@@ -98,9 +170,14 @@ def get_or_create_draft(
         .returning(col(GroceryOrder.id))
     ).scalar_one_or_none()
     session.commit()
-    draft = get_draft(session, household_id)
+    draft = lock_current_draft(session, household_id)
     if draft is None:  # discarded between the insert and the read
+        session.rollback()
         raise OrderNotFound("The draft was discarded; try again.")
+    _take(draft, orderer, OrderStep.PICK, utc_now())
+    session.add(draft)
+    session.commit()
+    session.refresh(draft)
     if created_id is not None:
         log.info(
             "grocery_order.created",
@@ -139,8 +216,8 @@ def lock_current_draft(session: Session, household_id: UUID) -> GroceryOrder | N
     ).first()
 
 
-def lock_draft(session: Session, household_id: UUID, order_id: UUID) -> GroceryOrder:
-    """The household's draft, locked for this transaction."""
+def _lock_draft_row(session: Session, household_id: UUID, order_id: UUID) -> GroceryOrder:
+    """The household's draft, locked for this transaction (its row, not the order lock)."""
     order = lock_order(session, household_id, order_id)
     if order is None:
         session.rollback()
@@ -151,9 +228,61 @@ def lock_draft(session: Session, household_id: UUID, order_id: UUID) -> GroceryO
     return order
 
 
-def discard(session: Session, household_id: UUID, order_id: UUID) -> None:
-    """Delete a draft, with its picks and jobs (their meals stay). Discarding one
-    that's already gone does nothing."""
+def lock_draft(
+    session: Session, household_id: UUID, order_id: UUID, orderer: Orderer
+) -> GroceryOrder:
+    """The household's draft, locked for this transaction, for a change from the
+    orderer's session: OrderLocked unless that session has the order lock."""
+    order = _lock_draft_row(session, household_id, order_id)
+    _check_session(session, order, orderer)
+    return order
+
+
+def take_lock(
+    session: Session, household_id: UUID, order_id: UUID, orderer: Orderer, step: OrderStep
+) -> GroceryOrder:
+    """Take the draft's lock for the orderer's session, as its flow opens:
+    OrderLocked if another member has a live one."""
+    order = _lock_draft_row(session, household_id, order_id)
+    now = utc_now()
+    if not _take(order, orderer, step, now):
+        session.rollback()
+        raise _refuse(order, orderer.user_id, now)
+    session.add(order)
+    session.commit()
+    session.refresh(order)
+    return order
+
+
+def renew_lock(
+    session: Session, household_id: UUID, order_id: UUID, orderer: Orderer, step: OrderStep
+) -> GroceryOrder:
+    """Renew the lock the orderer's session has, and say which step it's at. Never
+    takes it: a renewal arriving after the flow closed, or after another opening
+    took over, changes nothing (OrderLocked)."""
+    order = lock_draft(session, household_id, order_id, orderer)
+    order.lock_renewed_at, order.lock_step = utc_now(), step
+    session.add(order)
+    session.commit()
+    session.refresh(order)
+    return order
+
+
+def release_lock(session: Session, household_id: UUID, order_id: UUID, session_id: UUID) -> None:
+    """Release the lock if that session has it, as its flow closes; otherwise
+    (someone else's, none, gone, or placed) do nothing."""
+    order = lock_order(session, household_id, order_id)
+    if order is None or order.lock_session != session_id:
+        session.rollback()
+        return
+    _clear_lock(order)
+    session.add(order)
+    session.commit()
+
+
+def discard(session: Session, household_id: UUID, order_id: UUID, user_id: UUID) -> None:
+    """Delete a draft, with its picks and jobs (their meals stay), unless another
+    member is ordering (OrderLocked). Discarding one that's already gone does nothing."""
     order = lock_order(session, household_id, order_id)
     if order is None:
         session.rollback()
@@ -161,14 +290,20 @@ def discard(session: Session, household_id: UUID, order_id: UUID) -> None:
     if order.status != GroceryOrderStatus.DRAFT:
         session.rollback()
         raise OrderPlaced("This order has been placed and can't be discarded.")
+    now = utc_now()
+    if has_live_lock(order, now) and order.locked_by != user_id:
+        session.rollback()
+        raise _refuse(order, user_id, now)
     session.delete(order)
     session.commit()
     log.info("grocery_order.discarded", extra={"grocery_order_id": str(order_id)})
 
 
-def pick(session: Session, household_id: UUID, order_id: UUID, meal_id: UUID) -> None:
+def pick(
+    session: Session, household_id: UUID, order_id: UUID, meal_id: UUID, orderer: Orderer
+) -> None:
     """Add one of the draft's suggestions to it."""
-    lock_draft(session, household_id, order_id)
+    lock_draft(session, household_id, order_id, orderer)
     suggested = session.exec(
         select(Meal.id)
         .join(Job, col(Job.id) == Meal.job_id)
@@ -194,11 +329,16 @@ def pick(session: Session, household_id: UUID, order_id: UUID, meal_id: UUID) ->
 
 
 def set_servings(
-    session: Session, household_id: UUID, order_id: UUID, meal_id: UUID, servings: int
+    session: Session,
+    household_id: UUID,
+    order_id: UUID,
+    meal_id: UUID,
+    servings: int,
+    orderer: Orderer,
 ) -> None:
     """Change how many to make of one of the draft's picks. A meal that isn't
-    picked (e.g. just unpicked on another phone) is an error, never a new pick."""
-    lock_draft(session, household_id, order_id)
+    picked (e.g. unpicked by a change still being saved) is an error, never a new pick."""
+    lock_draft(session, household_id, order_id, orderer)
     pick = session.get(GroceryOrderMeal, (order_id, meal_id))
     if pick is None:
         session.rollback()
@@ -207,8 +347,10 @@ def set_servings(
     session.commit()
 
 
-def unpick(session: Session, household_id: UUID, order_id: UUID, meal_id: UUID) -> None:
-    lock_draft(session, household_id, order_id)
+def unpick(
+    session: Session, household_id: UUID, order_id: UUID, meal_id: UUID, orderer: Orderer
+) -> None:
+    lock_draft(session, household_id, order_id, orderer)
     session.execute(
         delete(GroceryOrderMeal).where(
             col(GroceryOrderMeal.grocery_order_id) == order_id,
@@ -236,8 +378,9 @@ def set_dates(
     delivery: date | None,
     next_delivery: date | None,
     today: date,
+    orderer: Orderer,
 ) -> None:
-    order = lock_draft(session, household_id, order_id)
+    order = lock_draft(session, household_id, order_id, orderer)
     try:
         check_dates(delivery, next_delivery, today)
     except InvalidDates:
@@ -252,16 +395,17 @@ def place(
     session: Session,
     household_id: UUID,
     order_id: UUID,
-    user_id: UUID,
+    orderer: Orderer,
     delivery: date,
     next_delivery: date,
     today: date,
 ) -> GroceryOrder:
     """Place a draft with the dates the member saw: save them, check the draft,
-    send it to the grocery service, and mark it placed by the user, now; all under
-    the draft's lock, so another phone's change can't land in between. Placing an
-    order that's already placed returns it unchanged (its dates, who placed it and
-    when included), so a retry after a lost response is safe."""
+    send it to the grocery service, and mark it placed by the user, now, releasing
+    its lock; all under the draft's row lock, so another change can't land in
+    between. Only the session with the order lock can place it. Placing an order
+    that's already placed returns it unchanged (its dates, who placed it and when
+    included), so a retry after a lost response is safe."""
     order = lock_order(session, household_id, order_id)
     if order is None:
         session.rollback()
@@ -269,6 +413,7 @@ def place(
     if order.status == GroceryOrderStatus.PLACED:
         session.rollback()
         return order
+    _check_session(session, order, orderer)
     missing = _not_ready(session, order, delivery, next_delivery, today)
     if missing is not None:
         session.rollback()
@@ -277,7 +422,8 @@ def place(
     place_with_grocer(order)
     order.status = GroceryOrderStatus.PLACED
     order.placed_at = utc_now()
-    order.placed_by = user_id
+    order.placed_by = orderer.user_id
+    _clear_lock(order)
     session.add(order)
     session.commit()
     session.refresh(order)
@@ -320,17 +466,29 @@ def household_meal(
     return meal
 
 
-def rate_meal(session: Session, household_id: UUID, meal_id: UUID, rating: MealRating) -> None:
+def rate_meal(
+    session: Session,
+    household_id: UUID,
+    meal_id: UUID,
+    rating: MealRating,
+    orderer: Orderer | None,
+) -> None:
     """Set the household's rating of one of its meals, replacing any earlier one.
-    Not for us also unpicks it from the draft: under the draft's lock, taken
+    Not for us also unpicks it from the draft: under the draft's row lock, taken
     first, so a concurrent pick (which checks the rating under the same lock)
-    can't leave it picked."""
+    can't leave it picked; and, when it is picked, only from the ordering session
+    with the order lock (`orderer`, None outside the flow)."""
     draft = lock_current_draft(session, household_id) if rating == MealRating.NOT_FOR_US else None
     try:
         household_meal(session, household_id, meal_id)
     except MealNotFound:
         session.rollback()
         raise
+    if draft is not None and session.get(GroceryOrderMeal, (draft.id, meal_id)) is not None:
+        if orderer is None:
+            session.rollback()
+            raise OrderLocked("It's picked for the next order: open the order to change it.")
+        _check_session(session, draft, orderer)
     if draft is not None:
         session.execute(
             delete(GroceryOrderMeal).where(

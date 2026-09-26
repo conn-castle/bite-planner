@@ -5,7 +5,15 @@ import { ApiError } from '../../lib/api/errors'
 import type { GroceryOrder, Meal, NextOrder, OrderDates } from '../../lib/api/types'
 import { queryKeys } from '../../lib/query/keys'
 import type { SetMeal, SetNotForUs } from './edits'
-import { nextQuery, type PlaceOrder, registerOrderMutations } from './orders'
+import {
+  closeFlowSession,
+  FlowClosed,
+  nextQuery,
+  type OpenOrder,
+  type PlaceOrder,
+  registerOrderMutations,
+  takeLock,
+} from './orders'
 
 vi.mock('../../lib/api/client', () => ({ apiRequest: vi.fn() }))
 // The app's logger stores its entries on the device, which a test doesn't have.
@@ -26,7 +34,11 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   next_delivery_date: null,
   jobs: [],
   picks: mealIds.map((meal_id) => ({ meal_id, servings: 4 })),
+  lock: null,
 })
+
+// The ordering session of the flow making the changes.
+const session = 'phone'
 
 let queryClient: QueryClient
 
@@ -46,10 +58,10 @@ describe('marking a suggestion "not for us"', () => {
   it('saves the rating, then shows the order as the server now has it', async () => {
     const after = draft(['soup'])
     request.mockImplementation(async (method) => (method === 'GET' ? after : undefined))
-    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true })
+    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true, session })
 
     expect(request.mock.calls).toEqual([
-      ['PUT', '/v1/meals/tacos/rating', { rating: 'not_for_us' }],
+      ['PUT', '/v1/meals/tacos/rating', { rating: 'not_for_us' }, session],
       ['GET', '/v1/grocery-orders/draft'],
     ])
     expect(queryClient.getQueryData<GroceryOrder>(['grocery-order', 'draft'])).toEqual(after)
@@ -67,7 +79,7 @@ describe('marking a suggestion "not for us"', () => {
       draft: shownDraft,
     })
     request.mockImplementation(async (method) => (method === 'GET' ? { ...draft([]), status: 'placed' } : undefined))
-    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true })
+    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true, session })
 
     expect(queryClient.getQueryData<NextOrder>(nextQuery.queryKey)?.draft).toBe(shownDraft)
     expect(queryClient.getQueryState(nextQuery.queryKey)?.isInvalidated).toBe(true)
@@ -86,14 +98,14 @@ describe('marking a suggestion "not for us"', () => {
       ingredients: [],
     })
     request.mockImplementation(async (method) => (method === 'GET' ? draft([]) : undefined))
-    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true })
+    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true, session })
 
     expect(queryClient.getQueryData<Meal>(queryKeys.meal('tacos'))?.rating).toBe('not_for_us')
   })
 
   it('undoes it by clearing the rating', async () => {
     request.mockImplementation(async (method) => (method === 'GET' ? draft([]) : undefined))
-    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: false })
+    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: false, session })
 
     expect(request.mock.calls[0]).toEqual(['DELETE', '/v1/meals/tacos/rating'])
   })
@@ -107,8 +119,8 @@ describe('marking a suggestion "not for us"', () => {
     })
     const pick = new MutationObserver<GroceryOrder, Error, SetMeal>(queryClient, {
       mutationKey: ['orders', 'set-meal'],
-    }).mutate({ orderId: 'draft', mealId: 'soup', picked: true, servings: 4 })
-    await Promise.all([pick, setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true })])
+    }).mutate({ orderId: 'draft', mealId: 'soup', picked: true, servings: 4, session })
+    await Promise.all([pick, setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true, session })])
 
     expect(order).toEqual([
       'PUT /v1/grocery-orders/draft/meals/soup',
@@ -142,13 +154,12 @@ describe('opening the draft', () => {
       if (method === 'POST') await new Promise((resolve) => setTimeout(resolve, 20))
       return method === 'POST' ? opened : picked
     })
-    const open = new MutationObserver<GroceryOrder, Error, { jobId: string }>(queryClient, {
+    const open = new MutationObserver<GroceryOrder, Error, OpenOrder>(queryClient, {
       mutationKey: ['orders', 'open'],
-    }).mutate({ jobId: 'job' })
-    const pick = new MutationObserver<GroceryOrder, Error, { orderId: string; mealId: string; picked: boolean }>(
-      queryClient,
-      { mutationKey: ['orders', 'set-meal'] },
-    ).mutate({ orderId: 'draft', mealId: 'soup', picked: true })
+    }).mutate({ jobId: 'job', session })
+    const pick = new MutationObserver<GroceryOrder, Error, SetMeal>(queryClient, {
+      mutationKey: ['orders', 'set-meal'],
+    }).mutate({ orderId: 'draft', mealId: 'soup', picked: true, servings: 4, session })
     await Promise.all([open, pick])
 
     expect(calls).toEqual(['POST /v1/grocery-orders', 'PUT /v1/grocery-orders/draft/meals/soup'])
@@ -161,6 +172,7 @@ describe('placing the order', () => {
     new MutationObserver<GroceryOrder, Error, PlaceOrder>(queryClient, { mutationKey: ['orders', 'place'] }).mutate({
       orderId: 'draft',
       dates,
+      session,
     })
   const dates: OrderDates = { delivery_date: '2026-09-27', next_delivery_date: '2026-09-30' }
 
@@ -169,7 +181,7 @@ describe('placing the order', () => {
 
     const placed = await place(dates)
 
-    expect(request.mock.calls).toEqual([['POST', '/v1/grocery-orders/draft/place', dates]])
+    expect(request.mock.calls).toEqual([['POST', '/v1/grocery-orders/draft/place', dates, session]])
     expect(placed.status).toBe('placed')
     expect(queryClient.getQueryData<GroceryOrder>(queryKeys.order('draft'))?.status).toBe('placed')
   })
@@ -181,5 +193,119 @@ describe('placing the order', () => {
     await expect(place(dates)).rejects.toThrow('Choose a delivery date')
 
     expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(true)
+  })
+})
+
+describe('the order lock', () => {
+  const job = {
+    id: 'job',
+    kind: 'generate_meals' as const,
+    status: 'succeeded' as const,
+    error: null,
+    requested_by: { user_id: 'sam', name: 'Sam' },
+    created_at: '2026-09-24T09:00:00Z',
+    meals: [],
+  }
+  const open = () =>
+    new MutationObserver<GroceryOrder, Error, OpenOrder>(queryClient, { mutationKey: ['orders', 'open'] }).mutate({
+      jobId: 'job',
+      session,
+    })
+  const lock = (lockSession: string | null) => ({
+    member: { user_id: lockSession === session ? 'me' : 'sam', name: 'Sam' },
+    session: lockSession,
+    since: '2026-09-24T09:00:00Z',
+    step: 'pick' as const,
+    expires_at: '2026-09-24T09:02:00Z',
+  })
+
+  it("opening a draft someone else is ordering doesn't start its first batch", async () => {
+    const theirs = { ...draft([]), lock: lock(null) }
+    request.mockResolvedValue(theirs)
+
+    expect(await open()).toEqual(theirs)
+    expect(request.mock.calls).toEqual([['POST', '/v1/grocery-orders', undefined, session]])
+  })
+
+  it('opening starts the first batch, and shows the order as it is if the lock was taken meanwhile', async () => {
+    const ours = { ...draft([]), lock: lock(session) }
+    const now = { ...draft([]), lock: lock(null) }
+    request.mockImplementation(async (method, path) => {
+      if (method === 'POST' && path.endsWith('/jobs')) {
+        throw new ApiError(423, 'Someone else in your household is placing this order.')
+      }
+      return method === 'POST' ? ours : now
+    })
+
+    expect(await open()).toEqual(now)
+    expect(request.mock.calls).toEqual([
+      ['POST', '/v1/grocery-orders', undefined, session],
+      ['POST', '/v1/grocery-orders/draft/jobs', { job_id: 'job' }, session],
+      ['GET', '/v1/grocery-orders/draft'],
+    ])
+  })
+
+  it('closing the flow releases the lock after the changes made before it', async () => {
+    const closing = 'closing-phone'
+    queryClient.setQueryData(queryKeys.order('draft'), { ...draft([]), lock: lock(closing) })
+    const calls: string[] = []
+    request.mockImplementation(async (method, path) => {
+      calls.push(`${method} ${path}`)
+      if (method === 'PUT') await new Promise((resolve) => setTimeout(resolve, 20))
+      return method === 'PUT' ? { ...draft(['soup']), lock: lock(closing) } : undefined
+    })
+    const pick = new MutationObserver<GroceryOrder, Error, SetMeal>(queryClient, {
+      mutationKey: ['orders', 'set-meal'],
+    }).mutate({ orderId: 'draft', mealId: 'soup', picked: true, servings: 4, session: closing })
+    closeFlowSession(queryClient, closing, 'draft')
+    await pick
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+
+    expect(calls).toEqual(['PUT /v1/grocery-orders/draft/meals/soup', 'DELETE /v1/grocery-orders/draft/lock'])
+  })
+
+  it('closing the flow while it opens releases the lock the opening takes', async () => {
+    const closing = 'opening-phone'
+    const opened = { ...draft([]), jobs: [job], lock: lock(closing) }
+    const calls: string[] = []
+    let answer = () => {}
+    request.mockImplementation(async (method, path) => {
+      calls.push(`${method} ${path}`)
+      if (method === 'POST') await new Promise<void>((resolve) => (answer = resolve))
+      return method === 'POST' ? opened : undefined
+    })
+    const opening = new MutationObserver<GroceryOrder, Error, OpenOrder>(queryClient, {
+      mutationKey: ['orders', 'open'],
+    }).mutate({ jobId: 'job', session: closing })
+    // Closed while the request is on its way, before the order is known.
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    closeFlowSession(queryClient, closing, undefined)
+    answer()
+    await opening
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+
+    expect(calls).toEqual(['POST /v1/grocery-orders', 'DELETE /v1/grocery-orders/draft/lock'])
+  })
+
+  it('a lock being taken as the flow closes is released after it, and none is taken after', async () => {
+    const closing = 'taking-phone'
+    const calls: string[] = []
+    let answer = () => {}
+    request.mockImplementation(async (method, path) => {
+      calls.push(`${method} ${path}`)
+      if (method === 'POST') await new Promise<void>((resolve) => (answer = resolve))
+      return method === 'POST' ? lock(closing) : undefined
+    })
+    const taking = takeLock(queryClient, { orderId: 'draft', session: closing, step: 'pick' })
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    closeFlowSession(queryClient, closing, 'draft')
+    answer()
+    await taking
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    await expect(takeLock(queryClient, { orderId: 'draft', session: closing, step: 'pick' })).rejects.toBeInstanceOf(
+      FlowClosed,
+    )
+
+    expect(calls).toEqual(['POST /v1/grocery-orders/draft/lock', 'DELETE /v1/grocery-orders/draft/lock'])
   })
 })

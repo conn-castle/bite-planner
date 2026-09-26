@@ -271,7 +271,7 @@ def test_a_job_discarded_before_it_starts_ends_quietly(
     job_id = job.id
     order = session.get(GroceryOrder, job.grocery_order_id)
     assert order is not None
-    orders.discard(session, order.household_id, order.id)
+    orders.discard(session, order.household_id, order.id, order.created_by)
 
     result = runner.invoke(app, ["job", "run", "--job-id", str(job_id)])
 
@@ -292,7 +292,7 @@ def test_a_job_discarded_just_after_it_was_claimed_ends_quietly(
 
     def claim_then_discard(claim_session: Session, claimed_id: UUID) -> Job | None:
         claimed = claim_job(claim_session, claimed_id)
-        orders.discard(session, order.household_id, order.id)
+        orders.discard(session, order.household_id, order.id, order.created_by)
         return claimed
 
     monkeypatch.setattr(worker, "claim_job", claim_then_discard)
@@ -342,7 +342,7 @@ def test_a_job_whose_draft_was_discarded_while_it_ran_ends_quietly(
     def process_then_discard(claimed: Job) -> list[MealInput]:
         meals = real_process_job(claimed)
         with Session(get_engine()) as member:  # a member discards the draft meanwhile
-            orders.discard(member, household_id, order_id)
+            orders.discard(member, household_id, order_id, uuid4())
         return meals
 
     monkeypatch.setattr(worker, "process_job", process_then_discard)
@@ -448,15 +448,15 @@ def test_the_prompt_asks_to_avoid_meals_like_the_households_not_for_us_ones(
         (rated_down, MealRating.DOWN),
         (tofu, MealRating.NOT_FOR_US),
     ]:
-        orders.rate_meal(session, household_id, meal.id, rating)
+        orders.rate_meal(session, household_id, meal.id, rating, None)
     neighbors = Household(name="Neighbors")
     session.add(neighbors)
     session.commit()
     neighbors_job = new_job(session, neighbors.id)
     [neighbors_meal] = suggest(session, neighbors_job, ("Tacos", "Crunchy."))
-    orders.rate_meal(session, neighbors.id, neighbors_meal.id, MealRating.NOT_FOR_US)
+    orders.rate_meal(session, neighbors.id, neighbors_meal.id, MealRating.NOT_FOR_US, None)
     # The marks outlast the draft they were made on.
-    orders.discard(session, household_id, draft.id)
+    orders.discard(session, household_id, draft.id, draft.created_by)
 
     prompt = worker.generate_meals_prompt(session, new_job(session, household_id), 5)
 
@@ -478,7 +478,7 @@ def test_the_prompt_lists_the_same_idea_marked_twice_once(
         session, job, ("Liver and Onions", "Pan-fried liver."), ("liver and onions", None)
     )
     for meal in both:
-        orders.rate_meal(session, household_id, meal.id, MealRating.NOT_FOR_US)
+        orders.rate_meal(session, household_id, meal.id, MealRating.NOT_FOR_US, None)
 
     prompt = worker.generate_meals_prompt(session, job, 5)
 
@@ -489,7 +489,7 @@ def test_the_prompt_has_no_meals_to_avoid_when_none_are_marked(
     session: Session, job: Job, household_id: UUID
 ) -> None:
     [meal] = suggest(session, job, ("Meatloaf", None))
-    orders.rate_meal(session, household_id, meal.id, MealRating.DOWN)
+    orders.rate_meal(session, household_id, meal.id, MealRating.DOWN, None)
 
     prompt = worker.generate_meals_prompt(session, job, 5)
 

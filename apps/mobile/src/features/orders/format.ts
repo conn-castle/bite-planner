@@ -16,3 +16,10 @@ export function memberName(member: Member, userId: string | undefined): string {
   if (member.user_id === userId) return 'You'
   return member.name ?? 'Someone in your household'
 }
+
+/** "just now", "6 min ago", "2 hr ago": how long ago something started. */
+export function timeAgo(from: Date, to: Date): string {
+  const minutes = Math.max(0, Math.floor((to.getTime() - from.getTime()) / 60_000))
+  if (minutes < 1) return 'just now'
+  return minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} hr ago`
+}

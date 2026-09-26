@@ -2,10 +2,10 @@ import { IonContent, IonFooter, IonHeader, IonToolbar } from '@ionic/react'
 import { type ReactNode, useContext } from 'react'
 import { IconButton } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
+import { StepDots } from '../../ui/StepDots'
 import { FlowNotice } from './flowNotice'
 import styles from './FlowFrame.module.css'
-
-const STEP_NAMES = ['Pick meals', 'Dates and servings'] as const
+import { STEP_NAMES } from './steps'
 
 interface FlowFrameProps {
   /** Which of the steps this is, for the progress dots; null hides them. */
@@ -38,13 +38,7 @@ export function FlowFrame({ step, onBack, onClose, title, lede, footer, children
             ) : (
               <span className={styles.spacer} />
             )}
-            {step !== null && (
-              <div className={styles.dots} role="img" aria-label={`Step ${step + 1} of ${STEP_NAMES.length}: ${STEP_NAMES[step]}`}>
-                {STEP_NAMES.map((name, index) => (
-                  <i key={name} className={index <= step ? styles.on : undefined} />
-                ))}
-              </div>
-            )}
+            {step !== null && <StepDots steps={STEP_NAMES} at={step} />}
             <IconButton variant="fill" aria-label="Close" onClick={onClose}>
               <Icon name="x" />
             </IconButton>
@@ -67,11 +61,11 @@ export function FlowFrame({ step, onBack, onClose, title, lede, footer, children
   )
 }
 
-/** The footer's summary: a bold line over a quieter one. */
-export function FooterSummary({ title, detail }: { title: ReactNode; detail: ReactNode }) {
+/** The footer's summary: a bold line (if any) over a quieter one. */
+export function FooterSummary({ title, detail }: { title?: ReactNode; detail: ReactNode }) {
   return (
     <p className={styles.summary}>
-      <b>{title}</b>
+      {title && <b>{title}</b>}
       {detail}
     </p>
   )

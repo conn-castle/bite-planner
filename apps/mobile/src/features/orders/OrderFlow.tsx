@@ -4,19 +4,23 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../../lib/api/errors'
 import { localDate } from '../../lib/dates'
 import { logger } from '../../lib/log'
-import type { GroceryOrder } from '../../lib/api/types'
+import type { GroceryOrder, OrderStep as Step } from '../../lib/api/types'
 import { useNow } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
 import { Skeleton } from '../../ui/Skeleton'
 import { MealPage } from '../meals/MealPage'
 import { loadingIdeas, setOrderFlowOpen, stopAwaitingIdeas, useAwaitedIdeas } from '../notifications/notifications'
+import { useSession } from '../session/session'
 import { suggestions } from './batches'
 import { DatesStep } from './DatesStep'
 import { FlowFrame } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
+import { OrderSession } from './lock'
+import { useOrderLock } from './useOrderLock'
+import { LockedStep } from './LockedStep'
 import styles from './OrderFlow.module.css'
-import { nextQuery, useNextOrder, useOpenOrder, useOrder } from './orders'
+import { closeFlowSession, nextQuery, useNextOrder, useOpenOrder, useOrder } from './orders'
 import { PickStep } from './PickStep'
 import { PlacedStep } from './PlacedStep'
 import { WaitStep } from './WaitStep'
@@ -38,13 +42,17 @@ interface OrderFlowModalProps {
 
 /**
  * The create-order flow, as a card over the current page. Closing it (Close,
- * or a swipe down) keeps the household's draft to resume later. A recipe opens
- * inside the card, on its own navigation stack.
+ * or a swipe down) keeps the household's draft to resume later, and lets the
+ * rest of the household order. A recipe opens inside the card, on its own
+ * navigation stack. Each opening is an ordering session of its own (lock.ts).
  */
 export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId }: OrderFlowModalProps) {
   const queryClient = useQueryClient()
   const modal = useRef<HTMLIonModalElement>(null)
   const nav = useRef<HTMLIonNavElement>(null)
+  const [session, setSession] = useState(() => crypto.randomUUID())
+  // The order the flow shows, whose lock closing it releases.
+  const shownOrder = useRef<string | undefined>(undefined)
 
   // While it's open, "ideas ready" needs no toast: the ideas show here.
   useEffect(() => {
@@ -56,16 +64,24 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId }
   // changes (the order it opens changes only as it opens, or for a new notification).
   const root = useCallback(
     () => (
-      <OrderFlow
-        orderId={orderId}
-        onClose={() => void modal.current?.dismiss()}
-        onOpenMeal={(mealId, servings) => void openMeal(nav.current, mealId, servings)}
-      />
+      <OrderSession.Provider value={session}>
+        <OrderFlow
+          orderId={orderId}
+          session={session}
+          onShown={(id) => (shownOrder.current = id)}
+          onClose={() => void modal.current?.dismiss()}
+          onOpenMeal={(mealId, servings) => void openMeal(nav.current, mealId, servings)}
+        />
+      </OrderSession.Provider>
     ),
-    [orderId],
+    [orderId, session],
   )
 
   function dismissed() {
+    closeFlowSession(queryClient, session, shownOrder.current)
+    shownOrder.current = undefined
+    // The next opening is a session of its own.
+    setSession(crypto.randomUUID())
     stopAwaitingIdeas('closed')
     // The flow kept its own copy of the order current; the next order's may be out of date.
     void queryClient.invalidateQueries({ queryKey: nextQuery.queryKey })
@@ -90,27 +106,43 @@ async function openMeal(nav: HTMLIonNavElement | null, mealId: string, servings:
   }
 }
 
-type Step = 'pick' | 'dates'
-
 /** Opens a meal's recipe: at a pick's servings, when it's one. */
 type OpenMeal = (mealId: string, servings?: number) => void
 
 interface OrderFlowProps {
   /** This order, as it is; otherwise the household's draft, made if there's none. */
   orderId: string | undefined
+  /** This opening's ordering session: it takes the order's lock, and makes its changes. */
+  session: string
+  /** Called with the order shown, once known. */
+  onShown: (orderId: string) => void
   onClose: () => void
   onOpenMeal: OpenMeal
 }
 
 /** Opens the household's draft (creating it if needed), or the order given, and shows the step it is at. */
-function OrderFlow({ orderId, onClose, onOpenMeal }: OrderFlowProps) {
+function OrderFlow({ orderId, session, onShown, onClose, onOpenMeal }: OrderFlowProps) {
   const open = useOpenOrder()
   const { mutate: openOrder } = open
+  const reopen = () => openOrder({ jobId: crypto.randomUUID(), session })
+  const userId = useSession().data?.user.id
   // The household's draft shows at once when it's cached, while opening it confirms it (or makes one).
   const cachedDraftId = useNextOrder().data?.draft?.id
-  const order = useOrder(orderId ?? open.data?.id ?? cachedDraftId)
+  const order = useOrder(orderId ?? open.data?.id ?? cachedDraftId, session)
   const { refetch } = order
   const [step, setStep] = useState<Step>('pick')
+  // Where the flow is, as the lock tells the others: picking until there are picks to go on with.
+  const shownStep: Step =
+    step === 'dates' && order.shown !== undefined && suggestions(order.shown).length > 0 && order.shown.picks.length > 0
+      ? 'dates'
+      : 'pick'
+  // The copy cached before opening (the next order's) may be out of date; the lock goes by the order itself.
+  const known = !order.isPlaceholderData && !(orderId === undefined && open.isPending) ? order.shown : undefined
+  const { lockedOut, takeOver } = useOrderLock(known, session, userId, shownStep)
+  const shownId = order.shown?.id
+  useEffect(() => {
+    if (shownId !== undefined) onShown(shownId)
+  }, [shownId, onShown])
   // Opened from "ideas ready" before fresh data arrived: loading its ideas, not
   // the copy from before they were ready.
   const awaited = useAwaitedIdeas()
@@ -143,8 +175,8 @@ function OrderFlow({ orderId, onClose, onOpenMeal }: OrderFlowProps) {
   useEffect(() => {
     if (opened.current || orderId !== undefined) return
     opened.current = true
-    openOrder({ jobId: crypto.randomUUID() })
-  }, [openOrder, orderId])
+    openOrder({ jobId: crypto.randomUUID(), session })
+  }, [openOrder, orderId, session])
 
   // A discarded draft wins over the copy still on screen, once opening has settled
   // (it may be making a new draft to replace a cached one that's gone).
@@ -152,7 +184,7 @@ function OrderFlow({ orderId, onClose, onOpenMeal }: OrderFlowProps) {
   if (order.shown && !gone) {
     // The copy on screen stays usable when opening or a refresh fails, with the failure shown above it.
     const notice = open.isError ? (
-      <Notice action={<button onClick={() => openOrder({ jobId: crypto.randomUUID() })}>Try again</button>}>
+      <Notice action={<button onClick={reopen}>Try again</button>}>
         Couldn't open the order: {open.error.message}
       </Notice>
     ) : order.isError ? (
@@ -162,7 +194,9 @@ function OrderFlow({ orderId, onClose, onOpenMeal }: OrderFlowProps) {
     ) : null
     return (
       <FlowNotice value={notice}>
-        {loading ? (
+        {lockedOut ? (
+          <LockedStep order={order.shown} lockedOut={lockedOut} onClose={onClose} onTakeOver={takeOver} />
+        ) : loading ? (
           <FlowLoading onClose={onClose} label="Loading your meal ideas…" />
         ) : (
           <OrderStep order={order.shown} step={step} setStep={setStep} onClose={onClose} onOpenMeal={onOpenMeal} />
@@ -194,7 +228,7 @@ function OrderFlow({ orderId, onClose, onOpenMeal }: OrderFlowProps) {
           <Notice
             action={
               // A given order is fetched again, never made.
-              <button onClick={() => (orderId ? void refetch() : openOrder({ jobId: crypto.randomUUID() }))}>
+              <button onClick={() => (orderId ? void refetch() : reopen())}>
                 Try again
               </button>
             }

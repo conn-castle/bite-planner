@@ -1,0 +1,39 @@
+/* spec/mockup.html: .dots, .pstep .dots */
+.dots {
+  display: flex;
+  gap: 5px;
+}
+
+.dots i {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--cc-fill-strong);
+  transition: background-color 300ms var(--cc-ease);
+}
+
+.dots i.on {
+  background: var(--cc-ink);
+}
+
+.other i {
+  width: 18px;
+}
+
+.other i.on {
+  background: var(--cc-other);
+}
+
+/* .pstep */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--cc-ink-2);
+}
+
+.progress b {
+  color: var(--cc-ink);
+  font-weight: 650;
+}

@@ -1,0 +1,59 @@
+/* spec/mockup.html: .who, .who.sm, .who.lg, .chip.dark .who.sm */
+.avatar {
+  position: relative;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  font: 700 24px/1 var(--cc-font-display);
+  color: var(--cc-on-ink);
+  background: var(--cc-other);
+}
+
+.xs {
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  margin-left: -4px;
+}
+
+.sm {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+
+.md {
+  width: 58px;
+  height: 58px;
+}
+
+.lg {
+  width: 96px;
+  height: 96px;
+  font-size: 40px;
+}
+
+/* A turning ring: they're at work. */
+.md::after,
+.lg::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--cc-other);
+  border-right-color: var(--cc-other-ring);
+  animation: spin 1.6s linear infinite;
+}
+
+.lg::after {
+  inset: -9px;
+  border-width: 2.5px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

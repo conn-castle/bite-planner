@@ -145,6 +145,13 @@ class GroceryOrderStatus(StrEnum):
     PLACED = "placed"
 
 
+class OrderStep(StrEnum):
+    """The create-order flow's steps, as its lock reports where the holder is."""
+
+    PICK = "pick"  # picking meals, or waiting for ideas
+    DATES = "dates"  # dates and servings
+
+
 class GroceryOrder(TimestampMixin, SQLModel, table=True):
     """A household's order: its draft while it's being made, then the placed order."""
 
@@ -167,6 +174,15 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
         CheckConstraint(
             "next_delivery_date > delivery_date", name="grocery_order_next_after_delivery"
         ),
+        CheckConstraint(
+            "(locked_by IS NULL) = (lock_session IS NULL) AND (locked_by IS NULL) = "
+            "(locked_at IS NULL) AND (locked_by IS NULL) = (lock_renewed_at IS NULL) AND "
+            "(locked_by IS NULL) = (lock_step IS NULL)",
+            name="grocery_order_lock_complete",
+        ),
+        CheckConstraint(
+            "status = 'draft' OR locked_by IS NULL", name="grocery_order_lock_only_draft"
+        ),
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -183,6 +199,18 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
     # household can finish a draft). Both null while it's a draft.
     placed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     placed_by: UUID | None = None
+    # The order lock: only one ordering session (one opening of the flow, on one
+    # phone) changes the draft at a time. Who holds it (a Neon Auth user), that
+    # session (chosen by the app), when they took it, their last renewal (it
+    # expires 2 minutes after), and the step they're at. All null when no one
+    # has it; an expired lock stays until someone takes, renews, or releases it.
+    locked_by: UUID | None = None
+    lock_session: UUID | None = None
+    locked_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    lock_renewed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    lock_step: OrderStep | None = Field(
+        default=None, sa_type=Enum(OrderStep, name="order_step", values_callable=_values)
+    )
 
 
 class GroceryOrderMeal(SQLModel, table=True):

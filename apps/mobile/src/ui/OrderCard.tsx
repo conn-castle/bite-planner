@@ -7,9 +7,9 @@ import { orderColors } from './orderColor'
  * How an order's card looks: placed (white, its color behind the head); or,
  * for the next order, not due yet (dashed), its reminders started (white),
  * ideas being made (white), ready to act on (accent), due today or tomorrow
- * (accent, raised), or overdue (red).
+ * (accent, raised), overdue (red), or another member placing it (their color).
  */
-export type OrderCardLook = 'placed' | 'draft' | 'remind' | 'working' | 'ready' | 'soon' | 'late'
+export type OrderCardLook = 'placed' | 'draft' | 'remind' | 'working' | 'ready' | 'soon' | 'late' | 'locked'
 
 interface OrderCardProps {
   number: number

@@ -9,19 +9,27 @@ import { isRecord } from '../../lib/isRecord'
  * stops being applied.
  */
 
+/**
+ * Made in the order flow: the ordering session it comes from (see lock.ts),
+ * sent with it. Saved with the change, so one sent after a relaunch counts only
+ * while that session still has the order's lock.
+ */
+export interface InSession {
+  session: string
+}
+
 /** A pick, with the servings it starts at (the household's default) shown until it's saved; or an unpick. */
-export type SetMeal =
-  | { orderId: string; mealId: string; picked: true; servings: number }
-  | { orderId: string; mealId: string; picked: false }
+export type SetMeal = InSession &
+  ({ orderId: string; mealId: string; picked: true; servings: number } | { orderId: string; mealId: string; picked: false })
 
 /** How many to make of one of the picks. */
-export interface SetServings {
+export interface SetServings extends InSession {
   orderId: string
   mealId: string
   servings: number
 }
 
-export interface SetDates {
+export interface SetDates extends InSession {
   orderId: string
   dates: OrderDates
 }
@@ -30,7 +38,7 @@ export interface SetDates {
  * The ✕ on a suggestion: "don't show meals like this" (the household's
  * `not_for_us` rating), which also takes it out of the picks; or undoing it.
  */
-export interface SetNotForUs {
+export interface SetNotForUs extends InSession {
   orderId: string
   mealId: string
   notForUs: boolean
@@ -44,7 +52,7 @@ const isCount = (value: unknown): value is number => typeof value === 'number' &
 
 /** Whether a pending mutation's variables are a change to an order (they are stored untyped). */
 export function isOrderEdit(value: unknown): value is OrderEdit {
-  if (!isRecord(value) || typeof value.orderId !== 'string') return false
+  if (!isRecord(value) || typeof value.orderId !== 'string' || typeof value.session !== 'string') return false
   if (typeof value.mealId === 'string') {
     if (typeof value.picked === 'boolean') return value.picked === false || isCount(value.servings)
     if (typeof value.notForUs === 'boolean') return true
