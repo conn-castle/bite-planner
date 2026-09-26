@@ -143,6 +143,78 @@
   color: var(--cc-on-ink);
 }
 
+.add:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
+
+/* ✕: "don't show meals like this" (.pc .dx); on the picture, over the recipe button. */
+.dismiss {
+  appearance: none;
+  border: 0;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.85);
+  -webkit-backdrop-filter: var(--cc-glass-blur);
+  backdrop-filter: var(--cc-glass-blur);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  color: var(--cc-ink-2);
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background-color 200ms var(--cc-ease),
+    color 200ms var(--cc-ease);
+}
+
+.dismiss svg {
+  stroke-width: 2.8;
+}
+
+/* Marked "don't show meals like this" (.pc.off). */
+.notForUs {
+  background: var(--cc-fill);
+  border-color: transparent;
+}
+
+.notForUs .art svg {
+  filter: grayscale(1);
+  opacity: 0.35;
+}
+
+.notForUs .name,
+.notForUs .time {
+  color: var(--cc-ink-3);
+}
+
+.notForUs .name {
+  text-decoration: line-through;
+  text-decoration-color: rgba(20, 19, 17, 0.25);
+}
+
+.notForUs .dismiss {
+  background: var(--cc-ink);
+  color: var(--cc-on-ink);
+}
+
+.gone {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  right: 0;
+  padding: 0 12px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--cc-ink-2);
+}
+
 .placeholder .art,
 .placeholder .line,
 .placeholder .add {

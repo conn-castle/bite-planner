@@ -4,6 +4,7 @@ import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
 import { ProgressBar } from '../../ui/ProgressBar'
+import { RatePrompt } from '../meals/RatePrompt'
 import { newestBatchState } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { elapsed } from './format'
@@ -58,6 +59,9 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
             <p className={styles.elapsed} role="timer">
               {batch.status === 'running' ? elapsed(new Date(batch.job.created_at), now) : 'Starting'}
             </p>
+            <div className={styles.rate}>
+              <RatePrompt />
+            </div>
           </>
         )}
         {!running && batch.status === 'failed' && (

@@ -1,0 +1,48 @@
+/* Not in the mockup: History's order card (.hcard) with a row per meal and its ratings. */
+.prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 8px 9px 12px;
+  position: relative;
+}
+
+.row + .row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 56px;
+  border-top: 0.5px solid var(--cc-hairline);
+}
+
+.art {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--cc-fill);
+}
+
+.art svg {
+  width: 28px;
+  height: 28px;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.25;
+}

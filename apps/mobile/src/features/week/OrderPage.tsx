@@ -4,14 +4,13 @@ import { useParams } from 'react-router-dom'
 import type { ISODate, NextOrder, PlacedOrder } from '../../lib/api/types'
 import { formatDate, localDate } from '../../lib/dates'
 import { useNow } from '../../lib/useNow'
-import { MealArt } from '../../ui/art'
 import { Chip } from '../../ui/Chip'
-import { Group, ListRow, Row } from '../../ui/Group'
+import { Group, Row } from '../../ui/Group'
 import { Notice } from '../../ui/Notice'
 import { OrderCard } from '../../ui/OrderCard'
 import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
-import { formatMinutes } from '../meals/facts'
+import { MealRow } from '../meals/MealRow'
 import { plural } from '../orders/format'
 import { OrderFlowModal } from '../orders/OrderFlow'
 import { useNextOrder, usePlacedOrders } from '../orders/orders'
@@ -23,27 +22,36 @@ import { PlacedTrack } from './PlacedCard'
 // How often the page checks whether the phone's calendar day has changed.
 const DAY_CHECK_MS = 60_000
 
+/** The tab an order is opened in: Orders (from Home) or History. Its pages are pushed under the tab's path. */
+export interface OrderTab {
+  href: '/week' | '/history'
+  backLabel: string
+}
+
 /**
- * A placed order, read-only, opened from Home: its progress, meals, dates, and
- * the order after it. It shows the order as Home has it.
+ * A placed order, read-only, opened from Home or History: its progress,
+ * meals, dates, and the order after it.
  */
-export function OrderPage() {
+export function OrderPage({ tab }: { tab: OrderTab }) {
   const { orderId } = useParams<{ orderId: string }>()
   const today = localDate(useNow(DAY_CHECK_MS))
-  const placed = usePlacedOrders(coveringFrom(today))
+  // The list the tab it's opened from already has: Home's recent orders, or History's.
+  const placed = usePlacedOrders(tab.href === '/week' ? coveringFrom(today) : undefined)
   const next = useNextOrder()
   const order = placed.data?.find((each) => each.id === orderId)
 
   return (
-    <NavPage title={order ? `Order ${order.number}` : 'Order'} tab={{ href: '/week', backLabel: 'Orders' }}>
+    <NavPage title={order ? `Order ${order.number}` : 'Order'} tab={tab}>
       {placed.isError && (
         <Notice action={<button onClick={() => void placed.refetch()}>Try again</button>}>
           Couldn't load this order: {placed.error.message}
         </Notice>
       )}
       {placed.isPending && !placed.isError && <Skeleton height={220} radius={26} />}
-      {placed.data && !order && <Notice>This order is no longer on Orders.</Notice>}
-      {order && <PlacedOrderView order={order} placed={placed.data ?? []} next={next.data} today={today} />}
+      {placed.data && !order && <Notice>No such order.</Notice>}
+      {order && (
+        <PlacedOrderView order={order} placed={placed.data ?? []} next={next.data} today={today} base={tab.href} />
+      )}
     </NavPage>
   )
 }
@@ -53,9 +61,11 @@ interface PlacedOrderViewProps {
   placed: PlacedOrder[]
   next: NextOrder | undefined
   today: ISODate
+  /** The tab's path, which the order's meals and the next order are pushed under. */
+  base: OrderTab['href']
 }
 
-function PlacedOrderView({ order, placed, next, today }: PlacedOrderViewProps) {
+function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewProps) {
   const userId = useSession().data?.user.id
   const router = useIonRouter()
   const page = useRef<HTMLDivElement>(null)
@@ -88,18 +98,9 @@ function PlacedOrderView({ order, placed, next, today }: PlacedOrderViewProps) {
         footerIcon="cal"
         footer={`These meals cover ${coverage(order)}. Cook them in any order.`}
       >
-        {order.meals.map((meal) => {
-          const minutes = meal.total_time_minutes ?? meal.active_time_minutes
-          return (
-            <ListRow
-              key={meal.id}
-              art={<MealArt />}
-              overline={minutes != null ? formatMinutes(minutes) : undefined}
-              label={meal.name}
-              onClick={() => router.push(`/week/meals/${meal.id}`)}
-            />
-          )
-        })}
+        {order.meals.map((meal) => (
+          <MealRow key={meal.id} meal={meal} onOpen={() => router.push(`${base}/meals/${meal.id}`)} rated />
+        ))}
       </Group>
 
       <Group title="Delivery" footerIcon="lock" footer="Placed orders are read-only.">
@@ -114,7 +115,7 @@ function PlacedOrderView({ order, placed, next, today }: PlacedOrderViewProps) {
             label={`Order ${following.order.number} · delivery ${formatDate(following.order.delivery_date, 'medium')}`}
             sub="Order placed"
             chevron
-            onClick={() => router.push(`/week/orders/${following.order.id}`)}
+            onClick={() => router.push(`${base}/orders/${following.order.id}`)}
           />
         </Group>
       )}

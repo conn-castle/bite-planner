@@ -18,3 +18,8 @@ export function Chip({ tone = 'default', icon, children }: ChipProps) {
     </span>
   )
 }
+
+/** A small flat label, without the chip's ring (spec/mockup.html: .pill, .pill.ok), e.g. "Order placed" in History. */
+export function Pill({ tone = 'default', children }: { tone?: 'default' | 'success'; children: ReactNode }) {
+  return <span className={`${styles.pill} ${tone === 'success' ? styles.pillSuccess : ''}`}>{children}</span>
+}

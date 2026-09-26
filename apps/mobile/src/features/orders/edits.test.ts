@@ -46,11 +46,51 @@ describe('applyEdits', () => {
     const shown = applyEdits(order, [{ orderId: 'order-1', mealId: 'soup', picked: true }])
     expect(shown.meal_ids).toEqual(['tacos'])
   })
+
+  it('shows a "not for us" mark still being saved, which takes the meal out of the picks', () => {
+    const withIdeas: GroceryOrder = {
+      ...order,
+      jobs: [
+        {
+          id: 'job',
+          kind: 'generate_meals',
+          status: 'succeeded',
+          error: null,
+          requested_by: { user_id: 'sam', name: 'Sam' },
+          created_at: '2026-09-25T12:00:00Z',
+          meals: ['tacos', 'soup'].map((id) => ({
+            id,
+            name: id,
+            description: null,
+            active_time_minutes: null,
+            total_time_minutes: null,
+            rating: null,
+          })),
+        },
+      ],
+    }
+    const marked = applyEdits(withIdeas, [{ orderId: 'order-2', mealId: 'tacos', notForUs: true }])
+    expect(marked.meal_ids).toEqual([])
+    expect(marked.jobs[0]?.meals.map((meal) => meal.rating)).toEqual(['not_for_us', null])
+
+    // A pick made while the mark is still being saved isn't shown: the server refuses it.
+    const pickedAfter = applyEdits(withIdeas, [
+      { orderId: 'order-2', mealId: 'soup', notForUs: true },
+      { orderId: 'order-2', mealId: 'soup', picked: true },
+    ])
+    expect(pickedAfter.meal_ids).toEqual(['tacos'])
+
+    // Undoing it leaves the meal unpicked, as the server does.
+    const undone = applyEdits(marked, [{ orderId: 'order-2', mealId: 'tacos', notForUs: false }])
+    expect(undone.meal_ids).toEqual([])
+    expect(undone.jobs[0]?.meals.map((meal) => meal.rating)).toEqual([null, null])
+  })
 })
 
 describe('isOrderEdit', () => {
-  it('recognizes a pick and a change of dates', () => {
+  it('recognizes a pick, a "not for us" mark, and a change of dates', () => {
     expect(isOrderEdit({ orderId: 'o', mealId: 'm', picked: true })).toBe(true)
+    expect(isOrderEdit({ orderId: 'o', mealId: 'm', notForUs: false })).toBe(true)
     expect(isOrderEdit({ orderId: 'o', dates: { delivery_date: '2026-09-30', next_delivery_date: null } })).toBe(true)
   })
 

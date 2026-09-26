@@ -1,0 +1,58 @@
+/* Not in the mockup: sized like the segmented switch above it (.seg-ctl), and white like the
+   cards and chips on the warm page (the switch's fill barely shows there). */
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 8px 0 10px;
+  border-radius: 11px;
+  background: var(--cc-bg);
+  box-shadow: inset 0 0 0 0.5px var(--cc-hairline);
+  color: var(--cc-ink-3);
+}
+
+.icon {
+  font-size: 17px;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  /* 16px or more, so iOS doesn't zoom in on focus. */
+  font-size: 16px;
+  color: var(--cc-ink);
+  outline: none;
+}
+
+.input::placeholder {
+  color: var(--cc-ink-3);
+}
+
+/* The app draws its own clear button. */
+.input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.clear {
+  appearance: none;
+  border: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--cc-ink-3);
+  color: var(--cc-bg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.clear svg {
+  stroke-width: 3;
+}

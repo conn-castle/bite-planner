@@ -25,18 +25,18 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 
 - [x] The user picks meals from 20 suggestions by default.
 - [x] The user can add a suggestion to the order, and toggle it back off.
-- [ ] The user can mark a suggestion as "don't show meals like this", and toggle it back off. This is offered only while picking suggestions.
-- [ ] Future suggestions avoid meals like the ones marked "don't show meals like this"; these preferences belong to the household.
+- [x] The user can mark a suggestion as "don't show meals like this", and toggle it back off. This is offered only while picking suggestions.
+- [x] Future suggestions avoid meals like the ones marked "don't show meals like this"; these preferences belong to the household.
 - [x] The user can generate 20 more suggestions, added below the current ones.
 - [ ] The user can leave while suggestions are generating and gets a notification when they're ready.
 - [ ] Each meal shows an icon.
 
 ## Rating meals
 
-- [ ] A meal can be rated thumbs up, thumbs down, and favorite. These are three distinct ratings, separate from "don't show meals like this"; thumbs up and thumbs down exclude each other.
-- [ ] Each rating can be toggled off again.
-- [ ] Ratings belong to the household and are stored for the suggestion agent to use later.
-- [ ] When generating suggestions, the app asks the user to rate meals from the last week that aren't rated yet.
+- [x] A meal can be rated thumbs up, thumbs down, or favorite, separate from "don't show meals like this". A meal has one rating at a time; a favorite is always liked (spec/README.md).
+- [x] Each rating can be toggled off again.
+- [x] Ratings belong to the household and are stored for the suggestion agent to use later.
+- [x] When generating suggestions, the app asks the user to rate meals from the last week that aren't rated yet.
 
 ## Order lock
 
@@ -80,8 +80,8 @@ Personal settings:
 
 ## Views
 
-- [ ] History shows every past order and all of its meals, grouped by order.
-- [ ] History's meals can be searched by name and filtered, including by rating.
+- [x] History shows every past order and all of its meals, grouped by order.
+- [x] History's meals can be searched by name and filtered, including by rating.
 - [ ] Order view: an order's dates, status, meals, and shopping list.
 - [x] Meal view: a meal's recipe (servings, ingredients, facts).
 - [ ] Instructions view: a meal's cooking steps.

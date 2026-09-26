@@ -38,3 +38,19 @@
   background: var(--cc-danger);
   color: var(--cc-on-ink);
 }
+
+/* spec/mockup.html: .pill, .pill.ok */
+.pill {
+  padding: 4px 9px;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-fill);
+  color: var(--cc-ink-2);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.pillSuccess {
+  background: #d6efe1;
+  color: #136c45;
+}

@@ -56,6 +56,7 @@ function job(status: Job['status'], meals: number): Job {
       description: null,
       active_time_minutes: null,
       total_time_minutes: null,
+      rating: null,
     })),
   }
 }

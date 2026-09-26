@@ -1,11 +1,161 @@
+import { useIonRouter } from '@ionic/react'
+import { useState } from 'react'
+import type { MealSummary, PlacedOrder } from '../../lib/api/types'
+import { addDays, formatDate } from '../../lib/dates'
+import { MealArt } from '../../ui/art'
+import { Pill } from '../../ui/Chip'
+import { ChoiceChips } from '../../ui/ChoiceChips'
+import { Notice } from '../../ui/Notice'
+import { OrderListCard } from '../../ui/OrderListCard'
+import { orderColors } from '../../ui/orderColor'
 import { Page } from '../../ui/Page'
+import { SearchField } from '../../ui/SearchField'
+import { Segmented } from '../../ui/Segmented'
+import { Skeleton } from '../../ui/Skeleton'
+import { formatMinutes } from '../meals/facts'
+import { MealRatingMark } from '../meals/MealRating'
+import { MealRow } from '../meals/MealRow'
+import { shownRating, usePendingRatings } from '../meals/ratings'
+import { plural } from '../orders/format'
+import { usePlacedOrders } from '../orders/orders'
+import { coverage } from '../week/home'
+import { HISTORY_FILTERS, type HistoryFilter, type HistoryOrder, historyOrders } from './history'
 import styles from './HistoryPage.module.css'
 
-/** Past orders. Placed orders aren't listed yet, so this is always empty for now. */
+type View = 'orders' | 'meals'
+
+const VIEWS: readonly { value: View; label: string }[] = [
+  { value: 'orders', label: 'By order' },
+  { value: 'meals', label: 'All meals' },
+]
+
+/**
+ * History: every placed order and its meals, newest first, by order or as a
+ * grid of all the meals, searched by name and filtered by rating.
+ */
 export function HistoryPage() {
+  const placed = usePlacedOrders()
+  const router = useIonRouter()
+  const [view, setView] = useState<View>('orders')
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<HistoryFilter>('all')
+  const orders = placed.data ?? []
+  const pending = usePendingRatings()
+  const shown = historyOrders(orders, search, filter, (meal) => shownRating(meal, pending))
+  const mealCount = orders.reduce((total, order) => total + order.meals.length, 0)
+  const openMeal = (meal: MealSummary) => router.push(`/history/meals/${meal.id}`)
+
   return (
-    <Page title="History">
-      <h2 className={styles.empty}>Past orders and their meals will show here.</h2>
+    <Page
+      title="History"
+      overline={placed.data ? `${plural(orders.length, 'order')} · ${plural(mealCount, 'meal')}` : undefined}
+      onRefresh={() => placed.refetch()}
+    >
+      {placed.isError && (
+        <Notice action={<button onClick={() => void placed.refetch()}>Try again</button>}>
+          Couldn't load your orders: {placed.error.message}
+        </Notice>
+      )}
+      {placed.isPending && !placed.isError && (
+        <div className={styles.loading}>
+          <Skeleton height={36} radius={11} />
+          <Skeleton height={260} radius={22} />
+        </div>
+      )}
+      {placed.data && orders.length === 0 && (
+        <p className={styles.empty}>Orders you place show up here, with their meals grouped by order.</p>
+      )}
+      {orders.length > 0 && (
+        <>
+          <Segmented options={VIEWS} value={view} onChange={setView} label="Show" className={styles.views} />
+          <SearchField value={search} onChange={setSearch} placeholder="Search meals" className={styles.search} />
+          <ChoiceChips
+            options={HISTORY_FILTERS}
+            value={filter}
+            onChange={setFilter}
+            label="Filter"
+            className={styles.filters}
+          />
+          {shown.length === 0 && <p className={styles.empty}>No meals match.</p>}
+          {view === 'orders' ? (
+            <ByOrder
+              shown={shown}
+              onOpenOrder={(order) => router.push(`/history/orders/${order.id}`)}
+              onOpenMeal={openMeal}
+            />
+          ) : (
+            <AllMeals shown={shown} onOpenMeal={openMeal} />
+          )}
+        </>
+      )}
     </Page>
+  )
+}
+
+interface ByOrderProps {
+  shown: HistoryOrder[]
+  onOpenOrder: (order: PlacedOrder) => void
+  onOpenMeal: (meal: MealSummary) => void
+}
+
+/** Each order as a card of its meals (spec/mockup.html: .hcard). */
+function ByOrder({ shown, onOpenOrder, onOpenMeal }: ByOrderProps) {
+  return shown.map(({ order, meals }) => (
+    <div key={order.id} className={styles.card}>
+      <OrderListCard
+        number={order.number}
+        overline={`Order ${order.number} · ${formatDate(order.delivery_date, 'monthDay')}`}
+        title={coverage(order)}
+        end={<Pill tone="success">Order placed</Pill>}
+        onOpen={() => onOpenOrder(order)}
+      >
+        {meals.map((meal) => (
+          <MealRow key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal)} rated />
+        ))}
+      </OrderListCard>
+    </div>
+  ))
+}
+
+interface AllMealsProps {
+  shown: HistoryOrder[]
+  onOpenMeal: (meal: MealSummary) => void
+}
+
+/** Every meal as a tile, grouped by order (spec/mockup.html: .hgroup, .grid2, .gtile). */
+function AllMeals({ shown, onOpenMeal }: AllMealsProps) {
+  return shown.map(({ order, meals }) => (
+    <section key={order.id} className={styles.group} style={orderColors(order.number)}>
+      <h2 className={styles.groupHeader}>
+        <span>Order {order.number}</span>
+        <span>
+          {formatDate(order.delivery_date, 'monthDay')} –{' '}
+          {formatDate(addDays(order.next_delivery_date, -1), 'monthDay')}
+        </span>
+      </h2>
+      <div className={styles.grid}>
+        {meals.map((meal) => (
+          <MealTile key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal)} />
+        ))}
+      </div>
+    </section>
+  ))
+}
+
+function MealTile({ meal, onOpen }: { meal: MealSummary; onOpen: () => void }) {
+  const minutes = meal.total_time_minutes ?? meal.active_time_minutes
+  return (
+    <button type="button" className={styles.tile} onClick={onOpen}>
+      <span className={styles.tileArt}>
+        <MealArt />
+      </span>
+      <span className={styles.tileText}>
+        <span className={styles.tileName}>{meal.name}</span>
+        <span className={styles.tileFoot}>
+          {minutes != null && <small>{formatMinutes(minutes)}</small>}
+          <MealRatingMark meal={meal} />
+        </span>
+      </span>
+    </button>
   )
 }

@@ -149,6 +149,10 @@ def ok(response: Response, status: int = 200) -> Any:
     return response.json()
 
 
+def no_content(response: Response) -> None:
+    assert (response.status_code, response.content) == (204, b""), response.text
+
+
 def open_draft(client: TestClient, user: UUID = MOM) -> dict[str, Any]:
     response = client.post("/v1/grocery-orders", headers=as_user(user))
     assert response.status_code in (200, 201), response.text
@@ -164,15 +168,11 @@ def next_order(client: TestClient, user: UUID = MOM) -> dict[str, Any]:
 
 
 def placed_orders(
-    client: TestClient, covering_from: date, user: UUID = MOM
+    client: TestClient, covering_from: date | None = None, user: UUID = MOM
 ) -> list[dict[str, Any]]:
-    return ok(
-        client.get(
-            "/v1/grocery-orders",
-            params={"covering_from": covering_from.isoformat()},
-            headers=as_user(user),
-        )
-    )
+    """The household's placed orders: those covering `covering_from` on, or all of them."""
+    params = {"covering_from": covering_from.isoformat()} if covering_from else {}
+    return ok(client.get("/v1/grocery-orders", params=params, headers=as_user(user)))
 
 
 def request_batch(
@@ -240,6 +240,18 @@ def put_dates(
 
 def pick(client: TestClient, order_id: str, meal_id: str, user: UUID = MOM) -> Response:
     return client.put(f"/v1/grocery-orders/{order_id}/meals/{meal_id}", headers=as_user(user))
+
+
+def rate(client: TestClient, meal_id: str, rating: str, user: UUID = MOM) -> Response:
+    return client.put(f"/v1/meals/{meal_id}/rating", headers=as_user(user), json={"rating": rating})
+
+
+def clear_rating(client: TestClient, meal_id: str, user: UUID = MOM) -> Response:
+    return client.delete(f"/v1/meals/{meal_id}/rating", headers=as_user(user))
+
+
+def get_meal(client: TestClient, meal_id: str, user: UUID = MOM) -> dict[str, Any]:
+    return ok(client.get(f"/v1/meals/{meal_id}", headers=as_user(user)))
 
 
 def place(client: TestClient, order_id: str, user: UUID = MOM, zone: str = ZONE) -> Response:
@@ -366,6 +378,8 @@ MEMBER_ENDPOINTS = [
     ),
     ("post", "/v1/grocery-orders/{order}/place", None),
     ("get", "/v1/meals/{meal}", None),
+    ("put", "/v1/meals/{meal}/rating", {"rating": "up"}),
+    ("delete", "/v1/meals/{meal}/rating", None),
     ("post", "/v1/logs", {"device": {}, "entries": []}),
 ]
 
@@ -532,7 +546,9 @@ def test_endpoints_that_need_today_require_a_known_time_zone(
 
 @pytest.mark.parametrize("zone", [None, UNKNOWN_ZONE], ids=["missing", "unknown"])
 @pytest.mark.parametrize(
-    "endpoint", ["me", "logs", "meal", "discard", "jobs"], ids=lambda endpoint: endpoint
+    "endpoint",
+    ["me", "logs", "meal", "rate", "clear rating", "discard", "jobs"],
+    ids=lambda endpoint: endpoint,
 )
 def test_endpoints_that_do_not_need_today_ignore_the_time_zone(
     client: TestClient, endpoint: str, zone: str | None
@@ -546,6 +562,16 @@ def test_endpoints_that_do_not_need_today_ignore_the_time_zone(
             204,
         ),
         "meal": (lambda: client.get(f"/v1/meals/{meal_id}", headers=headers), 200),
+        "rate": (
+            lambda: client.put(
+                f"/v1/meals/{meal_id}/rating", headers=headers, json={"rating": "up"}
+            ),
+            204,
+        ),
+        "clear rating": (
+            lambda: client.delete(f"/v1/meals/{meal_id}/rating", headers=headers),
+            204,
+        ),
         "discard": (lambda: client.delete(f"/v1/grocery-orders/{order_id}", headers=headers), 204),
         "jobs": (
             lambda: client.post(
@@ -829,6 +855,7 @@ def test_suggestions_are_the_batches_meals_oldest_batch_first(client: TestClient
         "description": "Tacos, the quick way.",
         "active_time_minutes": 15,
         "total_time_minutes": 30,
+        "rating": None,
     }
     assert get_order(client, order_id, DAD)["jobs"] == order["jobs"]  # in a fixed order
 
@@ -1087,6 +1114,18 @@ def test_placed_orders_are_listed_from_the_day_they_cover(client: TestClient) ->
     assert placed_orders(client, start + timedelta(days=5)) == []
 
 
+def test_without_a_day_every_placed_order_is_listed(client: TestClient) -> None:
+    start = tomorrow()
+    first = placed_order(client, start, start + timedelta(days=3))
+    second = placed_order(client, start + timedelta(days=3), start + timedelta(days=5), DAD)
+    open_draft(client)  # the next order: a draft, not listed
+    placed_order(client, start, start + timedelta(days=2), NEIGHBOR)  # another household's
+
+    # Even those that cover none of the days from `covering_from` on.
+    assert placed_orders(client, start + timedelta(days=5)) == []
+    assert [order["id"] for order in placed_orders(client)] == [first["id"], second["id"]]
+
+
 # Recipes.
 
 
@@ -1101,6 +1140,7 @@ def test_a_suggestion_opens_as_its_full_recipe(client: TestClient) -> None:
         "description": "Tacos, the quick way.",
         "active_time_minutes": 15,
         "total_time_minutes": 30,
+        "rating": None,
         "servings": 4,
         "steps": ["Cook.", "Serve."],
         "ingredients": [
@@ -1128,6 +1168,120 @@ def test_meals_outside_the_households_orders_are_not_found(client: TestClient) -
     assert ok(client.get(f"/v1/meals/{neighbors_meal}", headers=as_user(NEIGHBOR)))
 
 
+# Ratings.
+
+
+def test_members_rate_the_households_meals(client: TestClient) -> None:
+    placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
+    [meal_id] = placed["meal_ids"]
+    assert get_meal(client, meal_id)["rating"] is None
+
+    no_content(rate(client, meal_id, "up"))
+    assert get_meal(client, meal_id, DAD)["rating"] == "up"
+
+    no_content(rate(client, meal_id, "favorite", DAD))
+    assert get_meal(client, meal_id)["rating"] == "favorite"
+
+    no_content(clear_rating(client, meal_id))
+    assert get_meal(client, meal_id)["rating"] is None
+    # Clearing it again changes nothing.
+    no_content(clear_rating(client, meal_id, DAD))
+    assert get_meal(client, meal_id)["rating"] is None
+
+
+def test_meals_are_listed_with_their_ratings(client: TestClient) -> None:
+    placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
+    [placed_meal] = placed["meal_ids"]
+    order_id, [liked, disliked] = with_suggestions(client, names=("Chili", "Liver"))
+    no_content(rate(client, placed_meal, "down"))
+    no_content(rate(client, liked, "favorite"))
+    no_content(rate(client, disliked, "not_for_us", DAD))
+
+    [listed] = placed_orders(client)
+    assert [(meal["id"], meal["rating"]) for meal in listed["meals"]] == [(placed_meal, "down")]
+    draft = next_order(client)["draft"]
+    assert draft["id"] == order_id
+    assert {meal["id"]: meal["rating"] for job in draft["jobs"] for meal in job["meals"]} == {
+        liked: "favorite",
+        disliked: "not_for_us",
+    }
+    assert get_meal(client, placed_meal)["rating"] == "down"
+    # A batch requested again is returned with its meals' ratings too.
+    [job] = draft["jobs"]
+    retried = ok(request_batch(client, order_id, job_id=UUID(job["id"])))
+    assert retried["meals"] == job["meals"]
+
+
+def test_households_rate_only_their_own_meals(client: TestClient) -> None:
+    _, [neighbors_meal, _] = with_suggestions(client, NEIGHBOR)
+    discarded_id, [discarded_meal, _] = with_suggestions(client, MOM)
+    client.delete(f"/v1/grocery-orders/{discarded_id}", headers=as_user(MOM))
+    no_content(rate(client, neighbors_meal, "up", NEIGHBOR))
+
+    for meal_id in [neighbors_meal, discarded_meal, str(uuid4())]:
+        assert detail(rate(client, meal_id, "down"), 404) == "No such meal."
+        assert detail(clear_rating(client, meal_id), 404) == "No such meal."
+
+    assert get_meal(client, neighbors_meal, NEIGHBOR)["rating"] == "up"
+
+
+def test_not_for_us_unpicks_the_meal_and_keeps_it_from_being_picked(client: TestClient) -> None:
+    order_id, [first, second] = with_suggestions(client)
+    ok(pick(client, order_id, first))
+    ok(pick(client, order_id, second))
+
+    no_content(rate(client, first, "not_for_us", DAD))
+
+    assert get_order(client, order_id)["meal_ids"] == [second]
+    message = detail(pick(client, order_id, first), 409)
+    assert message == "You marked this meal 'don't show meals like this'."
+    assert get_order(client, order_id)["meal_ids"] == [second]
+    # Undone, it can be picked again.
+    no_content(clear_rating(client, first))
+    assert sorted(ok(pick(client, order_id, first))["meal_ids"]) == sorted([first, second])
+
+
+def test_other_ratings_leave_the_picks_alone(client: TestClient) -> None:
+    order_id, [first, second] = with_suggestions(client)
+    ok(pick(client, order_id, first))
+
+    no_content(rate(client, first, "down"))
+    no_content(rate(client, second, "down"))
+
+    assert get_order(client, order_id)["meal_ids"] == [first]
+    assert sorted(ok(pick(client, order_id, second))["meal_ids"]) == sorted([first, second])
+
+
+def test_not_for_us_leaves_placed_orders_as_they_were(client: TestClient) -> None:
+    placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
+    [meal_id] = placed["meal_ids"]
+    open_draft(client)  # the next order
+
+    no_content(rate(client, meal_id, "not_for_us"))
+
+    assert get_order(client, placed["id"])["meal_ids"] == [meal_id]
+    [listed] = placed_orders(client)
+    assert [meal["id"] for meal in listed["meals"]] == [meal_id]
+
+
+def test_a_pick_and_a_not_for_us_mark_at_once_never_leave_the_meal_picked(
+    client: TestClient,
+) -> None:
+    order_id, meal_ids = with_suggestions(client, names=("A", "B", "C", "D", "E"))
+
+    for meal_id in meal_ids:
+        picked, marked = run_at_once(
+            [
+                lambda meal_id=meal_id: pick(client, order_id, meal_id),
+                lambda meal_id=meal_id: rate(client, meal_id, "not_for_us", DAD),
+            ]
+        )
+        assert picked.status_code in (200, 409), picked.text
+        assert marked.status_code == 204, marked.text
+
+    assert get_order(client, order_id)["meal_ids"] == []
+
+
 # Error bodies.
 
 INVALID_REQUESTS = {
@@ -1142,8 +1296,9 @@ INVALID_REQUESTS = {
         {"delivery_date": "2026-13-01", "next_delivery_date": None},
     ),
     "a date missing": ("put", "/v1/grocery-orders/{order}/dates", {"delivery_date": None}),
-    "no covering_from": ("get", "/v1/grocery-orders", None),
     "covering_from not a date": ("get", "/v1/grocery-orders?covering_from=soon", None),
+    "no rating": ("put", f"/v1/meals/{JOB_ID}/rating", {}),
+    "not a rating": ("put", f"/v1/meals/{JOB_ID}/rating", {"rating": "meh"}),
     "too many log entries": (
         "post",
         "/v1/logs",

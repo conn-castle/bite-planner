@@ -179,6 +179,30 @@ class GroceryOrderMeal(SQLModel, table=True):
     meal_id: UUID = Field(foreign_key="meal.id", primary_key=True)
 
 
+class MealRating(StrEnum):
+    # Declared worst to best: Postgres orders enum values as declared, so
+    # "liked or better" is `rating >= 'up'`.
+    NOT_FOR_US = "not_for_us"  # "don't show meals like this" (the ✕ while picking)
+    DOWN = "down"
+    UP = "up"
+    FAVORITE = "favorite"  # the heart; a favorite is always liked
+
+
+class MealPreference(TimestampMixin, SQLModel, table=True):
+    """The household's rating of a meal. No row means not rated."""
+
+    __tablename__ = "meal_preference"
+
+    # Stored rather than found through the meal's job and order: discarding a
+    # draft deletes its jobs (nulling meal.job_id), but its "not for us" marks
+    # stay with the household.
+    household_id: UUID = Field(foreign_key="household.id", primary_key=True)
+    meal_id: UUID = Field(foreign_key="meal.id", primary_key=True)
+    rating: MealRating = Field(
+        sa_type=Enum(MealRating, name="meal_rating", values_callable=_values)
+    )
+
+
 class Household(TimestampMixin, SQLModel, table=True):
     """A group of people who share orders and meals. Each household sees only its own."""
 

@@ -23,7 +23,7 @@ export interface BarDay {
   date: ISODate
   /** The number of the order whose meals cover this day; null when no meals do. */
   coveredBy: number | null
-  /** Its meals' groceries haven't arrived yet: the bar is dashed (compact strip only). */
+  /** Its meals' groceries haven't arrived yet: the bar is a lighter tint (compact strip only). */
   coverAhead?: boolean
   /** Whether the day can be chosen (or, in a bar without choices, isn't past); the others are greyed out. */
   selectable: boolean
@@ -127,12 +127,6 @@ export function DateBar({
   }, [scrollable, compact, selected])
 
   const orders = [...new Set(days.flatMap((day) => (day.coveredBy === null ? [] : [day.coveredBy])))]
-  // Each covered day's place in its order's run of days: 0 on the first.
-  const runDays: number[] = []
-  days.forEach((day, index) => {
-    const continues = index > 0 && day.coveredBy !== null && days[index - 1].coveredBy === day.coveredBy
-    runDays.push(continues ? runDays[index - 1] + 1 : 0)
-  })
   const fit: CSSProperties = scrollable ? {} : { gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` }
 
   const bar = (
@@ -145,8 +139,7 @@ export function DateBar({
     >
       {days.map(({ date, coveredBy, coverAhead = false, selectable, past = false, tag, marks = [] }, index) => {
         const isSelected = date === selected
-        const cover: CSSProperties & { '--cover'?: string; '--run-day'?: number } =
-          coveredBy === null ? {} : { '--cover': orderColor(coveredBy), '--run-day': runDays[index] }
+        const cover: CSSProperties & { '--cover'?: string } = coveredBy === null ? {} : { '--cover': orderColor(coveredBy) }
         const className = [
           styles.day,
           isSelected && styles.selected,

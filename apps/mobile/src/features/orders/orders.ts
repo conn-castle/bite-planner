@@ -11,8 +11,10 @@ import { apiRequest } from '../../lib/api/client'
 import { ApiError, isRetryable } from '../../lib/api/errors'
 import type { GroceryOrder, ISODate, Job, NextOrder, PlacedOrder } from '../../lib/api/types'
 import { logger } from '../../lib/log'
+import { queryKeys } from '../../lib/query/keys'
+import { storeMealRating } from '../meals/ratings'
 import { hasRunningBatch } from './batches'
-import { applyEdits, isOrderEdit, type SetDates, type SetMeal } from './edits'
+import { applyEdits, isOrderEdit, type SetDates, type SetMeal, type SetNotForUs } from './edits'
 
 /**
  * Grocery orders: the household's next order and its draft, everything the
@@ -23,29 +25,33 @@ import { applyEdits, isOrderEdit, type SetDates, type SetMeal } from './edits'
 const POLL_MS = 3_000
 
 export const nextQuery = queryOptions({
-  queryKey: ['next-order'],
+  queryKey: queryKeys.nextOrder,
   queryFn: () => apiRequest<NextOrder>('GET', '/v1/grocery-orders/next'),
 })
 
-const PLACED_KEY = ['placed-orders']
-
-/** The household's placed orders whose meals cover `coveringFrom` or a later day, oldest first. */
-export const placedQuery = (coveringFrom: ISODate) =>
+/**
+ * The household's placed orders, oldest first: those whose meals cover
+ * `coveringFrom` or a later day, or all of them (History).
+ */
+export const placedQuery = (coveringFrom?: ISODate) =>
   queryOptions({
-    queryKey: [...PLACED_KEY, coveringFrom],
+    queryKey: queryKeys.placedOrdersFrom(coveringFrom),
     queryFn: () =>
-      apiRequest<PlacedOrder[]>('GET', `/v1/grocery-orders?covering_from=${encodeURIComponent(coveringFrom)}`),
+      apiRequest<PlacedOrder[]>(
+        'GET',
+        coveringFrom ? `/v1/grocery-orders?covering_from=${encodeURIComponent(coveringFrom)}` : '/v1/grocery-orders',
+      ),
   })
 
-const orderKey = (orderId: string) => ['grocery-order', orderId]
+const orderKey = queryKeys.order
 
 /** The household's next order, with its draft once someone has started one. */
 export function useNextOrder() {
   return useQuery(nextQuery)
 }
 
-/** The household's placed orders whose meals cover `coveringFrom` or a later day. */
-export function usePlacedOrders(coveringFrom: ISODate) {
+/** The household's placed orders whose meals cover `coveringFrom` or a later day, or all of them. */
+export function usePlacedOrders(coveringFrom?: ISODate) {
   return useQuery(placedQuery(coveringFrom))
 }
 
@@ -103,16 +109,26 @@ async function storeOrder(queryClient: QueryClient, order: GroceryOrder) {
   })
 }
 
+/** Fetches again everything an order that may have just been placed shows in. */
+function refetchAfterPlaced(queryClient: QueryClient, orderId: string) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+    queryClient.invalidateQueries({ queryKey: nextQuery.queryKey }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders }),
+  ])
+}
+
 const OPEN = ['orders', 'open']
 const GENERATE = ['orders', 'generate']
 const SET_MEAL = ['orders', 'set-meal']
 const SET_DATES = ['orders', 'set-dates']
+const SET_NOT_FOR_US = ['orders', 'set-not-for-us']
 const PLACE = ['orders', 'place']
 const DISCARD = ['orders', 'discard']
 
 // Changes to an order run one at a time, in the order they were made, so each
 // response (the whole order) includes every earlier change, and later ones
-// still being saved are applied over it.
+// still being saved are applied over it. Placing and discarding wait for them.
 const EDITS = { id: 'grocery-order-edits' }
 
 export interface OpenOrder {
@@ -189,6 +205,28 @@ export function registerOrderMutations(queryClient: QueryClient) {
     onError: (_error: Error, { orderId }: SetMeal) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
   })
 
+  queryClient.setMutationDefaults(SET_NOT_FOR_US, {
+    // The mark is the household's rating of the meal; the server also unpicks
+    // it. Its answer has no order, so the order is fetched after it.
+    mutationFn: async ({ orderId, mealId, notForUs }: SetNotForUs) => {
+      if (notForUs) await apiRequest<void>('PUT', `/v1/meals/${mealId}/rating`, { rating: 'not_for_us' })
+      else await apiRequest<void>('DELETE', `/v1/meals/${mealId}/rating`)
+      return apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${orderId}`)
+    },
+    retry,
+    scope: EDITS,
+    onSuccess: async (order: GroceryOrder, { mealId, notForUs }: SetNotForUs) => {
+      await storeMealRating(queryClient, { mealId, rating: notForUs ? 'not_for_us' : null })
+      // Someone placed it meanwhile (a rating can still be saved then): it's no
+      // longer the draft, so it isn't stored as one.
+      if (order.status === 'draft') await storeOrder(queryClient, order)
+      else await refetchAfterPlaced(queryClient, order.id)
+    },
+    // Refused, or the rating was saved but the order couldn't be fetched: show
+    // everything as the server has it now.
+    onError: (_error: Error, { orderId }: SetNotForUs) => refetchAfterPlaced(queryClient, orderId),
+  })
+
   queryClient.setMutationDefaults(SET_DATES, {
     mutationFn: ({ orderId, dates }: SetDates) =>
       apiRequest<GroceryOrder>('PUT', `/v1/grocery-orders/${orderId}/dates`, dates),
@@ -213,7 +251,7 @@ export function registerOrderMutations(queryClient: QueryClient) {
       // refetch) and fetched again.
       await Promise.all([
         queryClient.resetQueries({ queryKey: nextQuery.queryKey }),
-        queryClient.invalidateQueries({ queryKey: PLACED_KEY }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders }),
       ])
     },
     // Refused (e.g. the delivery date is no longer available): show the order as it is now.
@@ -223,6 +261,8 @@ export function registerOrderMutations(queryClient: QueryClient) {
   queryClient.setMutationDefaults(DISCARD, {
     mutationFn: ({ orderId }: OrderAction) => apiRequest<void>('DELETE', `/v1/grocery-orders/${orderId}`),
     retry,
+    // After the changes still being saved, e.g. a "not for us" mark, which must reach the meal while its draft exists.
+    scope: EDITS,
     onSuccess: async (_result: void, { orderId }: OrderAction) => {
       logger.info('orders.discarded', { orderId })
       await cancelFetches(queryClient, orderId)
@@ -233,7 +273,7 @@ export function registerOrderMutations(queryClient: QueryClient) {
     onError: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: nextQuery.queryKey }),
-        queryClient.invalidateQueries({ queryKey: PLACED_KEY }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders }),
       ]),
   })
 }
@@ -249,6 +289,11 @@ export function useGenerateMeals() {
 /** Adds or removes a pick; it shows at once (see edits.ts). */
 export function useSetMeal() {
   return useMutation<GroceryOrder, Error, SetMeal>({ mutationKey: SET_MEAL })
+}
+
+/** Marks a suggestion "don't show meals like this", or undoes it; it shows at once (see edits.ts). */
+export function useSetNotForUs() {
+  return useMutation<GroceryOrder, Error, SetNotForUs>({ mutationKey: SET_NOT_FOR_US })
 }
 
 /** Saves both dates; they show at once (see edits.ts). */

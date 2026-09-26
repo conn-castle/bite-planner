@@ -9,6 +9,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from uuid import UUID, uuid4
 
 import pytest
 from sqlmodel import Session, col, select
@@ -17,9 +18,17 @@ from typer.testing import CliRunner
 from castle_chef import orders, worker
 from castle_chef.cli import app
 from castle_chef.db import get_engine
-from castle_chef.jobs import fail_job
-from castle_chef.meals import MealInput
-from castle_chef.models import GroceryOrder, Job, JobStatus, Meal
+from castle_chef.jobs import claim_job, fail_job
+from castle_chef.meals import IngredientInput, MealInput, add_meals
+from castle_chef.models import (
+    GroceryOrder,
+    Household,
+    Job,
+    JobKind,
+    JobStatus,
+    Meal,
+    MealRating,
+)
 
 runner = CliRunner()
 FAKE_AGENT = Path(__file__).parent / "fake_agent.py"
@@ -196,6 +205,29 @@ def test_a_job_discarded_before_it_starts_ends_quietly(
     assert not (tmp_path / "jobs" / str(job_id)).exists()  # the agent never ran
 
 
+def test_a_job_discarded_just_after_it_was_claimed_ends_quietly(
+    session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_fake_agent(monkeypatch, meals=1)
+    job_id = job.id
+    order = session.get(GroceryOrder, job.grocery_order_id)
+    assert order is not None
+
+    def claim_then_discard(claim_session: Session, claimed_id: UUID) -> Job | None:
+        claimed = claim_job(claim_session, claimed_id)
+        orders.discard(session, order.household_id, order.id)
+        return claimed
+
+    monkeypatch.setattr(worker, "claim_job", claim_then_discard)
+
+    run_job(job)
+
+    events = log_events(tmp_path / "logs")
+    assert "job.discarded" in [event["event"] for event in events]
+    assert [event for event in events if event["level"] == "error"] == []
+    assert not (tmp_path / "jobs" / str(job_id)).exists()  # the agent never ran
+
+
 def test_meals_are_discarded_if_the_job_was_failed_meanwhile(
     session: Session, job: Job, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -287,3 +319,105 @@ def test_parallel_jobs_wait_for_the_agent_lock(
 
     assert agent_started.exists()
     assert reload(session, job).status == JobStatus.SUCCEEDED
+
+
+# The prompt.
+
+
+def suggest(session: Session, job: Job, *meals: tuple[str, str | None]) -> list[Meal]:
+    """Save the job's meals (name, description) as its finished batch would."""
+    add_meals(
+        session,
+        job.id,
+        [
+            MealInput(
+                name=name,
+                description=description,
+                servings=4,
+                ingredients=[IngredientInput(name="onions")],
+                steps=["Cook."],
+            )
+            for name, description in meals
+        ],
+    )
+    session.commit()
+    return list(
+        session.exec(select(Meal).where(Meal.job_id == job.id).order_by(col(Meal.name))).all()
+    )
+
+
+def new_job(session: Session, household_id: UUID) -> Job:
+    """A pending batch for a new draft of the household."""
+    draft = GroceryOrder(household_id=household_id, created_by=uuid4())
+    session.add(draft)
+    session.commit()
+    pending = Job(
+        id=uuid4(), grocery_order_id=draft.id, kind=JobKind.GENERATE_MEALS, requested_by=uuid4()
+    )
+    session.add(pending)
+    session.commit()
+    session.refresh(pending)
+    return pending
+
+
+def test_the_prompt_asks_to_avoid_meals_like_the_households_not_for_us_ones(
+    session: Session, job: Job, draft: GroceryOrder, household_id: UUID
+) -> None:
+    liver, rated_down, tofu = suggest(
+        session, job, ("Liver and Onions", "Pan-fried liver."), ("Meatloaf", None), ("Tofu", None)
+    )
+    for meal, rating in [
+        (liver, MealRating.NOT_FOR_US),
+        (rated_down, MealRating.DOWN),
+        (tofu, MealRating.NOT_FOR_US),
+    ]:
+        orders.rate_meal(session, household_id, meal.id, rating)
+    neighbors = Household(name="Neighbors")
+    session.add(neighbors)
+    session.commit()
+    neighbors_job = new_job(session, neighbors.id)
+    [neighbors_meal] = suggest(session, neighbors_job, ("Tacos", "Crunchy."))
+    orders.rate_meal(session, neighbors.id, neighbors_meal.id, MealRating.NOT_FOR_US)
+    # The marks outlast the draft they were made on.
+    orders.discard(session, household_id, draft.id)
+
+    prompt = worker.generate_meals_prompt(session, new_job(session, household_id), 5)
+
+    assert (
+        'The family marked these meals "don\'t show meals like this". '
+        "Don't suggest meals like them:\n\n"
+        "- Liver and Onions: Pan-fried liver.\n"
+        "- Tofu\n\n"
+        "Add each meal"
+    ) in prompt
+    assert "Meatloaf" not in prompt
+    assert "Tacos" not in prompt
+
+
+def test_the_prompt_lists_the_same_idea_marked_twice_once(
+    session: Session, job: Job, household_id: UUID
+) -> None:
+    both = suggest(
+        session, job, ("Liver and Onions", "Pan-fried liver."), ("liver and onions", None)
+    )
+    for meal in both:
+        orders.rate_meal(session, household_id, meal.id, MealRating.NOT_FOR_US)
+
+    prompt = worker.generate_meals_prompt(session, job, 5)
+
+    assert prompt.lower().count("liver and onions") == 1
+
+
+def test_the_prompt_has_no_meals_to_avoid_when_none_are_marked(
+    session: Session, job: Job, household_id: UUID
+) -> None:
+    [meal] = suggest(session, job, ("Meatloaf", None))
+    orders.rate_meal(session, household_id, meal.id, MealRating.DOWN)
+
+    prompt = worker.generate_meals_prompt(session, job, 5)
+
+    assert prompt.startswith(
+        "Create 5 distinct meals for a family. Every meal must be low effort to cook.\n\n"
+        "Add each meal"
+    )
+    assert "Meatloaf" not in prompt

@@ -1,13 +1,12 @@
 import type { GroceryOrder, ISODate } from '../../lib/api/types'
 import { addDays, formatDate } from '../../lib/dates'
 import { haptics } from '../../lib/haptics'
-import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
-import { Group, ListRow, Row } from '../../ui/Group'
+import { Group, Row } from '../../ui/Group'
 import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
-import { formatMinutes } from '../meals/facts'
+import { MealRow } from '../meals/MealRow'
 import { pickedMeals } from './batches'
 import { coveredDays } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
@@ -69,18 +68,9 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onBack, onClose 
           />
         </Group>
         <Group title="Meals">
-          {meals.map((meal) => {
-            const minutes = meal.total_time_minutes ?? meal.active_time_minutes
-            return (
-              <ListRow
-                key={meal.id}
-                art={<MealArt />}
-                overline={minutes != null ? formatMinutes(minutes) : undefined}
-                label={meal.name}
-                onClick={() => onOpenMeal(meal.id)}
-              />
-            )
-          })}
+          {meals.map((meal) => (
+            <MealRow key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal.id)} />
+          ))}
         </Group>
       </div>
     </FlowFrame>

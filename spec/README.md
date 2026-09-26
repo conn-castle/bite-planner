@@ -13,11 +13,19 @@ Where the two disagree, the requirements win. Decisions from reviews of the buil
 - The next-delivery day row marks the days that have meals with a bar in the order's color, starts at the delivery day, and still marks the best day.
 - The next-delivery coverage details have one fixed layout (rows, not a sentence) whatever is chosen.
 - Placed order cards (home and the order view) have a 1px border in the order's color at 40% (`color-mix(in srgb, var(--c) 40%, transparent)`), not the mockup's neutral hairline, so each card matches its bar in the day strip.
-- The dashed bars of orders not delivered yet run evenly from the start of each order's bar to its end; the mockup restarts the dashes in every day, which bunches them where days meet.
+- The bar of an order not delivered yet is solid, in a lighter tint of the order's color (45% of it on white), not dashed as in the mockup.
 - While meal ideas are being made, the draft card shows how long it has taken ("Working for 0:42") instead of the mockup's made-up estimate ("About 1 min left").
 - The draft card doesn't credit picks to a person ("2 meals added", not "Sam has added 2 meals"): anyone in the household can pick, and the order records only who started it.
+- A placed card's last track node (its days) shows no progress ring before the first day; the mockup's empty ring still draws its round line end as a dot.
 
-The mockup predates two requirements: it has no meal ratings (thumbs up, thumbs down, favorite, and the prompt to rate last week's meals), and it shows food illustrations where the app shows an icon.
+- A meal's rating is one of four exclusive values, worst to best: "not for us" (the ✕ while picking), thumbs down, thumbs up, and favorite (a favorite is always liked, so it can't be thumbs down). No rating is the fifth state. Discarding a draft keeps its "not for us" marks.
+- While picking, a suggestion has only the ✕. Thumbs and the heart are for meals of placed orders.
+
+The mockup predates two requirements: it has no meal ratings (thumbs up, thumbs down, favorite, and the prompt to rate last week's meals), and it shows food illustrations where the app shows an icon. Their design was chosen in review:
+
+- A meal's page has one round button at the end of its toolbar: "?" when not rated, otherwise the rating. Tapped, it grows sideways into the three choices (thumbs down, thumbs up, heart); tapping the chosen one clears it.
+- The prompt to rate last week's meals is on the "Finding meals" step while suggestions generate: one card per order, in the look of History's order cards, titled "How were these meals?", with the three choices beside each meal.
+- History has a search field and filter chips (All, Favorites, Liked, Didn't like, Not rated) under the "By order" / "All meals" switch, and each meal shows its rating as a small mark.
 
 ## Build order
 
@@ -25,15 +33,13 @@ One piece at a time, each through the UI with real data:
 
 1. Create-order flow (done).
 2. Home (Orders): placed orders as cards, the days they cover in the day strip, and the next order with its target and decide-by dates. Adds the household's decide-by offset (default 1 day); its screen comes with Settings. (done)
-3. History and ratings: past orders and all meals with search and filters; thumbs up, thumbs down, and favorite; the prompt to rate last week's meals; and "don't show meals like this" while picking (a household meal preference, like ratings).
+3. History and ratings: past orders and all meals with search and filters; thumbs up, thumbs down, and favorite; the prompt to rate last week's meals; and "don't show meals like this" while picking (a household meal preference, like ratings) (done)
 4. Settings: household (decide-by offset, reminder lead) and personal (notification time).
 5. Notifications: the daily reminders and "ideas ready". Needs an APNs key from the Apple Developer site.
 6. The rest of the order flow: the order lock and the shopping list step.
 
 ## Open questions
 
-- Can a meal be both a favorite and thumbs down?
 - The "ideas ready" notification: only the member who started the generation, or everyone?
-- Discarding a draft: its "don't show meals like this" choices are household preferences, so they stay. Confirm.
 - Resuming a draft: back to the step where it was left, or to picking meals (as mocked)?
 - Home: should the current order's meals always be visible, even when another card is on top?

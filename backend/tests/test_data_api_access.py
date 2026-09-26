@@ -44,6 +44,10 @@ INSERTS = {
         "INSERT INTO meal_ingredient (id, meal_id, position, name) "
         f"VALUES ('{uuid4()}', '{uuid4()}', 0, 'beef')"
     ),
+    "meal_preference": (
+        "INSERT INTO meal_preference (household_id, meal_id, rating) "
+        f"VALUES ('{uuid4()}', '{uuid4()}', 'up')"
+    ),
 }
 
 

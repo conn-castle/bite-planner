@@ -9,7 +9,7 @@ import { formatMinutes } from '../meals/facts'
 import { newestBatchState, suggestions } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { elapsed, plural } from './format'
-import { useEditsPending, useGenerateMeals, useSetMeal } from './orders'
+import { useEditsPending, useGenerateMeals, useSetMeal, useSetNotForUs } from './orders'
 import styles from './PickStep.module.css'
 
 // Placeholder cards shown below the grid while more suggestions are made.
@@ -25,6 +25,11 @@ interface PickStepProps {
 /** Step 1: the suggestions in a grid, each added to the order or not, and more on request. */
 export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) {
   const setMeal = useSetMeal()
+  const setNotForUs = useSetNotForUs()
+  // The newest change that failed: a pick, or a ✕.
+  const failed = [setMeal, setNotForUs]
+    .filter((change) => change.isError)
+    .sort((a, b) => b.submittedAt - a.submittedAt)[0]?.error
   // Moving on waits until every pick is saved, so the next steps see them all.
   const saving = useEditsPending()
   const picked = new Set(order.meal_ids)
@@ -36,12 +41,17 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
     setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: !picked.has(meal.id) })
   }
 
+  function dismiss(meal: MealSummary) {
+    haptics.tap()
+    setNotForUs.mutate({ orderId: order.id, mealId: meal.id, notForUs: meal.rating !== 'not_for_us' })
+  }
+
   return (
     <FlowFrame
       step={0}
       onClose={onClose}
       title="Pick meals"
-      lede={`Add the meals you want in Order ${order.number}. Tap a meal to see its recipe.`}
+      lede={`Add the meals you want in Order ${order.number}. Tap ✕ on anything you don't want: Chef stops suggesting meals like it to your household.`}
       footer={
         <>
           <FooterSummary
@@ -58,9 +68,9 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
         <Icon name="users" />
         Your picks are saved for the household as you go.
       </p>
-      {setMeal.isError && (
+      {failed && (
         <div className={styles.notice}>
-          <Notice>Couldn't save that change: {setMeal.error.message}</Notice>
+          <Notice>Couldn't save that change: {failed.message}</Notice>
         </div>
       )}
       <div className={styles.grid}>
@@ -70,6 +80,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
             meal={meal}
             added={picked.has(meal.id)}
             onToggle={() => toggle(meal)}
+            onDismiss={() => dismiss(meal)}
             onOpen={() => onOpenMeal(meal.id)}
           />
         ))}
@@ -94,17 +105,26 @@ interface MealCardProps {
   meal: MealSummary
   added: boolean
   onToggle: () => void
+  onDismiss: () => void
   onOpen: () => void
 }
 
-function MealCard({ meal, added, onToggle, onOpen }: MealCardProps) {
+/**
+ * A suggestion: open its recipe, add it, or ✕ it ("don't show meals like
+ * this"), which also takes it out of the order and can be undone.
+ */
+function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
   const minutes = meal.total_time_minutes ?? meal.active_time_minutes
+  // A meal marked "not for us" is never picked (see edits.ts), so it's never also added.
+  const notForUs = meal.rating === 'not_for_us'
+
   return (
-    <div className={`${styles.card} ${added ? styles.added : ''}`}>
+    <div className={`${styles.card} ${added ? styles.added : ''} ${notForUs ? styles.notForUs : ''}`}>
       <button type="button" className={styles.open} onClick={onOpen}>
         <span className={styles.art}>
           <MealArt />
         </span>
+        {notForUs && <span className={styles.gone}>No more meals like this</span>}
         <span className={styles.text}>
           <span className={styles.name}>{meal.name}</span>
           {minutes != null && <span className={styles.time}>{formatMinutes(minutes)}</span>}
@@ -112,8 +132,18 @@ function MealCard({ meal, added, onToggle, onOpen }: MealCardProps) {
       </button>
       <button
         type="button"
+        className={`${styles.dismiss} cc-hit`}
+        onClick={onDismiss}
+        aria-pressed={notForUs}
+        aria-label={notForUs ? `Show meals like ${meal.name} again` : `Don't show meals like ${meal.name}`}
+      >
+        <Icon name={notForUs ? 'undo' : 'x'} />
+      </button>
+      <button
+        type="button"
         className={styles.add}
         onClick={onToggle}
+        disabled={notForUs}
         aria-pressed={added}
         aria-label={added ? `Remove ${meal.name}` : `Add ${meal.name}`}
       >

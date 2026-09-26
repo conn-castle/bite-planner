@@ -74,6 +74,8 @@ interface NavPageProps {
    * a round Back button (.hero-btns).
    */
   tab?: { href: string; backLabel?: string }
+  /** Controls at the end of the toolbar, e.g. a meal's rating. */
+  actions?: ReactNode
   children: ReactNode
 }
 
@@ -85,7 +87,7 @@ interface NavPageProps {
  * `IonPage`, which registers with the tab's router outlet. (An `IonPage` in a
  * nav would register with the outlet too, which then hides it.)
  */
-export function NavPage({ title, tab, children }: NavPageProps) {
+export function NavPage({ title, tab, actions, children }: NavPageProps) {
   const bar = tab?.backLabel
   // Once content scrolls under the toolbar, the toolbar shows its glass and title.
   const [scrolled, setScrolled] = useState(false)
@@ -115,6 +117,7 @@ export function NavPage({ title, tab, children }: NavPageProps) {
             )}
           </IonButtons>
           <IonTitle className={bar ? undefined : 'cc-reveal'}>{title}</IonTitle>
+          {actions && <IonButtons slot="end">{actions}</IonButtons>}
         </IonToolbar>
       </IonHeader>
       <IonContent fullscreen scrollEvents onIonScroll={(event) => setScrolled(event.detail.scrollTop > 8)}>

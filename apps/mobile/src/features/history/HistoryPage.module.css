@@ -1,11 +1,128 @@
-/* spec/mockup.html: History with no orders yet */
-/* The screen's heading (its only content), in the look of the mockup's plain empty text. */
+/* spec/mockup.html: renderHistory (.seg-ctl, .hcard, .hgroup, .grid2, .gtile); the search and filters aren't in the mockup. */
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+/* The mockup's plain centered text: no orders yet, or nothing matches. */
 .empty {
   margin: 0;
   padding: 80px 30px;
   text-align: center;
   font-size: 15px;
-  font-weight: 400;
-  line-height: 1.35;
   color: var(--cc-ink-3);
+}
+
+.views {
+  margin: 4px 0 6px;
+}
+
+.search {
+  margin-top: 8px;
+}
+
+.filters {
+  margin: 10px calc(-1 * var(--cc-card-x)) 0;
+  padding: 0 var(--cc-card-x) 2px;
+}
+
+.card {
+  margin-top: 12px;
+}
+
+/* All meals: one tinted group per order. */
+.group {
+  margin-top: 14px;
+  border-radius: 22px;
+  background: var(--soft);
+  overflow: hidden;
+}
+
+.groupHeader {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: inherit;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--deep);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 12px;
+}
+
+.tile {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--cc-bg);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--cc-press) var(--cc-ease);
+}
+
+.tile:active {
+  transform: scale(0.98);
+}
+
+.tile:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
+}
+
+.tileArt {
+  display: grid;
+  place-items: center;
+  height: 96px;
+  background: var(--cc-fill);
+}
+
+.tileArt svg {
+  width: 68px;
+  height: 68px;
+}
+
+.tileText {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px 10px;
+}
+
+.tileName {
+  height: 34px;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.tileFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  /* The mockup's line for the time: 15px text at 1.35. */
+  min-height: 20px;
+}
+
+.tileFoot small {
+  font-size: 12px;
+  color: var(--cc-ink-2);
 }

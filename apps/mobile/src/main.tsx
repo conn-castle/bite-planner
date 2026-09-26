@@ -16,6 +16,7 @@ import './theme/app.css'
 
 import { App } from './app/App'
 import { ErrorBoundary } from './app/ErrorBoundary'
+import { registerRatingMutations } from './features/meals/ratings'
 import { registerOrderMutations } from './features/orders/orders'
 import { logger, logUncaughtErrors } from './lib/log'
 import { queryClient } from './lib/query/queryClient'
@@ -27,6 +28,7 @@ logger.info('app.start', {
   platform: Capacitor.getPlatform(),
 })
 registerOrderMutations(queryClient)
+registerRatingMutations(queryClient)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

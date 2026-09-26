@@ -246,7 +246,6 @@
   margin: 0 var(--bar-inset);
   border-radius: 3px;
   background: var(--cover, transparent);
-  --bar-start: var(--bar-inset);
 }
 
 .compact .unavailable .cover {
@@ -254,7 +253,6 @@
 }
 
 .compact .joinStart {
-  --bar-start: 0px;
   margin-left: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
@@ -266,13 +264,9 @@
   border-bottom-right-radius: 0;
 }
 
-/* Not delivered yet: a dashed bar. */
-/* Dashes counted from where the order's bar starts (--run-day: its days so far),
-   not from each day, so they run on evenly and every bar starts with a whole dash. */
+/* Not delivered yet: a lighter tint of the order's color (the mockup dashes it; spec/README.md). */
 .compact .ahead {
-  background: linear-gradient(90deg, var(--cover) 0 5px, transparent 5px) repeat-x;
-  background-size: 8px 100%;
-  background-position-x: calc(var(--bar-inset) - var(--run-day) * var(--day-width) - var(--bar-start));
+  background: color-mix(in srgb, var(--cover) 45%, var(--cc-bg));
 }
 
 /* What happens on the day (.dc .ic): a truck on delivery days, a ring on the decide-by day. */

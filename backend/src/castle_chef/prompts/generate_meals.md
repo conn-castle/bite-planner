@@ -1,6 +1,6 @@
 Create $count distinct meals for a family. Every meal must be low effort to cook.
 
-Add each meal by running this shell command once per meal, with the meal as JSON on stdin:
+${avoid}Add each meal by running this shell command once per meal, with the meal as JSON on stdin:
 
 ```sh
 castle-chef meal add <<'EOF'

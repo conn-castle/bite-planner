@@ -76,3 +76,9 @@
 .action {
   margin-top: 24px;
 }
+
+/* While it works: the prompt to rate last week's meals. */
+.rate {
+  width: 100%;
+  margin-top: 28px;
+}

@@ -68,11 +68,13 @@ interface ListRowProps {
   /** A small line over the name, e.g. "35 min". */
   overline?: ReactNode
   label: ReactNode
+  /** A small mark before the chevron, e.g. the meal's rating. */
+  mark?: ReactNode
   onClick: () => void
 }
 
 /** A row that opens something, with a picture: e.g. a meal in a list of meals. */
-export function ListRow({ art, overline, label, onClick }: ListRowProps) {
+export function ListRow({ art, overline, label, mark, onClick }: ListRowProps) {
   return (
     <button type="button" className={`${styles.listRow} ${styles.pressable}`} onClick={onClick}>
       <span className={styles.art}>{art}</span>
@@ -80,6 +82,7 @@ export function ListRow({ art, overline, label, onClick }: ListRowProps) {
         {overline != null && <span className={styles.overline}>{overline}</span>}
         <span className={styles.name}>{label}</span>
       </span>
+      {mark}
       <Icon name="chevR" className={styles.chevron} />
     </button>
   )

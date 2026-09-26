@@ -26,6 +26,12 @@ export interface Member {
 
 export type JobStatus = 'pending' | 'running' | 'succeeded' | 'failed'
 
+/**
+ * The household's rating of a meal, worst to best: "don't show meals like
+ * this" (the ✕ on a suggestion), thumbs down, thumbs up, and favorite (always liked).
+ */
+export type MealRating = 'not_for_us' | 'down' | 'up' | 'favorite'
+
 /** A suggestion card: a meal without its recipe. */
 export interface MealSummary {
   id: string
@@ -33,6 +39,8 @@ export interface MealSummary {
   description: string | null
   active_time_minutes: number | null
   total_time_minutes: number | null
+  /** Null when not rated. */
+  rating: MealRating | null
 }
 
 /** One batch of suggestions: the agent generating 20 meals for an order. */

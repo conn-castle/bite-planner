@@ -8,6 +8,8 @@ import { Skeleton } from '../../ui/Skeleton'
 import { Stepper } from '../../ui/Stepper'
 import styles from './MealPage.module.css'
 import { mealQuery } from './meals'
+import { MealRatingButton } from './MealRating'
+import { useRatingError } from './ratings'
 import { formatQuantity, formatUnit, scaleIngredient } from './servings'
 
 const MAX_SERVINGS = 24
@@ -15,12 +17,25 @@ const MAX_SERVINGS = 24
 // Servings picked per meal, kept while the app is open so going back and forth doesn't reset them.
 const pickedServings = new Map<string, number>()
 
+interface MealPageProps {
+  mealId: string
+  tab?: { href: string }
+  /** Shows the rating in the toolbar: for meals of placed orders, not suggestions being picked. */
+  rateable?: boolean
+}
+
 /** A full recipe, pushed onto a nav: facts, servings, ingredients scaled to them, and the steps. */
-export function MealPage({ mealId, tab }: { mealId: string; tab?: { href: string } }) {
+export function MealPage({ mealId, tab, rateable = false }: MealPageProps) {
   const meal = useQuery(mealQuery(mealId))
+  const ratingError = useRatingError([mealId])
 
   return (
-    <NavPage title={meal.data?.name ?? 'Recipe'} tab={tab}>
+    <NavPage
+      title={meal.data?.name ?? 'Recipe'}
+      tab={tab}
+      actions={rateable && meal.data ? <MealRatingButton meal={meal.data} /> : undefined}
+    >
+      {rateable && ratingError && <Notice>Couldn't save the rating: {ratingError.message}</Notice>}
       {meal.isError && (
         <Notice action={<button onClick={() => void meal.refetch()}>Try again</button>}>
           Couldn't load this recipe: {meal.error.message}

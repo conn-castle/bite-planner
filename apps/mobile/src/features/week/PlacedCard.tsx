@@ -3,13 +3,11 @@ import type { ISODate, NextOrder, PlacedOrder } from '../../lib/api/types'
 import { addDays, daysBetween, formatDate, relativeDay } from '../../lib/dates'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
-import { ListRow } from '../../ui/Group'
 import { Icon } from '../../ui/Icon'
-import { MealArt } from '../../ui/art'
 import { MealStack } from '../../ui/MealStack'
 import { OrderCard, OrderCardBody, OrderCardDivider, OrderCardNote } from '../../ui/OrderCard'
 import { OrderTrack, type TrackDate } from '../../ui/OrderTrack'
-import { formatMinutes } from '../meals/facts'
+import { MealRow } from '../meals/MealRow'
 import { plural } from '../orders/format'
 import { byWhom, coverage, followingOrder, phase, placedOn, placedTitle } from './home'
 import styles from './PlacedCard.module.css'
@@ -131,18 +129,9 @@ export function PlacedCard({
       </button>
       {mealsOpen && (
         <div className={styles.rows}>
-          {order.meals.map((meal) => {
-            const minutes = meal.total_time_minutes ?? meal.active_time_minutes
-            return (
-              <ListRow
-                key={meal.id}
-                art={<MealArt />}
-                overline={minutes != null ? formatMinutes(minutes) : undefined}
-                label={meal.name}
-                onClick={() => onOpenMeal(meal.id)}
-              />
-            )
-          })}
+          {order.meals.map((meal) => (
+            <MealRow key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal.id)} rated />
+          ))}
         </div>
       )}
     </OrderCard>

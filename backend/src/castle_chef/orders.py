@@ -8,8 +8,10 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import delete, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, func, select
 
+from castle_chef import ratings
 from castle_chef.models import (
     GroceryOrder,
     GroceryOrderMeal,
@@ -17,6 +19,7 @@ from castle_chef.models import (
     Household,
     Job,
     Meal,
+    MealRating,
     utc_now,
 )
 
@@ -33,6 +36,14 @@ class OrderPlaced(Exception):
 
 class NotASuggestion(Exception):
     pass
+
+
+class MealNotFound(Exception):
+    pass
+
+
+class NotForUs(Exception):
+    """The household marked the meal "don't show meals like this"."""
 
 
 class InvalidDates(Exception):
@@ -111,6 +122,18 @@ def lock_order(session: Session, household_id: UUID, order_id: UUID) -> GroceryO
     return order
 
 
+def lock_current_draft(session: Session, household_id: UUID) -> GroceryOrder | None:
+    """The household's draft, locked for this transaction, or None if it has none."""
+    return session.exec(
+        select(GroceryOrder)
+        .where(
+            GroceryOrder.household_id == household_id,
+            GroceryOrder.status == GroceryOrderStatus.DRAFT,
+        )
+        .with_for_update()
+    ).first()
+
+
 def lock_draft(session: Session, household_id: UUID, order_id: UUID) -> GroceryOrder:
     """The household's draft, locked for this transaction."""
     order = lock_order(session, household_id, order_id)
@@ -149,6 +172,11 @@ def pick(session: Session, household_id: UUID, order_id: UUID, meal_id: UUID) ->
     if suggested is None:
         session.rollback()
         raise NotASuggestion("That meal isn't one of this order's suggestions.")
+    # The draft's lock also orders this check with a concurrent "not for us" mark,
+    # which unpicks the meal under the same lock (rate_meal).
+    if ratings.is_not_for_us(session, household_id, meal_id):
+        session.rollback()
+        raise NotForUs("You marked this meal 'don't show meals like this'.")
     session.execute(
         insert(GroceryOrderMeal)
         .values(grocery_order_id=order_id, meal_id=meal_id)
@@ -255,23 +283,88 @@ def picked_meals(session: Session, order_id: UUID) -> list[Meal]:
     )
 
 
+def household_meal(
+    session: Session, household_id: UUID, meal_id: UUID, *, with_ingredients: bool = False
+) -> Meal:
+    """One of the household's meals: a suggestion of one of its orders (every pick
+    is one), with its ingredients loaded if asked. Another household's is
+    indistinguishable from none, and so is one whose draft was discarded."""
+    query = (
+        select(Meal)
+        .join(Job, col(Job.id) == Meal.job_id)
+        .join(GroceryOrder, col(GroceryOrder.id) == Job.grocery_order_id)
+        .where(Meal.id == meal_id, GroceryOrder.household_id == household_id)
+    )
+    if with_ingredients:
+        query = query.options(selectinload(Meal.ingredients))  # type: ignore[arg-type]
+    meal = session.exec(query).first()
+    if meal is None:
+        raise MealNotFound("No such meal.")
+    return meal
+
+
+def rate_meal(session: Session, household_id: UUID, meal_id: UUID, rating: MealRating) -> None:
+    """Set the household's rating of one of its meals, replacing any earlier one.
+    Not for us also unpicks it from the draft: under the draft's lock, taken
+    first, so a concurrent pick (which checks the rating under the same lock)
+    can't leave it picked."""
+    draft = lock_current_draft(session, household_id) if rating == MealRating.NOT_FOR_US else None
+    try:
+        household_meal(session, household_id, meal_id)
+    except MealNotFound:
+        session.rollback()
+        raise
+    if draft is not None:
+        session.execute(
+            delete(GroceryOrderMeal).where(
+                col(GroceryOrderMeal.grocery_order_id) == draft.id,
+                col(GroceryOrderMeal.meal_id) == meal_id,
+            )
+        )
+    ratings.write(session, household_id, meal_id, rating)
+    session.commit()
+
+
+def clear_meal_rating(session: Session, household_id: UUID, meal_id: UUID) -> None:
+    """Set one of the household's meals back to not rated (nothing to do if it isn't)."""
+    household_meal(session, household_id, meal_id)
+    ratings.clear(session, household_id, meal_id)
+    session.commit()
+
+
+def picked_meals_of(session: Session, order_ids: list[UUID]) -> dict[UUID, list[Meal]]:
+    """Each order's picked meals, in the order they were suggested, in one query."""
+    meals: dict[UUID, list[Meal]] = {order_id: [] for order_id in order_ids}
+    if not order_ids:
+        return meals
+    for order_id, meal in session.exec(
+        select(GroceryOrderMeal.grocery_order_id, Meal)
+        .join(Meal, col(Meal.id) == GroceryOrderMeal.meal_id)
+        .where(col(GroceryOrderMeal.grocery_order_id).in_(order_ids))
+        .order_by(col(Meal.created_at), col(Meal.id))
+    ).all():
+        meals[order_id].append(meal)
+    return meals
+
+
 def picks(session: Session, order_id: UUID) -> list[UUID]:
     """The ids of the order's picked meals, in the order they were suggested."""
     return [meal.id for meal in picked_meals(session, order_id)]
 
 
-def placed_orders(session: Session, household_id: UUID, covering_from: date) -> list[GroceryOrder]:
-    """The household's placed orders that cover `covering_from` or a later day, oldest first."""
+def placed_orders(
+    session: Session, household_id: UUID, covering_from: date | None = None
+) -> list[GroceryOrder]:
+    """The household's placed orders, oldest first: all of them, or only those that
+    cover `covering_from` or a later day."""
+    query = select(GroceryOrder).where(
+        GroceryOrder.household_id == household_id,
+        GroceryOrder.status == GroceryOrderStatus.PLACED,
+    )
+    if covering_from is not None:
+        query = query.where(col(GroceryOrder.next_delivery_date) > covering_from)
     return list(
-        session.exec(
-            select(GroceryOrder)
-            .where(
-                GroceryOrder.household_id == household_id,
-                GroceryOrder.status == GroceryOrderStatus.PLACED,
-                col(GroceryOrder.next_delivery_date) > covering_from,
-            )
-            .order_by(col(GroceryOrder.created_at), col(GroceryOrder.id))
-        ).all()
+        session.exec(query.order_by(col(GroceryOrder.created_at), col(GroceryOrder.id))).all()
     )
 
 
@@ -297,6 +390,16 @@ def job_meals(session: Session, job_ids: list[UUID]) -> dict[UUID, list[Meal]]:
         if meal.job_id is not None:
             meals[meal.job_id].append(meal)
     return meals
+
+
+def numbers(session: Session, household_id: UUID) -> dict[UUID, int]:
+    """Every one of the household's orders' number (see `number`), in one query."""
+    ids = session.exec(
+        select(GroceryOrder.id)
+        .where(GroceryOrder.household_id == household_id)
+        .order_by(col(GroceryOrder.created_at), col(GroceryOrder.id))
+    ).all()
+    return {order_id: position for position, order_id in enumerate(ids, start=1)}
 
 
 def number(session: Session, order: GroceryOrder) -> int:

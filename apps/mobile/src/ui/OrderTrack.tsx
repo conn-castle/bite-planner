@@ -55,13 +55,16 @@ export function OrderTrack({ phase, days, day, dates }: OrderTrackProps) {
       <div className={[styles.node, phase === 'done' && styles.done, phase === 'onhand' && styles.current].filter(Boolean).join(' ')}>
         <svg className={styles.ring} viewBox="0 0 23 23" aria-hidden="true">
           <circle cx="11.5" cy="11.5" r={RING_RADIUS} className={styles.ringTrack} />
-          <circle
-            cx="11.5"
-            cy="11.5"
-            r={RING_RADIUS}
-            className={styles.ringFill}
-            strokeDasharray={`${(RING * passed) / days} ${RING}`}
-          />
+          {/* Before the first day, nothing: an empty dash would still draw its round cap as a dot. */}
+          {passed > 0 && (
+            <circle
+              cx="11.5"
+              cy="11.5"
+              r={RING_RADIUS}
+              className={styles.ringFill}
+              strokeDasharray={`${(RING * passed) / days} ${RING}`}
+            />
+          )}
         </svg>
         <span className={styles.label}>{phase === 'onhand' ? `Day ${passed}/${days}` : `${days} days`}</span>
         {dates && <NodeDate {...dates[4]} />}

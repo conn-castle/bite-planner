@@ -18,11 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import bindparam, text
-from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, select
 
 from castle_chef import log as logging_config
-from castle_chef import orders
+from castle_chef import orders, ratings
 from castle_chef.auth import AuthError, AuthUnavailable, AuthVerifier, NeonAuthVerifier, Principal
 from castle_chef.db import get_request_session
 from castle_chef.dispatch import DispatchError, JobDispatcher, get_dispatcher
@@ -44,6 +43,7 @@ from castle_chef.models import (
     JobKind,
     JobStatus,
     Meal,
+    MealRating,
 )
 from castle_chef.settings import get_settings, load_ssm_parameters
 
@@ -72,6 +72,8 @@ class MealSummaryOut(BaseModel):
     description: str | None
     active_time_minutes: int | None
     total_time_minutes: int | None
+    # The household's rating; null when not rated.
+    rating: MealRating | None
 
 
 class JobOut(BaseModel):
@@ -173,6 +175,12 @@ class DatesIn(BaseModel):
     next_delivery_date: date | None
 
 
+class RatingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rating: MealRating
+
+
 class LogsIn(BaseModel):
     device: dict[str, Any]
     entries: list[dict[str, Any]] = Field(max_length=MAX_LOG_ENTRIES)
@@ -241,7 +249,25 @@ def names(session: Session, user_ids: set[UUID]) -> dict[UUID, str | None]:
     return {user_id: found.get(user_id) for user_id in user_ids}
 
 
-def job_out(job: Job, meals: list[Meal], people: dict[UUID, str | None]) -> JobOut:
+def meal_summary(meal: Meal, rated: dict[UUID, MealRating]) -> MealSummaryOut:
+    """A meal as the app lists it, with its rating from `rated` (the household's
+    ratings, by meal id)."""
+    return MealSummaryOut(
+        id=meal.id,
+        name=meal.name,
+        description=meal.description,
+        active_time_minutes=meal.active_time_minutes,
+        total_time_minutes=meal.total_time_minutes,
+        rating=rated.get(meal.id),
+    )
+
+
+def job_out(
+    job: Job,
+    meals: list[Meal],
+    people: dict[UUID, str | None],
+    rated: dict[UUID, MealRating],
+) -> JobOut:
     """A job as the app sees it. An overdue job is shown as failed, the state the
     next request (or the failure handler) will write, so the app stops waiting on
     it without this read writing anything."""
@@ -253,7 +279,7 @@ def job_out(job: Job, meals: list[Meal], people: dict[UUID, str | None]) -> JobO
         error=STALE_ERROR if stale else job.error,
         requested_by=MemberOut(user_id=job.requested_by, name=people[job.requested_by]),
         created_at=job.created_at,
-        meals=[MealSummaryOut.model_validate(meal, from_attributes=True) for meal in meals],
+        meals=[meal_summary(meal, rated) for meal in meals],
     )
 
 
@@ -262,6 +288,9 @@ def order_out(session: Session, order: GroceryOrder, today: date) -> GroceryOrde
     jobs = orders.jobs(session, order.id)
     meals = orders.job_meals(session, [job.id for job in jobs])
     people = names(session, {order.created_by, *(job.requested_by for job in jobs)})
+    rated = ratings.of_meals(
+        session, order.household_id, [meal.id for batch in meals.values() for meal in batch]
+    )
 
     target = orders.target_date(session, order)
     return GroceryOrderOut(
@@ -275,15 +304,19 @@ def order_out(session: Session, order: GroceryOrder, today: date) -> GroceryOrde
         earliest_delivery_date=orders.earliest_delivery_date(today),
         delivery_date=order.delivery_date,
         next_delivery_date=order.next_delivery_date,
-        jobs=[job_out(job, meals[job.id], people) for job in jobs],
+        jobs=[job_out(job, meals[job.id], people, rated) for job in jobs],
         meal_ids=orders.picks(session, order.id),
     )
 
 
 def placed_order_out(
-    session: Session, order: GroceryOrder, people: dict[UUID, str | None]
+    order: GroceryOrder,
+    number: int,
+    meals: list[Meal],
+    people: dict[UUID, str | None],
+    rated: dict[UUID, MealRating],
 ) -> PlacedOrderOut:
-    """A placed order as the app sees it."""
+    """A placed order, with its picked meals, as the app sees it."""
     placed_at, placed_by = order.placed_at, order.placed_by
     delivery, next_delivery = order.delivery_date, order.next_delivery_date
     # Set when it's placed; the table's checks guarantee it.
@@ -291,24 +324,23 @@ def placed_order_out(
         raise RuntimeError(f"Placed order {order.id} is missing its placement details or dates.")
     return PlacedOrderOut(
         id=order.id,
-        number=orders.number(session, order),
+        number=number,
         placed_at=placed_at,
         placed_by=MemberOut(user_id=placed_by, name=people[placed_by]),
         delivery_date=delivery,
         next_delivery_date=next_delivery,
-        meals=[
-            MealSummaryOut.model_validate(meal, from_attributes=True)
-            for meal in orders.picked_meals(session, order.id)
-        ],
+        meals=[meal_summary(meal, rated) for meal in meals],
     )
 
 
-# Expected failures of order requests, as the status the app gets.
+# Expected failures of order and meal requests, as the status the app gets.
 ORDER_ERRORS: dict[type[Exception], int] = {
     orders.OrderNotFound: status.HTTP_404_NOT_FOUND,
     orders.NotASuggestion: status.HTTP_404_NOT_FOUND,
+    orders.MealNotFound: status.HTTP_404_NOT_FOUND,
     orders.OrderPlaced: status.HTTP_409_CONFLICT,
     orders.NotReady: status.HTTP_409_CONFLICT,
+    orders.NotForUs: status.HTTP_409_CONFLICT,
     JobIdTaken: status.HTTP_409_CONFLICT,
     orders.InvalidDates: status.HTTP_422_UNPROCESSABLE_CONTENT,
     BatchRunning: status.HTTP_429_TOO_MANY_REQUESTS,
@@ -455,14 +487,23 @@ def create_app() -> FastAPI:
 
     @api.get("/v1/grocery-orders")
     def list_placed(
-        covering_from: date,
         caller: Annotated[Member, Depends(member)],
         session: Annotated[Session, Depends(db)],
+        covering_from: date | None = None,
     ) -> list[PlacedOrderOut]:
-        """The household's placed orders that cover `covering_from` or a later day, oldest first."""
+        """The household's placed orders, oldest first: all of them (History), or
+        only those that cover `covering_from` or a later day."""
         placed = orders.placed_orders(session, caller.household_id, covering_from)
+        numbers = orders.numbers(session, caller.household_id)
+        meals = orders.picked_meals_of(session, [order.id for order in placed])
         people = names(session, {order.placed_by for order in placed if order.placed_by})
-        return [placed_order_out(session, order, people) for order in placed]
+        rated = ratings.of_meals(
+            session, caller.household_id, [meal.id for picked in meals.values() for meal in picked]
+        )
+        return [
+            placed_order_out(order, numbers[order.id], meals[order.id], people, rated)
+            for order in placed
+        ]
 
     @api.get("/v1/grocery-orders/next")
     def get_next(
@@ -537,8 +578,12 @@ def create_app() -> FastAPI:
                     status.HTTP_503_SERVICE_UNAVAILABLE,
                     "The suggestions could not be started. Try again.",
                 ) from error
+        meals = orders.job_meals(session, [job.id])[job.id]
         return job_out(
-            job, orders.job_meals(session, [job.id])[job.id], names(session, {job.requested_by})
+            job,
+            meals,
+            names(session, {job.requested_by}),
+            ratings.of_meals(session, caller.household_id, [meal.id for meal in meals]),
         )
 
     @api.put("/v1/grocery-orders/{order_id}/meals/{meal_id}")
@@ -593,17 +638,10 @@ def create_app() -> FastAPI:
         session: Annotated[Session, Depends(db)],
     ) -> MealOut:
         """A recipe: one of the household's suggestions (every pick is one)."""
-        meal = session.exec(
-            select(Meal)
-            .join(Job, col(Job.id) == Meal.job_id)
-            .join(GroceryOrder, col(GroceryOrder.id) == Job.grocery_order_id)
-            .where(Meal.id == meal_id, GroceryOrder.household_id == caller.household_id)
-            .options(selectinload(Meal.ingredients))  # type: ignore[arg-type]
-        ).first()
-        if meal is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "No such meal.")
+        meal = orders.household_meal(session, caller.household_id, meal_id, with_ingredients=True)
+        rated = ratings.of_meals(session, caller.household_id, [meal.id])
         return MealOut(
-            **MealSummaryOut.model_validate(meal, from_attributes=True).model_dump(),
+            **meal_summary(meal, rated).model_dump(),
             servings=meal.servings,
             steps=meal.steps,
             ingredients=[
@@ -611,6 +649,26 @@ def create_app() -> FastAPI:
                 for ingredient in meal.ingredients
             ],
         )
+
+    @api.put("/v1/meals/{meal_id}/rating", status_code=status.HTTP_204_NO_CONTENT)
+    def rate_meal(
+        meal_id: UUID,
+        body: RatingIn,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> None:
+        """Set the household's rating of one of its meals. Not for us also unpicks it
+        from the draft."""
+        orders.rate_meal(session, caller.household_id, meal_id, body.rating)
+
+    @api.delete("/v1/meals/{meal_id}/rating", status_code=status.HTTP_204_NO_CONTENT)
+    def clear_meal_rating(
+        meal_id: UUID,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> None:
+        """Set one of the household's meals back to not rated."""
+        orders.clear_meal_rating(session, caller.household_id, meal_id)
 
     @api.post("/v1/logs", status_code=status.HTTP_204_NO_CONTENT)
     def send_logs(

@@ -21,12 +21,13 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
 from pydantic import ValidationError
-from sqlmodel import select
+from sqlmodel import Session, select
 
+from castle_chef import ratings
 from castle_chef.db import get_engine, get_session
 from castle_chef.jobs import claim_job, finish_job
 from castle_chef.meals import MealInput, add_meals, load_meals
-from castle_chef.models import Job, JobKind
+from castle_chef.models import GroceryOrder, Job, JobKind
 from castle_chef.settings import REPO_ROOT, get_settings
 
 log = logging.getLogger(__name__)
@@ -68,6 +69,10 @@ class SchemaBehindError(Exception):
     pass
 
 
+class JobDiscarded(Exception):
+    """The job's draft was discarded (with the job) after it was claimed."""
+
+
 def run_job(job_id: UUID) -> None:
     """Run one job: claim it, run the agent, and save its meals (or its failure).
 
@@ -90,6 +95,9 @@ def run_job(job_id: UUID) -> None:
     log.info("job.claimed", extra=fields | {"kind": job.kind})
     try:
         meals = process_job(job)
+    except JobDiscarded:
+        log.info("job.discarded", extra=fields)
+        return
     except (AgentRunError, ValidationError) as error:
         log.error("job.failed", extra=fields | {"error": str(error)})
         _finish(job_id, error=str(error))
@@ -191,10 +199,8 @@ def process_job(job: Job) -> list[MealInput]:
         raise AgentRunError(f"Unknown job kind {job.kind!r}.")
 
     count = get_settings().meals_per_batch
-    prompt = Template(PROMPTS_DIR.joinpath("generate_meals.md").read_text()).substitute(
-        count=count,
-        meal_schema=json.dumps(MealInput.model_json_schema(), indent=2),
-    )
+    with get_session() as session:
+        prompt = generate_meals_prompt(session, job, count)
     job_dir = get_settings().jobs_dir / str(job.id)
     run_agent(job_dir, prompt)
 
@@ -202,6 +208,32 @@ def process_job(job: Job) -> list[MealInput]:
     if len(meals) != count:
         raise AgentRunError(f"Requested {count} meals, but the agent added {len(meals)}.")
     return meals
+
+
+def generate_meals_prompt(session: Session, job: Job, count: int) -> str:
+    """The agent's instructions for a batch of `count` meals for the job's
+    household, which avoid meals like the ones it marked "don't show meals like
+    this". Raises JobDiscarded if the job's draft is gone."""
+    household_id = session.exec(
+        select(GroceryOrder.household_id).where(GroceryOrder.id == job.grocery_order_id)
+    ).first()
+    if household_id is None:
+        raise JobDiscarded(f"Job {job.id}'s draft was discarded.")
+    avoid = ""
+    if not_for_us := ratings.not_for_us_meals(session, household_id):
+        listed = "\n".join(
+            f"- {meal.name}: {meal.description}" if meal.description else f"- {meal.name}"
+            for meal in not_for_us
+        )
+        avoid = (
+            'The family marked these meals "don\'t show meals like this". '
+            f"Don't suggest meals like them:\n\n{listed}\n\n"
+        )
+    return Template(PROMPTS_DIR.joinpath("generate_meals.md").read_text()).substitute(
+        count=count,
+        avoid=avoid,
+        meal_schema=json.dumps(MealInput.model_json_schema(), indent=2),
+    )
 
 
 def prepare_agent_project() -> Path:

@@ -19,12 +19,12 @@ export function Tabs() {
     <IonTabs>
       <IonRouterOutlet>
         <Route path="/week" element={<WeekPage />} />
-        {/* Pages pushed in the Orders tab; NavPage explains the IonPage around them. */}
+        {/* Pages pushed in the Orders and History tabs; NavPage explains the IonPage around them. */}
         <Route
           path="/week/orders/:orderId"
           element={
             <IonPage>
-              <OrderPage />
+              <OrderPage tab={{ href: '/week', backLabel: 'Orders' }} />
             </IonPage>
           }
         />
@@ -32,11 +32,27 @@ export function Tabs() {
           path="/week/meals/:mealId"
           element={
             <IonPage>
-              <RoutedMeal />
+              <RoutedMeal href="/week" />
             </IonPage>
           }
         />
         <Route path="/history" element={<HistoryPage />} />
+        <Route
+          path="/history/orders/:orderId"
+          element={
+            <IonPage>
+              <OrderPage tab={{ href: '/history', backLabel: 'History' }} />
+            </IonPage>
+          }
+        />
+        <Route
+          path="/history/meals/:mealId"
+          element={
+            <IonPage>
+              <RoutedMeal href="/history" />
+            </IonPage>
+          }
+        />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/week" replace />} />
       </IonRouterOutlet>
@@ -52,8 +68,8 @@ export function Tabs() {
   )
 }
 
-/** A recipe opened from a route: its meal is in the path. */
-function RoutedMeal() {
+/** A recipe opened from a tab's route (a meal of a placed order): its meal is in the path. */
+function RoutedMeal({ href }: { href: string }) {
   const { mealId } = useParams<{ mealId: string }>()
-  return mealId ? <MealPage mealId={mealId} tab={{ href: '/week' }} /> : <Navigate to="/week" replace />
+  return mealId ? <MealPage mealId={mealId} tab={{ href }} rateable /> : <Navigate to={href} replace />
 }
