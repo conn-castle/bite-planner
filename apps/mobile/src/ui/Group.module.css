@@ -97,6 +97,11 @@
   flex-direction: column;
 }
 
+/* A row's label is never narrower than its longest word: a long value is cut short instead. */
+.row > .label {
+  min-width: min-content;
+}
+
 .text {
   font-size: 15.5px;
   font-weight: 550;
@@ -109,6 +114,9 @@
 }
 
 .detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--cc-ink-2);
   font-size: 15px;
   white-space: nowrap;
@@ -117,6 +125,48 @@
 .chevron {
   color: var(--cc-ink-3);
   font-size: 16px;
+  transition: transform 200ms var(--cc-ease);
+}
+
+.chevron.open {
+  transform: rotate(90deg);
+}
+
+.detail.choice {
+  color: var(--cc-ink);
+  font-weight: 650;
+  transition: color 200ms var(--cc-ease);
+}
+
+.detail.choice.open {
+  color: var(--cc-accent);
+}
+
+/* Beside a control, a name wraps to a second line rather than being cut short. */
+.withControl .name {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+/* A list row's part that opens, beside its control. */
+.opens {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  border-radius: 12px;
 }
 
 .danger {

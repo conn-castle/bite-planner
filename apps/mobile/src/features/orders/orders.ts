@@ -10,12 +10,12 @@ import {
 } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api/client'
 import { ApiError, isRetryable } from '../../lib/api/errors'
-import type { GroceryOrder, ISODate, Job, NextOrder, PlacedOrder } from '../../lib/api/types'
+import type { GroceryOrder, ISODate, Job, NextOrder, OrderDates, PlacedOrder } from '../../lib/api/types'
 import { logger } from '../../lib/log'
 import { queryKeys } from '../../lib/query/keys'
 import { storeMealRating } from '../meals/ratings'
 import { hasRunningBatch } from './batches'
-import { applyEdits, isOrderEdit, type SetDates, type SetMeal, type SetNotForUs } from './edits'
+import { applyEdits, isOrderEdit, type SetDates, type SetMeal, type SetNotForUs, type SetServings } from './edits'
 
 /**
  * Grocery orders: the household's next order and its draft, everything the
@@ -129,6 +129,7 @@ function refetchAfterPlaced(queryClient: QueryClient, orderId: string) {
 const OPEN = ['orders', 'open']
 const GENERATE = ['orders', 'generate']
 const SET_MEAL = ['orders', 'set-meal']
+const SET_SERVINGS = ['orders', 'set-servings']
 const SET_DATES = ['orders', 'set-dates']
 const SET_NOT_FOR_US = ['orders', 'set-not-for-us']
 const PLACE = ['orders', 'place']
@@ -151,6 +152,11 @@ export interface GenerateMeals {
 }
 export interface OrderAction {
   orderId: string
+}
+export interface PlaceOrder {
+  orderId: string
+  /** The dates shown when Place was tapped (they may be untouched defaults), saved with it. */
+  dates: OrderDates
 }
 
 async function startBatch(orderId: string, jobId: string): Promise<Job> {
@@ -217,6 +223,17 @@ export function registerOrderMutations(queryClient: QueryClient) {
     onError: (_error: Error, { orderId }: SetMeal) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
   })
 
+  queryClient.setMutationDefaults(SET_SERVINGS, {
+    mutationFn: ({ orderId, mealId, servings }: SetServings) =>
+      apiRequest<GroceryOrder>('PUT', `/v1/grocery-orders/${orderId}/meals/${mealId}/servings`, { servings }),
+    retry,
+    scope: EDITS,
+    onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
+    // Refused (e.g. the meal was just unpicked on another phone): show the order as it is now.
+    onError: (_error: Error, { orderId }: SetServings) =>
+      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+  })
+
   queryClient.setMutationDefaults(SET_NOT_FOR_US, {
     // The mark is the household's rating of the meal; the server also unpicks
     // it. Its answer has no order, so the order is fetched after it.
@@ -250,12 +267,15 @@ export function registerOrderMutations(queryClient: QueryClient) {
   })
 
   queryClient.setMutationDefaults(PLACE, {
-    // Placing an order that is already placed returns it unchanged, so a resend is safe.
-    mutationFn: ({ orderId }: OrderAction) => apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/place`),
+    // With the dates on screen, which the server saves as it places the order, so
+    // what's placed is what was shown. Placing an order that is already placed
+    // returns it unchanged, so a resend is safe.
+    mutationFn: ({ orderId, dates }: PlaceOrder) =>
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/place`, dates),
     retry,
     scope: EDITS,
     onSuccess: async (order: GroceryOrder) => {
-      logger.info('orders.placed', { orderId: order.id, number: order.number, meals: order.meal_ids.length })
+      logger.info('orders.placed', { orderId: order.id, number: order.number, meals: order.picks.length })
       await cancelFetches(queryClient, order.id)
       queryClient.setQueryData<GroceryOrder>(orderKey(order.id), order)
       // It's now a placed order, and the next order is the one after it. The
@@ -267,7 +287,7 @@ export function registerOrderMutations(queryClient: QueryClient) {
       ])
     },
     // Refused (e.g. the delivery date is no longer available): show the order as it is now.
-    onError: (_error: Error, { orderId }: OrderAction) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+    onError: (_error: Error, { orderId }: PlaceOrder) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
   })
 
   queryClient.setMutationDefaults(DISCARD, {
@@ -303,6 +323,11 @@ export function useSetMeal() {
   return useMutation<GroceryOrder, Error, SetMeal>({ mutationKey: SET_MEAL })
 }
 
+/** Changes how many to make of a pick; it shows at once (see edits.ts). */
+export function useSetServings() {
+  return useMutation<GroceryOrder, Error, SetServings>({ mutationKey: SET_SERVINGS })
+}
+
 /** Marks a suggestion "don't show meals like this", or undoes it; it shows at once (see edits.ts). */
 export function useSetNotForUs() {
   return useMutation<GroceryOrder, Error, SetNotForUs>({ mutationKey: SET_NOT_FOR_US })
@@ -314,7 +339,7 @@ export function useSetDates() {
 }
 
 export function usePlaceOrder() {
-  return useMutation<GroceryOrder, Error, OrderAction>({ mutationKey: PLACE })
+  return useMutation<GroceryOrder, Error, PlaceOrder>({ mutationKey: PLACE })
 }
 
 export function useDiscardOrder() {

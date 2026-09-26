@@ -16,8 +16,16 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import bindparam, text
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from castle_chef import household as households
@@ -37,12 +45,12 @@ from castle_chef.jobs import (
 )
 from castle_chef.models import (
     DECIDE_BY_OFFSET_DAYS,
-    DEFAULT_SERVINGS,
     REMINDER_LEAD_DAYS,
+    SERVINGS,
+    AppUser,
     GroceryOrder,
     GroceryOrderStatus,
     Household,
-    HouseholdMember,
     Job,
     JobKind,
     JobStatus,
@@ -93,6 +101,19 @@ class JobOut(BaseModel):
     meals: list[MealSummaryOut]
 
 
+class PickOut(BaseModel):
+    """A meal picked for an order, and how many to make of it."""
+
+    meal_id: UUID
+    servings: int
+
+
+class PlacedMealOut(MealSummaryOut):
+    """A meal of a placed order, and how many were ordered of it."""
+
+    servings: int
+
+
 class GroceryOrderOut(BaseModel):
     id: UUID
     number: int
@@ -108,8 +129,8 @@ class GroceryOrderOut(BaseModel):
     next_delivery_date: date | None
     # Its jobs, oldest first: the suggestions are their meals.
     jobs: list[JobOut]
-    # The picks.
-    meal_ids: list[UUID]
+    # In the order their meals were suggested.
+    picks: list[PickOut]
 
 
 class PlacedOrderOut(BaseModel):
@@ -122,7 +143,7 @@ class PlacedOrderOut(BaseModel):
     delivery_date: date
     next_delivery_date: date
     # The picked meals, in the order they were suggested.
-    meals: list[MealSummaryOut]
+    meals: list[PlacedMealOut]
 
 
 class NextOrderOut(BaseModel):
@@ -217,16 +238,21 @@ class PartialUpdate(BaseModel):
         return self
 
 
+# Trimmed; the name the household's members see.
+HouseholdName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)
+]
+
+
 class HouseholdSettingsIn(PartialUpdate):
+    name: HouseholdName | None = None
     decide_by_offset_days: int | None = Field(
         default=None, ge=DECIDE_BY_OFFSET_DAYS.low, le=DECIDE_BY_OFFSET_DAYS.high
     )
     reminder_lead_days: int | None = Field(
         default=None, ge=REMINDER_LEAD_DAYS.low, le=REMINDER_LEAD_DAYS.high
     )
-    default_servings: int | None = Field(
-        default=None, ge=DEFAULT_SERVINGS.low, le=DEFAULT_SERVINGS.high
-    )
+    default_servings: int | None = Field(default=None, ge=SERVINGS.low, le=SERVINGS.high)
 
 
 class PersonalSettingsIn(PartialUpdate):
@@ -260,6 +286,21 @@ class DatesIn(BaseModel):
 
     delivery_date: date | None
     next_delivery_date: date | None
+
+
+class PlaceIn(BaseModel):
+    """The dates the member saw when placing, saved with it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_date: date
+    next_delivery_date: date
+
+
+class ServingsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    servings: int = Field(ge=SERVINGS.low, le=SERVINGS.high)
 
 
 class RatingIn(BaseModel):
@@ -390,14 +431,17 @@ def order_out(session: Session, order: GroceryOrder, today: date) -> GroceryOrde
         delivery_date=order.delivery_date,
         next_delivery_date=order.next_delivery_date,
         jobs=[job_out(job, meals[job.id], people, rated) for job in jobs],
-        meal_ids=orders.picks(session, order.id),
+        picks=[
+            PickOut(meal_id=pick.meal.id, servings=pick.servings)
+            for pick in orders.picks(session, order.id)
+        ],
     )
 
 
 def placed_order_out(
     order: GroceryOrder,
     number: int,
-    meals: list[Meal],
+    picks: list[orders.Pick],
     people: dict[UUID, str | None],
     rated: dict[UUID, MealRating],
 ) -> PlacedOrderOut:
@@ -414,7 +458,10 @@ def placed_order_out(
         placed_by=MemberOut(user_id=placed_by, name=people[placed_by]),
         delivery_date=delivery,
         next_delivery_date=next_delivery,
-        meals=[meal_summary(meal, rated) for meal in meals],
+        meals=[
+            PlacedMealOut(**meal_summary(pick.meal, rated).model_dump(), servings=pick.servings)
+            for pick in picks
+        ],
     )
 
 
@@ -423,6 +470,7 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     orders.OrderNotFound: status.HTTP_404_NOT_FOUND,
     orders.NotASuggestion: status.HTTP_404_NOT_FOUND,
     orders.MealNotFound: status.HTTP_404_NOT_FOUND,
+    orders.NotPicked: status.HTTP_404_NOT_FOUND,
     orders.OrderPlaced: status.HTTP_409_CONFLICT,
     orders.NotReady: status.HTTP_409_CONFLICT,
     orders.NotForUs: status.HTTP_409_CONFLICT,
@@ -465,12 +513,12 @@ class Member:
 
 
 def household_of(session: Session, user_id: UUID) -> Household | None:
-    """The user's household, or None if they aren't in one (a membership row
+    """The user's household, or None if they aren't in one (an app_user row
     without a household doesn't count)."""
     return session.exec(
         select(Household)
-        .join(HouseholdMember, col(HouseholdMember.household_id) == Household.id)
-        .where(HouseholdMember.user_id == user_id)
+        .join(AppUser, col(AppUser.household_id) == Household.id)
+        .where(AppUser.user_id == user_id)
     ).first()
 
 
@@ -484,6 +532,12 @@ def member(
     return Member(user_id=principal.user_id, household_id=household.id)
 
 
+def constraint_name(error: IntegrityError) -> str | None:
+    """The database constraint an insert or update broke."""
+    diag = getattr(error.orig, "diag", None)
+    return getattr(diag, "constraint_name", None)
+
+
 def account(session: Session, user_id: UUID) -> tuple[str | None, str | None]:
     row = session.execute(
         text('SELECT email, name FROM neon_auth."user" WHERE id = :id'), {"id": user_id}
@@ -491,10 +545,8 @@ def account(session: Session, user_id: UUID) -> tuple[str | None, str | None]:
     return (row.email, row.name) if row else (None, None)
 
 
-def personal_settings_out(membership: HouseholdMember) -> PersonalSettingsOut:
-    return PersonalSettingsOut(
-        notification_time=membership.notification_time, time_zone=membership.time_zone
-    )
+def personal_settings_out(user: AppUser) -> PersonalSettingsOut:
+    return PersonalSettingsOut(notification_time=user.notification_time, time_zone=user.time_zone)
 
 
 def household_out(session: Session, household: Household) -> HouseholdOut:
@@ -571,7 +623,7 @@ def create_app() -> FastAPI:
             member=household is not None,
             household=HouseholdRefOut(id=household.id, name=household.name) if household else None,
             settings=(
-                personal_settings_out(session.get_one(HouseholdMember, principal.user_id))
+                personal_settings_out(session.get_one(AppUser, principal.user_id))
                 if household
                 else None
             ),
@@ -584,14 +636,14 @@ def create_app() -> FastAPI:
         session: Annotated[Session, Depends(db)],
     ) -> PersonalSettingsOut:
         """Change the caller's own settings; only the fields sent."""
-        membership = session.get_one(HouseholdMember, caller.user_id)
+        user = session.get_one(AppUser, caller.user_id)
         if body.notification_time is not None:
-            membership.notification_time = body.notification_time
+            user.notification_time = body.notification_time
         if body.time_zone is not None:
-            membership.time_zone = body.time_zone
+            user.time_zone = body.time_zone
         session.commit()
         log.info("settings.personal_updated", extra={"fields": sorted(body.model_fields_set)})
-        return personal_settings_out(membership)
+        return personal_settings_out(user)
 
     @api.get("/v1/household")
     def get_household(
@@ -610,13 +662,24 @@ def create_app() -> FastAPI:
         """Change the household's settings; only the fields sent, so members changing
         different settings at once don't undo each other."""
         household = session.get_one(Household, caller.household_id)
+        if body.name is not None:
+            household.name = body.name
         if body.decide_by_offset_days is not None:
             household.decide_by_offset_days = body.decide_by_offset_days
         if body.reminder_lead_days is not None:
             household.reminder_lead_days = body.reminder_lead_days
         if body.default_servings is not None:
             household.default_servings = body.default_servings
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError as error:
+            session.rollback()
+            # The admin command finds households by name, so names are unique.
+            if constraint_name(error) == "household_name_key":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Another household is called that."
+                ) from error
+            raise
         log.info("settings.household_updated", extra={"fields": sorted(body.model_fields_set)})
         return household_out(session, household)
 
@@ -648,13 +711,15 @@ def create_app() -> FastAPI:
         only those that cover `covering_from` or a later day."""
         placed = orders.placed_orders(session, caller.household_id, covering_from)
         numbers = orders.numbers(session, caller.household_id)
-        meals = orders.picked_meals_of(session, [order.id for order in placed])
+        picks = orders.picks_of(session, [order.id for order in placed])
         people = names(session, {order.placed_by for order in placed if order.placed_by})
         rated = ratings.of_meals(
-            session, caller.household_id, [meal.id for picked in meals.values() for meal in picked]
+            session,
+            caller.household_id,
+            [pick.meal.id for order_picks in picks.values() for pick in order_picks],
         )
         return [
-            placed_order_out(order, numbers[order.id], meals[order.id], people, rated)
+            placed_order_out(order, numbers[order.id], picks[order.id], people, rated)
             for order in placed
         ]
 
@@ -750,6 +815,19 @@ def create_app() -> FastAPI:
         orders.pick(session, caller.household_id, order_id, meal_id)
         return order_out(session, orders.get_order(session, caller.household_id, order_id), day)
 
+    @api.put("/v1/grocery-orders/{order_id}/meals/{meal_id}/servings")
+    def set_servings(
+        order_id: UUID,
+        meal_id: UUID,
+        body: ServingsIn,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        """Change how many to make of one of the draft's picks."""
+        orders.set_servings(session, caller.household_id, order_id, meal_id, body.servings)
+        return order_out(session, orders.get_order(session, caller.household_id, order_id), day)
+
     @api.delete("/v1/grocery-orders/{order_id}/meals/{meal_id}")
     def unpick_meal(
         order_id: UUID,
@@ -777,11 +855,20 @@ def create_app() -> FastAPI:
     @api.post("/v1/grocery-orders/{order_id}/place")
     def place_order(
         order_id: UUID,
+        body: PlaceIn,
         caller: Annotated[Member, Depends(member)],
         session: Annotated[Session, Depends(db)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
-        placed = orders.place(session, caller.household_id, order_id, caller.user_id, day)
+        placed = orders.place(
+            session,
+            caller.household_id,
+            order_id,
+            caller.user_id,
+            body.delivery_date,
+            body.next_delivery_date,
+            day,
+        )
         return order_out(session, placed, day)
 
     @api.get("/v1/meals/{meal_id}")

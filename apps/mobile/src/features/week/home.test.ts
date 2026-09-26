@@ -38,7 +38,7 @@ function draft(number: number, jobs: Job[]): GroceryOrder {
     delivery_date: null,
     next_delivery_date: null,
     jobs,
-    meal_ids: [],
+    picks: [],
   }
 }
 

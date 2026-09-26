@@ -28,14 +28,14 @@ const neon = createInternalNeonAuth(AUTH_URL)
 const client = neon.adapter
 
 /** neon-js throws on HTTP errors and returns `error` for others; handle both. */
-async function call<T extends { error?: unknown }>(action: () => Promise<T>): Promise<T> {
+async function call<T extends { error?: unknown }>(action: () => Promise<T>, failure = 'Sign-in failed.'): Promise<T> {
   const result = await action()
   if (result.error) {
     const message = (result.error as { message?: string }).message
     if (message === 'Invalid OTP') {
       throw new Error('That code is wrong or has expired. Send a new one.')
     }
-    throw result.error instanceof Error ? result.error : new Error(message ?? 'Sign-in failed.')
+    throw result.error instanceof Error ? result.error : new Error(message ?? failure)
   }
   return result
 }
@@ -54,6 +54,9 @@ export const neonAuth: AuthClient = {
     return { id, email, name }
   },
   getToken: () => neon.getJWTToken(),
+  async updateName(name) {
+    await call(() => client.updateUser({ name }), "Couldn't change your name.")
+  },
   async signOut() {
     await client.signOut()
   },

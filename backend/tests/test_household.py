@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from typer.testing import CliRunner, Result
 
 from castle_chef.cli import app
-from castle_chef.models import GroceryOrder, GroceryOrderStatus, Household, HouseholdMember
+from castle_chef.models import AppUser, GroceryOrder, GroceryOrderStatus, Household
 
 runner = CliRunner()
 FAKE_NEONCTL = Path(__file__).parent / "fake_neonctl.py"
@@ -54,7 +54,7 @@ def membership(session: Session) -> dict[str, str | None]:
     session.expire_all()
     rows = session.execute(
         text(
-            'SELECT u.email, h.name FROM household_member AS m JOIN neon_auth."user" AS u '
+            'SELECT u.email, h.name FROM app_user AS m JOIN neon_auth."user" AS u '
             "ON u.id = m.user_id LEFT JOIN household AS h ON h.id = m.household_id"
         )
     ).all()
@@ -172,7 +172,7 @@ def test_remove_deletes_membership_and_account(session: Session, fake_neonctl: P
 
     assert result.exit_code == 0, result.output
     assert calls(fake_neonctl)[-1][3] == "DELETE"
-    assert session.exec(select(HouseholdMember)).all() == []
+    assert session.exec(select(AppUser)).all() == []
     assert run("household", "members", "Conn Castle").stdout == ""
 
 
@@ -195,7 +195,7 @@ def test_invite_fails_loudly_when_neon_rejects_it(
 
     assert result.exit_code != 0
     assert "simulated Neon failure" in str(result.exception)
-    assert session.exec(select(HouseholdMember)).all() == []
+    assert session.exec(select(AppUser)).all() == []
 
 
 @pytest.mark.parametrize("missing", ["--name", "--household"])

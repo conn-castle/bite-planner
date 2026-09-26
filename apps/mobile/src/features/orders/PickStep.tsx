@@ -1,5 +1,8 @@
+import { useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import type { GroceryOrder, Job, MealSummary } from '../../lib/api/types'
 import { haptics } from '../../lib/haptics'
+import { errorFields, logger } from '../../lib/log'
 import { usePressIntent } from '../../lib/usePressIntent'
 import { useNow } from '../../lib/useNow'
 import { MealArt } from '../../ui/art'
@@ -8,6 +11,7 @@ import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import { usePrefetchMeal } from '../meals/cached'
 import { formatMinutes } from '../meals/facts'
+import { householdQuery } from '../settings/settings'
 import { newestBatchState, suggestions } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { elapsed, plural } from './format'
@@ -19,7 +23,8 @@ const PLACEHOLDER_CARDS = 4
 
 interface PickStepProps {
   order: GroceryOrder
-  onOpenMeal: (mealId: string) => void
+  /** Opens a recipe: a picked meal's at its servings. */
+  onOpenMeal: (mealId: string, servings?: number) => void
   onNext: () => void
   onClose: () => void
 }
@@ -34,13 +39,33 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
     .sort((a, b) => b.submittedAt - a.submittedAt)[0]?.error
   // Moving on waits until every pick is saved, so the next steps see them all.
   const saving = useEditsPending()
-  const picked = new Set(order.meal_ids)
-  const count = order.meal_ids.length
+  const queryClient = useQueryClient()
+  // Why a pick couldn't start (the household's default servings aren't known yet).
+  const [pickProblem, setPickProblem] = useState<string | null>(null)
+  const picked = new Map(order.picks.map((pick) => [pick.meal_id, pick.servings]))
+  const count = order.picks.length
   const running = newestBatchState(order).status === 'running'
 
-  function toggle(meal: MealSummary) {
+  async function toggle(meal: MealSummary) {
     haptics.tap()
-    setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: !picked.has(meal.id) })
+    if (picked.has(meal.id)) {
+      setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: false })
+      return
+    }
+    // A new pick starts at the household's default servings (cached from launch;
+    // fetched only if it isn't), shown until the server's answer.
+    let servings: number
+    try {
+      servings = (await queryClient.ensureQueryData(householdQuery)).default_servings
+    } catch (error) {
+      // Offline on a phone that has never loaded the household: nothing to show yet.
+      logger.warn('orders.pick_needs_household', errorFields(error))
+      haptics.error()
+      setPickProblem(error instanceof Error ? error.message : String(error))
+      return
+    }
+    setPickProblem(null)
+    setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: true, servings })
   }
 
   function dismiss(meal: MealSummary) {
@@ -70,10 +95,16 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
         <Icon name="users" />
         Your picks are saved for the household as you go.
       </p>
-      {failed && (
+      {pickProblem ? (
         <div className={styles.notice}>
-          <Notice>Couldn't save that change: {failed.message}</Notice>
+          <Notice>Couldn't add that meal: {pickProblem}</Notice>
         </div>
+      ) : (
+        failed && (
+          <div className={styles.notice}>
+            <Notice>Couldn't save that change: {failed.message}</Notice>
+          </div>
+        )
       )}
       <div className={styles.grid}>
         {suggestions(order).map((meal) => (
@@ -81,9 +112,9 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
             key={meal.id}
             meal={meal}
             added={picked.has(meal.id)}
-            onToggle={() => toggle(meal)}
+            onToggle={() => void toggle(meal)}
             onDismiss={() => dismiss(meal)}
-            onOpen={() => onOpenMeal(meal.id)}
+            onOpen={() => onOpenMeal(meal.id, picked.get(meal.id))}
           />
         ))}
         {running &&

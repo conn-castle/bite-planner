@@ -39,23 +39,38 @@ interface RowProps {
   tone?: 'default' | 'danger'
   /** Shows a chevron: the row opens something. */
   chevron?: boolean
+  /** The row opens and closes what's under it (the chevron turns down while open). */
+  expanded?: boolean
 }
 
 /** A row of a group: a label (and a line under it), then a value. */
-export function Row({ label, sub, detail, onClick, disabled, tone = 'default', chevron }: RowProps) {
+export function Row({ label, sub, detail, onClick, disabled, tone = 'default', chevron, expanded }: RowProps) {
   const content = (
     <>
       <span className={styles.label}>
         <span className={styles.text}>{label}</span>
         {sub != null && <span className={styles.sub}>{sub}</span>}
       </span>
-      {detail != null && <span className={styles.detail}>{detail}</span>}
-      {chevron && <Icon name="chevR" className={styles.chevron} />}
+      {detail != null && (
+        // A row that opens in place shows its value as the choice it is: strong, and accented while open.
+        <span className={`${styles.detail} ${expanded !== undefined ? styles.choice : ''} ${expanded ? styles.open : ''}`}>
+          {detail}
+        </span>
+      )}
+      {(chevron || expanded !== undefined) && (
+        <Icon name="chevR" className={`${styles.chevron} ${expanded ? styles.open : ''}`} />
+      )}
     </>
   )
   const className = `${styles.row} ${tone === 'danger' ? styles.danger : ''}`
   return onClick ? (
-    <button type="button" className={`${className} ${styles.pressable}`} onClick={onClick} disabled={disabled}>
+    <button
+      type="button"
+      className={`${className} ${styles.pressable}`}
+      onClick={onClick}
+      disabled={disabled}
+      aria-expanded={expanded}
+    >
       {content}
     </button>
   ) : (
@@ -74,11 +89,29 @@ interface ListRowProps {
   onClick: () => void
   /** Once a press is held briefly, before the tap ends: e.g. to start loading what it opens. */
   onPressIntent?: () => void
+  /** A control at the end in place of the chevron, e.g. a stepper; the rest of the row still opens. */
+  control?: ReactNode
 }
 
 /** A row that opens something, with a picture: e.g. a meal in a list of meals. */
-export function ListRow({ art, overline, label, mark, onClick, onPressIntent }: ListRowProps) {
+export function ListRow({ art, overline, label, mark, onClick, onPressIntent, control }: ListRowProps) {
   const press = usePressIntent(() => onPressIntent?.())
+  if (control) {
+    // A button can't hold another control, so the part that opens is its own button.
+    return (
+      <div className={`${styles.listRow} ${styles.withControl}`}>
+        <button type="button" className={`${styles.opens} ${styles.pressable}`} onClick={onClick} {...press}>
+          <span className={styles.art}>{art}</span>
+          <span className={styles.label}>
+            {overline != null && <span className={styles.overline}>{overline}</span>}
+            <span className={styles.name}>{label}</span>
+          </span>
+          {mark}
+        </button>
+        {control}
+      </div>
+    )
+  }
   return (
     <button type="button" className={`${styles.listRow} ${styles.pressable}`} onClick={onClick} {...press}>
       <span className={styles.art}>{art}</span>

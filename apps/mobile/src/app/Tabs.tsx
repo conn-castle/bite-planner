@@ -1,8 +1,9 @@
 import { IonLabel, IonPage, IonRouterOutlet, IonTabBar, IonTabButton, IonTabs } from '@ionic/react'
-import { Navigate, Route, useParams } from 'react-router-dom'
+import { Navigate, Route, useParams, useSearchParams } from 'react-router-dom'
 import { HistoryPage } from '../features/history/HistoryPage'
 import { MealPage } from '../features/meals/MealPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
+import { SERVINGS } from '../lib/api/limits'
 import { OrderPage } from '../features/week/OrderPage'
 import { WeekPage } from '../features/week/WeekPage'
 import { Icon, type IconName } from '../ui/Icon'
@@ -70,8 +71,27 @@ export function Tabs() {
   )
 }
 
-/** A recipe opened from a tab's route (a meal of a placed order): its meal is in the path. */
+/**
+ * A recipe opened from a tab's route (a meal of a placed order): its meal is in
+ * the path, and the servings ordered in `?servings=`.
+ */
 function RoutedMeal({ href }: { href: string }) {
   const { mealId } = useParams<{ mealId: string }>()
-  return mealId ? <MealPage mealId={mealId} tab={{ href }} rateable /> : <Navigate to={href} replace />
+  const [params] = useSearchParams()
+  return mealId ? (
+    <MealPage mealId={mealId} tab={{ href }} rateable servings={orderedServings(params.get('servings'))} />
+  ) : (
+    <Navigate to={href} replace />
+  )
+}
+
+/**
+ * The servings ordered, from a route: a meal of an order that doesn't say (or
+ * says something that isn't a pick's servings) starts at the recipe's own.
+ */
+function orderedServings(value: string | null): number | null {
+  const servings = Number(value)
+  return value !== null && Number.isInteger(servings) && servings >= SERVINGS.min && servings <= SERVINGS.max
+    ? servings
+    : null
 }

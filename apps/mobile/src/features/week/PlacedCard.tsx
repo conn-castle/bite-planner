@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { ISODate, NextOrder, PlacedOrder } from '../../lib/api/types'
+import type { ISODate, NextOrder, PlacedMeal, PlacedOrder } from '../../lib/api/types'
 import { addDays, daysBetween, formatDate, relativeDay } from '../../lib/dates'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
@@ -24,7 +24,7 @@ interface PlacedCardProps {
   mealsOpen: boolean
   onToggleMeals: () => void
   onOpen: () => void
-  onOpenMeal: (mealId: string) => void
+  onOpenMeal: (meal: PlacedMeal) => void
 }
 
 /** A placed order on Home: when its groceries come, how far along it is, and its meals. */
@@ -130,7 +130,7 @@ export function PlacedCard({
       {mealsOpen && (
         <div className={styles.rows}>
           {order.meals.map((meal) => (
-            <MealRow key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal.id)} rated />
+            <MealRow key={meal.id} meal={meal} servings={meal.servings} onOpen={() => onOpenMeal(meal)} rated />
           ))}
         </div>
       )}

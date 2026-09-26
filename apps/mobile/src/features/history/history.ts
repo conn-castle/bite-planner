@@ -1,4 +1,4 @@
-import type { MealRating, MealSummary, PlacedOrder } from '../../lib/api/types'
+import type { MealRating, MealSummary, PlacedMeal, PlacedOrder } from '../../lib/api/types'
 
 /** History's filters: every meal, or those with one kind of rating. */
 export type HistoryFilter = 'all' | 'favorite' | 'liked' | 'disliked' | 'unrated'
@@ -23,7 +23,7 @@ const MATCHES: Record<HistoryFilter, (rating: MealRating | null) => boolean> = {
 export interface HistoryOrder {
   order: PlacedOrder
   /** Its meals that match the search and the filter. */
-  meals: MealSummary[]
+  meals: PlacedMeal[]
 }
 
 /**

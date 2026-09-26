@@ -1,7 +1,8 @@
+import { placedMealPath } from '../meals/meals'
 import { useIonAlert, useIonRouter } from '@ionic/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { GroceryOrder, ISODate, NextOrder, PlacedOrder } from '../../lib/api/types'
+import type { GroceryOrder, ISODate, NextOrder, PlacedMeal, PlacedOrder } from '../../lib/api/types'
 import { addDays, formatDate, localDate, toLocalDate } from '../../lib/dates'
 import { useNow } from '../../lib/useNow'
 import { IconButton } from '../../ui/Button'
@@ -60,7 +61,7 @@ export function WeekPage() {
   // Discarding affects everyone in the household, so it asks first.
   function confirmDiscard(order: GroceryOrder) {
     const ideas = suggestions(order).length
-    const picks = order.meal_ids.length
+    const picks = order.picks.length
     const parts: string[] = []
     if (ideas) parts.push(plural(ideas, 'meal idea'))
     if (picks) parts.push(plural(picks, 'pick'))
@@ -122,7 +123,7 @@ export function WeekPage() {
           onDiscard={confirmDiscard}
           discarding={discard.isPending}
           onOpenOrder={(orderId) => router.push(`/week/orders/${orderId}`)}
-          onOpenMeal={(mealId) => router.push(`/week/meals/${mealId}`)}
+          onOpenMeal={(meal) => router.push(placedMealPath('/week', meal))}
         />
       )}
 
@@ -139,7 +140,7 @@ interface HomeProps {
   onDiscard: (draft: GroceryOrder) => void
   discarding: boolean
   onOpenOrder: (orderId: string) => void
-  onOpenMeal: (mealId: string) => void
+  onOpenMeal: (meal: PlacedMeal) => void
 }
 
 function Home({ next, placed, today, onStart, onDiscard, discarding, onOpenOrder, onOpenMeal }: HomeProps) {

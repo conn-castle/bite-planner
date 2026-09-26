@@ -1,10 +1,11 @@
 import { MutationObserver, QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiRequest } from '../../lib/api/client'
-import type { GroceryOrder, Meal, NextOrder } from '../../lib/api/types'
+import { ApiError } from '../../lib/api/errors'
+import type { GroceryOrder, Meal, NextOrder, OrderDates } from '../../lib/api/types'
 import { queryKeys } from '../../lib/query/keys'
-import type { SetNotForUs } from './edits'
-import { nextQuery, registerOrderMutations } from './orders'
+import type { SetMeal, SetNotForUs } from './edits'
+import { nextQuery, type PlaceOrder, registerOrderMutations } from './orders'
 
 vi.mock('../../lib/api/client', () => ({ apiRequest: vi.fn() }))
 // The app's logger stores its entries on the device, which a test doesn't have.
@@ -23,7 +24,7 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   delivery_date: null,
   next_delivery_date: null,
   jobs: [],
-  meal_ids: mealIds,
+  picks: mealIds.map((meal_id) => ({ meal_id, servings: 4 })),
 })
 
 let queryClient: QueryClient
@@ -102,10 +103,9 @@ describe('marking a suggestion "not for us"', () => {
       await new Promise((resolve) => setTimeout(resolve, method === 'PUT' && path.includes('/meals/soup') ? 20 : 0))
       return method === 'GET' || path.includes('grocery-orders') ? draft([]) : undefined
     })
-    const pick = new MutationObserver<GroceryOrder, Error, { orderId: string; mealId: string; picked: boolean }>(
-      queryClient,
-      { mutationKey: ['orders', 'set-meal'] },
-    ).mutate({ orderId: 'draft', mealId: 'soup', picked: true })
+    const pick = new MutationObserver<GroceryOrder, Error, SetMeal>(queryClient, {
+      mutationKey: ['orders', 'set-meal'],
+    }).mutate({ orderId: 'draft', mealId: 'soup', picked: true, servings: 4 })
     await Promise.all([pick, setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true })])
 
     expect(order).toEqual([
@@ -133,7 +133,7 @@ describe('opening the draft', () => {
         },
       ],
     }
-    const picked = { ...opened, meal_ids: ['soup'] }
+    const picked = { ...opened, picks: [{ meal_id: 'soup', servings: 4 }] }
     request.mockImplementation(async (method, path) => {
       calls.push(`${method} ${path}`)
       // Opening is slow; the pick would finish first if it didn't wait.
@@ -150,6 +150,34 @@ describe('opening the draft', () => {
     await Promise.all([open, pick])
 
     expect(calls).toEqual(['POST /v1/grocery-orders', 'PUT /v1/grocery-orders/draft/meals/soup'])
-    expect(queryClient.getQueryData<GroceryOrder>(queryKeys.order('draft'))?.meal_ids).toEqual(['soup'])
+    expect(queryClient.getQueryData<GroceryOrder>(queryKeys.order('draft'))?.picks).toEqual([{ meal_id: 'soup', servings: 4 }])
+  })
+})
+
+describe('placing the order', () => {
+  const place = (dates: OrderDates) =>
+    new MutationObserver<GroceryOrder, Error, PlaceOrder>(queryClient, { mutationKey: ['orders', 'place'] }).mutate({
+      orderId: 'draft',
+      dates,
+    })
+  const dates: OrderDates = { delivery_date: '2026-09-27', next_delivery_date: '2026-09-30' }
+
+  it('sends the dates shown with it, and keeps the placed order', async () => {
+    request.mockResolvedValue({ ...draft(['soup']), ...dates, status: 'placed' })
+
+    const placed = await place(dates)
+
+    expect(request.mock.calls).toEqual([['POST', '/v1/grocery-orders/draft/place', dates]])
+    expect(placed.status).toBe('placed')
+    expect(queryClient.getQueryData<GroceryOrder>(queryKeys.order('draft'))?.status).toBe('placed')
+  })
+
+  it('shows the order as it is when placing is refused', async () => {
+    queryClient.setQueryData(queryKeys.order('draft'), draft(['soup']))
+    request.mockRejectedValueOnce(new ApiError(409, 'Choose a delivery date from tomorrow on.'))
+
+    await expect(place(dates)).rejects.toThrow('Choose a delivery date')
+
+    expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(true)
   })
 })

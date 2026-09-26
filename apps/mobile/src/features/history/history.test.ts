@@ -21,7 +21,7 @@ const order = (number: number, delivery: string, meals: MealSummary[]): PlacedOr
   placed_by: { user_id: 'sam', name: 'Sam' },
   delivery_date: delivery,
   next_delivery_date: delivery,
-  meals,
+  meals: meals.map((meal) => ({ ...meal, servings: 4 })),
 })
 
 const names = (result: ReturnType<typeof filtered>) =>

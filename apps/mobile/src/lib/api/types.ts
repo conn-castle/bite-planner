@@ -107,8 +107,14 @@ export interface GroceryOrder {
   next_delivery_date: ISODate | null
   /** Its batches of suggestions, oldest first; the suggestions are their meals. */
   jobs: Job[]
-  /** The picks. */
-  meal_ids: string[]
+  /** In the order their meals were suggested. */
+  picks: MealPick[]
+}
+
+/** A meal picked for an order, and how many to make of it (the recipe is for `Meal.servings`). */
+export interface MealPick {
+  meal_id: string
+  servings: number
 }
 
 /** A placed order (`GET /v1/grocery-orders`): it can't change, so it has no suggestions, and its dates are set. */
@@ -121,7 +127,12 @@ export interface PlacedOrder {
   /** Its meals cover the days up to the one before this. */
   next_delivery_date: ISODate
   /** The picked meals, in the order they were suggested. */
-  meals: MealSummary[]
+  meals: PlacedMeal[]
+}
+
+/** A meal of a placed order, and how many were ordered of it. */
+export interface PlacedMeal extends MealSummary {
+  servings: number
 }
 
 /** The household's next order (`GET /v1/grocery-orders/next`), whether or not anyone has started it. */

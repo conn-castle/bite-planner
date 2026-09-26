@@ -23,6 +23,12 @@ interface MealPageProps {
   tab?: { href: string }
   /** Shows the rating in the toolbar: for meals of placed orders, not suggestions being picked. */
   rateable?: boolean
+  /**
+   * Where the quantities start: an order's servings for the meal, or null for the
+   * recipe's own (a meal of an order whose servings aren't known). Without it,
+   * at the servings last chosen for this recipe.
+   */
+  servings?: number | null
 }
 
 /**
@@ -30,7 +36,7 @@ interface MealPageProps {
  * them, and the steps. The meal's name and facts show at once from a list
  * already loaded (Home, History, the suggestions) while the rest loads.
  */
-export function MealPage({ mealId, tab, rateable = false }: MealPageProps) {
+export function MealPage({ mealId, tab, rateable = false, servings }: MealPageProps) {
   const meal = useQuery(mealQuery(mealId))
   const queryClient = useQueryClient()
   const summary = meal.data ?? cachedMealSummary(queryClient, mealId)
@@ -52,7 +58,7 @@ export function MealPage({ mealId, tab, rateable = false }: MealPageProps) {
         <article className={styles.recipe}>
           <RecipeHeader meal={summary} ingredientCount={meal.data?.ingredients.length} />
           {meal.data ? (
-            <RecipeBody meal={meal.data} />
+            <RecipeBody meal={meal.data} startAt={servings} />
           ) : (
             !meal.isError && (
               <div className={styles.loading}>
@@ -107,8 +113,10 @@ function RecipeHeader({ meal, ingredientCount }: { meal: MealSummary; ingredient
   )
 }
 
-function RecipeBody({ meal }: { meal: Meal }) {
-  const [servings, setServingsState] = useState(() => pickedServings.get(meal.id) ?? meal.servings)
+function RecipeBody({ meal, startAt }: { meal: Meal; startAt: number | null | undefined }) {
+  const [servings, setServingsState] = useState(() =>
+    startAt === undefined ? (pickedServings.get(meal.id) ?? meal.servings) : (startAt ?? meal.servings),
+  )
   const setServings = (value: number) => {
     pickedServings.set(meal.id, value)
     setServingsState(value)

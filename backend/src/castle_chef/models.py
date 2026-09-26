@@ -15,6 +15,22 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+class Range(NamedTuple):
+    low: int
+    high: int
+
+
+# Ranges checked by the database and the API alike. The earliest delivery is
+# tomorrow, so the decision comes at least a day before.
+DECIDE_BY_OFFSET_DAYS = Range(1, 7)
+REMINDER_LEAD_DAYS = Range(0, 7)  # 0: on the decide-by day
+SERVINGS = Range(1, 12)  # a pick's, and the household's default for new picks
+
+
+def _between(column: str, allowed: Range) -> str:
+    return f"{column} BETWEEN {allowed.low} AND {allowed.high}"
+
+
 class TimestampMixin(SQLModel):
     """Common creation and modification timestamps.
 
@@ -170,14 +186,20 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
 
 
 class GroceryOrderMeal(SQLModel, table=True):
-    """A meal picked for an order."""
+    """A meal picked for an order: a pick."""
 
     __tablename__ = "grocery_order_meal"
+    __table_args__ = (
+        CheckConstraint(_between("servings", SERVINGS), name="grocery_order_meal_servings_range"),
+    )
 
     grocery_order_id: UUID = Field(
         foreign_key="grocery_order.id", ondelete="CASCADE", primary_key=True
     )
     meal_id: UUID = Field(foreign_key="meal.id", primary_key=True)
+    # How many to make of it in this order (the meal's recipe is for meal.servings).
+    # Starts at the household's default servings when picked.
+    servings: int
 
 
 class MealRating(StrEnum):
@@ -204,22 +226,6 @@ class MealPreference(TimestampMixin, SQLModel, table=True):
     )
 
 
-class Range(NamedTuple):
-    low: int
-    high: int
-
-
-# The household settings' ranges, checked by the database and the API alike.
-# The earliest delivery is tomorrow, so the decision comes at least a day before.
-DECIDE_BY_OFFSET_DAYS = Range(1, 7)
-REMINDER_LEAD_DAYS = Range(0, 7)  # 0: on the decide-by day
-DEFAULT_SERVINGS = Range(1, 12)
-
-
-def _between(column: str, allowed: Range) -> str:
-    return f"{column} BETWEEN {allowed.low} AND {allowed.high}"
-
-
 class Household(TimestampMixin, SQLModel, table=True):
     """A group of people who share orders and meals. Each household sees only its own."""
 
@@ -233,7 +239,7 @@ class Household(TimestampMixin, SQLModel, table=True):
             _between("reminder_lead_days", REMINDER_LEAD_DAYS), name="household_reminder_lead_range"
         ),
         CheckConstraint(
-            _between("default_servings", DEFAULT_SERVINGS), name="household_default_servings_range"
+            _between("default_servings", SERVINGS), name="household_default_servings_range"
         ),
     )
 
@@ -247,11 +253,12 @@ class Household(TimestampMixin, SQLModel, table=True):
     default_servings: int = Field(default=4, sa_column_kwargs={"server_default": "4"})
 
 
-class HouseholdMember(SQLModel, table=True):
-    """A Neon Auth user invited to a household. The app is invite-only: the API
-    serves only members of a household. Email and name live in Neon Auth."""
+class AppUser(SQLModel, table=True):
+    """The app's side of a user: a Neon Auth account (same id) invited to a
+    household, and their own settings. The app is invite-only: the API serves only
+    users in a household. Email and name live in Neon Auth (neon_auth.user) only."""
 
-    __tablename__ = "household_member"
+    __tablename__ = "app_user"
 
     # One household per user.
     user_id: UUID = Field(primary_key=True)

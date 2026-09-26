@@ -27,7 +27,7 @@ interface DraftCardProps {
 /** The household's unplaced order: where it's at, when to decide by, and continue or discard it. */
 export function DraftCard({ order, userId, today, onContinue, onDiscard, discarding }: DraftCardProps) {
   const ideas = suggestions(order).length
-  const picks = order.meal_ids.length
+  const picks = order.picks.length
   const batch = newestBatchState(order)
   const working = batch.status === 'running'
   // Ticks each second while a batch is being made, for the time it has taken.
@@ -50,7 +50,7 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
           : 'Pick meals'
   const subtitle =
     picks > 0
-      ? `${plural(picks, 'meal')} added for ${forDelivery}. Next, choose the delivery dates and review the order.`
+      ? `${plural(picks, 'meal')} added for ${forDelivery}. Next, choose the dates and each meal's servings.`
       : ideas > 0
         ? `Add the ones you want for ${forDelivery}. Pick as many as you'll cook before the next one.`
         : working

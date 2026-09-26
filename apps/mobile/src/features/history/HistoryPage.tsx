@@ -1,6 +1,7 @@
+import { placedMealPath } from '../meals/meals'
 import { useIonRouter } from '@ionic/react'
 import { useState } from 'react'
-import type { MealSummary, PlacedOrder } from '../../lib/api/types'
+import type { MealSummary, PlacedMeal, PlacedOrder } from '../../lib/api/types'
 import { addDays, formatDate } from '../../lib/dates'
 import { usePressIntent } from '../../lib/usePressIntent'
 import { MealArt } from '../../ui/art'
@@ -46,7 +47,7 @@ export function HistoryPage() {
   const pending = usePendingRatings()
   const shown = historyOrders(orders, search, filter, (meal) => shownRating(meal, pending))
   const mealCount = orders.reduce((total, order) => total + order.meals.length, 0)
-  const openMeal = (meal: MealSummary) => router.push(`/history/meals/${meal.id}`)
+  const openMeal = (meal: PlacedMeal) => router.push(placedMealPath('/history', meal))
 
   return (
     <Page
@@ -98,7 +99,7 @@ export function HistoryPage() {
 interface ByOrderProps {
   shown: HistoryOrder[]
   onOpenOrder: (order: PlacedOrder) => void
-  onOpenMeal: (meal: MealSummary) => void
+  onOpenMeal: (meal: PlacedMeal) => void
 }
 
 /** Each order as a card of its meals (spec/mockup.html: .hcard). */
@@ -125,7 +126,7 @@ function ByOrder({ shown, onOpenOrder, onOpenMeal }: ByOrderProps) {
 
 interface AllMealsProps {
   shown: HistoryOrder[]
-  onOpenMeal: (meal: MealSummary) => void
+  onOpenMeal: (meal: PlacedMeal) => void
 }
 
 /** Every meal as a tile, grouped by order (spec/mockup.html: .hgroup, .grid2, .gtile). */

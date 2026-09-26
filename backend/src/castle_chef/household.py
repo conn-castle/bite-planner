@@ -1,4 +1,4 @@
-"""Households and who is in them: Neon Auth accounts plus `household_member`.
+"""Households and who is in them: Neon Auth accounts plus `app_user`.
 
 The app is invite-only. Accounts are created here (sign-up stays disabled in
 Neon Auth), and each account belongs to at most one household, whose jobs and
@@ -15,7 +15,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlmodel import Session, col, func, select
 
-from castle_chef.models import GroceryOrder, Household, HouseholdMember
+from castle_chef.models import AppUser, GroceryOrder, Household
 from castle_chef.settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -82,8 +82,8 @@ def households(session: Session) -> list[tuple[str, int, int]]:
     """(name, member count, order count) of every household, by name."""
     members = (
         select(func.count())
-        .select_from(HouseholdMember)
-        .where(HouseholdMember.household_id == Household.id)
+        .select_from(AppUser)
+        .where(AppUser.household_id == Household.id)
         .scalar_subquery()
     )
     grocery_orders = (
@@ -102,7 +102,7 @@ def invite(session: Session, email: str, name: str, household_name: str) -> UUID
     already in another household must be removed from it first."""
     household = get(session, household_name)
     user_id = _auth_user_id(session, email)
-    membership = session.get(HouseholdMember, user_id) if user_id is not None else None
+    membership = session.get(AppUser, user_id) if user_id is not None else None
     if membership is not None and membership.household_id != household.id:
         other = session.exec(
             select(Household.name).where(Household.id == membership.household_id)
@@ -116,7 +116,7 @@ def invite(session: Session, email: str, name: str, household_name: str) -> UUID
         output = _neon_api("/auth/users", "POST", {"email": email, "name": name})
         user_id = UUID(json.loads(output)["id"])
     if membership is None:
-        session.add(HouseholdMember(user_id=user_id, household_id=household.id))
+        session.add(AppUser(user_id=user_id, household_id=household.id))
     session.commit()
     log.info(
         "household.invited",
@@ -135,7 +135,7 @@ def remove(session: Session, email: str) -> None:
     user_id = _auth_user_id(session, email)
     if user_id is None:
         raise HouseholdError(f"No account for {email}.")
-    member = session.get(HouseholdMember, user_id)
+    member = session.get(AppUser, user_id)
     if member is not None:
         session.delete(member)
         session.commit()
@@ -156,7 +156,7 @@ def members_of(session: Session, household_id: UUID) -> list[Person]:
     """Everyone in the household, in the order they were invited."""
     rows = session.execute(
         text(
-            "SELECT m.user_id, u.email, u.name FROM household_member AS m "
+            "SELECT m.user_id, u.email, u.name FROM app_user AS m "
             'JOIN neon_auth."user" AS u ON u.id = m.user_id '
             "WHERE m.household_id = :household_id ORDER BY m.invited_at, m.user_id"
         ),

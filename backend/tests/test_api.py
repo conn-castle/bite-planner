@@ -110,7 +110,7 @@ def households(session: Session) -> None:
             {"id": user_id, "email": email, "name": name},
         )
         session.execute(
-            text("INSERT INTO household_member (user_id, household_id) VALUES (:id, :household)"),
+            text("INSERT INTO app_user (user_id, household_id) VALUES (:id, :household)"),
             {"id": user_id, "household": household_id},
         )
     session.execute(
@@ -161,6 +161,26 @@ def open_draft(client: TestClient, user: UUID = MOM) -> dict[str, Any]:
 
 def get_order(client: TestClient, order_id: str, user: UUID = MOM) -> dict[str, Any]:
     return ok(client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(user)))
+
+
+def set_servings(
+    client: TestClient, order_id: str, meal_id: str, servings: Any, user: UUID = MOM
+) -> Response:
+    return client.put(
+        f"/v1/grocery-orders/{order_id}/meals/{meal_id}/servings",
+        headers=as_user(user),
+        json={"servings": servings},
+    )
+
+
+def servings_of(order: dict[str, Any]) -> dict[str, int]:
+    """How many to make of each of an order's picks, by meal id."""
+    return {pick["meal_id"]: pick["servings"] for pick in order["picks"]}
+
+
+def picked(order: dict[str, Any]) -> list[str]:
+    """The ids of an order's picked meals."""
+    return [pick["meal_id"] for pick in order["picks"]]
 
 
 def next_order(client: TestClient, user: UUID = MOM) -> dict[str, Any]:
@@ -254,8 +274,24 @@ def get_meal(client: TestClient, meal_id: str, user: UUID = MOM) -> dict[str, An
     return ok(client.get(f"/v1/meals/{meal_id}", headers=as_user(user)))
 
 
-def place(client: TestClient, order_id: str, user: UUID = MOM, zone: str = ZONE) -> Response:
-    return client.post(f"/v1/grocery-orders/{order_id}/place", headers=as_user(user, zone))
+def place(
+    client: TestClient,
+    order_id: str,
+    user: UUID = MOM,
+    zone: str = ZONE,
+    dates: tuple[date, date] | None = None,
+) -> Response:
+    """Place the order with these dates, or the ones it has (as the app sends
+    the dates it shows; any valid ones for an order the user can't see)."""
+    shown = client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(user, zone))
+    if dates is None and shown.status_code == 200:
+        body = {key: shown.json()[key] for key in ("delivery_date", "next_delivery_date")}
+    else:
+        dates = dates or (tomorrow(), tomorrow() + timedelta(days=1))
+        body = {"delivery_date": dates[0].isoformat(), "next_delivery_date": dates[1].isoformat()}
+    return client.post(
+        f"/v1/grocery-orders/{order_id}/place", headers=as_user(user, zone), json=body
+    )
 
 
 def placed_order(
@@ -439,7 +475,7 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "delivery_date": None,
         "next_delivery_date": None,
         "jobs": [],
-        "meal_ids": [],
+        "picks": [],
     }
     # Reopening it, or another member opening the flow, resumes the same draft.
     assert ok(client.post("/v1/grocery-orders", headers=as_user(MOM))) == draft
@@ -893,13 +929,13 @@ def test_suggestions_are_the_batches_meals_oldest_batch_first(client: TestClient
 def test_members_pick_and_unpick_the_drafts_suggestions(client: TestClient) -> None:
     order_id, [first, second] = with_suggestions(client)
 
-    assert ok(pick(client, order_id, first))["meal_ids"] == [first]
-    assert sorted(ok(pick(client, order_id, second, DAD))["meal_ids"]) == sorted([first, second])
-    assert sorted(ok(pick(client, order_id, first))["meal_ids"]) == sorted([first, second])
+    assert picked(ok(pick(client, order_id, first))) == [first]
+    assert sorted(picked(ok(pick(client, order_id, second, DAD)))) == sorted([first, second])
+    assert sorted(picked(ok(pick(client, order_id, first)))) == sorted([first, second])
     unpicked = client.delete(f"/v1/grocery-orders/{order_id}/meals/{first}", headers=as_user(DAD))
 
-    assert ok(unpicked)["meal_ids"] == [second]
-    assert get_order(client, order_id)["meal_ids"] == [second]
+    assert picked(ok(unpicked)) == [second]
+    assert picked(get_order(client, order_id)) == [second]
 
 
 def test_only_the_drafts_own_suggestions_can_be_picked(client: TestClient) -> None:
@@ -911,7 +947,7 @@ def test_only_the_drafts_own_suggestions_can_be_picked(client: TestClient) -> No
     for meal_id in [str(uuid4()), neighbors_meal, previous_meal]:
         detail(pick(client, order_id, meal_id), 404)
 
-    assert get_order(client, order_id)["meal_ids"] == []
+    assert picked(get_order(client, order_id)) == []
 
 
 # Placing.
@@ -919,21 +955,41 @@ def test_only_the_drafts_own_suggestions_can_be_picked(client: TestClient) -> No
 
 def test_placing_needs_picks_and_both_dates(client: TestClient, grocer: list[UUID]) -> None:
     order_id, [meal_id, _] = with_suggestions(client)
-    delivery = tomorrow()
+    dates = (tomorrow(), tomorrow() + timedelta(days=2))
 
-    no_picks = detail(place(client, order_id), 409)
+    no_picks = detail(place(client, order_id, dates=dates), 409)
     ok(pick(client, order_id, meal_id))
-    no_delivery = detail(place(client, order_id), 409)
-    ok(put_dates(client, order_id, delivery, None))
-    no_next_delivery = detail(place(client, order_id), 409)
+    no_dates = client.post(
+        f"/v1/grocery-orders/{order_id}/place",
+        headers=as_user(MOM),
+        json={"delivery_date": dates[0].isoformat()},
+    )
 
-    # Each says what's missing.
     assert "meal" in no_picks.lower()
-    assert "delivery date" in no_delivery.lower()
-    assert "next delivery date" in no_next_delivery.lower()
-    assert len({no_picks, no_delivery, no_next_delivery}) == 3
-    assert get_order(client, order_id)["status"] == "draft"
+    detail(no_dates, 422)
+    order = get_order(client, order_id)
+    assert (order["status"], order["delivery_date"]) == ("draft", None)
     assert grocer == []
+
+
+def test_placing_saves_the_dates_the_member_saw(client: TestClient, grocer: list[UUID]) -> None:
+    order_id, [meal_id, _] = with_suggestions(client)
+    ok(pick(client, order_id, meal_id))
+    ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=1), DAD))
+    shown = (tomorrow() + timedelta(days=1), tomorrow() + timedelta(days=4))
+
+    placed = ok(place(client, order_id, dates=shown))
+
+    assert (placed["delivery_date"], placed["next_delivery_date"]) == tuple(
+        day.isoformat() for day in shown
+    )
+    # Dates that break a rule leave another draft as it was.
+    other_id, [other_meal, _] = with_suggestions(client, NEIGHBOR)
+    ok(pick(client, other_id, other_meal, NEIGHBOR))
+    refused = place(client, other_id, NEIGHBOR, dates=(tomorrow(), tomorrow()))
+    detail(refused, 409)
+    other = get_order(client, other_id, NEIGHBOR)
+    assert (other["status"], other["delivery_date"]) == ("draft", None)
 
 
 def test_placing_rechecks_that_the_delivery_date_is_still_available(
@@ -964,7 +1020,7 @@ def test_a_member_places_the_draft(client: TestClient, grocer: list[UUID]) -> No
     after = datetime.now(UTC)
 
     assert get_order(client, order_id) == placed
-    assert (placed["status"], placed["meal_ids"]) == ("placed", [meal_id])
+    assert (placed["status"], picked(placed)) == ("placed", [meal_id])
     assert (placed["delivery_date"], placed["next_delivery_date"]) == (
         delivery.isoformat(),
         (delivery + timedelta(days=2)).isoformat(),
@@ -985,7 +1041,8 @@ def test_placing_a_placed_order_again_returns_it_unchanged(
 
     [listed] = placed_orders(client, tomorrow())
 
-    retry = ok(place(client, placed["id"], DAD))
+    # A retry after a lost response, even with other dates, changes nothing.
+    retry = ok(place(client, placed["id"], DAD, dates=(tomorrow(), tomorrow() + timedelta(days=9))))
 
     assert retry == placed
     assert grocer == [UUID(placed["id"])]  # sent to the grocery service once
@@ -1007,19 +1064,68 @@ def test_a_placed_order_cannot_be_changed(
 ) -> None:
     placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
     order_id = placed["id"]
-    [picked] = placed["meal_ids"]
-    unpicked = next(m["id"] for m in placed["jobs"][0]["meals"] if m["id"] != picked)
+    [picked_meal] = picked(placed)
+    unpicked = next(m["id"] for m in placed["jobs"][0]["meals"] if m["id"] != picked_meal)
 
     detail(request_batch(client, order_id), 409)
     detail(pick(client, order_id, unpicked), 409)
     detail(
-        client.delete(f"/v1/grocery-orders/{order_id}/meals/{picked}", headers=as_user(MOM)), 409
+        client.delete(f"/v1/grocery-orders/{order_id}/meals/{picked_meal}", headers=as_user(MOM)),
+        409,
     )
     detail(put_dates(client, order_id, tomorrow() + timedelta(days=1), None), 409)
+    detail(set_servings(client, order_id, picked_meal, 6), 409)
     detail(client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(DAD)), 409)
 
     assert get_order(client, order_id) == placed
     assert len(dispatcher.dispatched) == 1
+
+
+# Servings.
+
+
+def test_a_pick_starts_at_the_households_default_servings_and_keeps_its_own(
+    client: TestClient,
+) -> None:
+    order_id, [tacos, soup] = with_suggestions(client)
+    ok(client.patch("/v1/household", headers=as_user(DAD), json={"default_servings": 6}))
+
+    assert servings_of(ok(pick(client, order_id, tacos))) == {tacos: 6}
+    changed = ok(set_servings(client, order_id, tacos, 2, DAD))
+    # Picking it again, or a new default, leaves the servings it has.
+    ok(client.patch("/v1/household", headers=as_user(MOM), json={"default_servings": 3}))
+    ok(pick(client, order_id, tacos))
+    ok(pick(client, order_id, soup))
+
+    assert servings_of(changed) == {tacos: 2}
+    assert servings_of(get_order(client, order_id)) == {tacos: 2, soup: 3}
+
+
+def test_placed_orders_list_each_meals_servings(client: TestClient) -> None:
+    order_id, [tacos, soup] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    ok(pick(client, order_id, soup))
+    ok(set_servings(client, order_id, soup, 8))
+    ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=2)))
+    ok(place(client, order_id))
+
+    [listed] = placed_orders(client)
+
+    assert {meal["id"]: meal["servings"] for meal in listed["meals"]} == {tacos: 4, soup: 8}
+
+
+def test_servings_are_set_only_on_a_pick(client: TestClient) -> None:
+    order_id, [tacos, soup] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+
+    # Not picked (e.g. just unpicked on another phone): refused, not picked by it.
+    assert detail(set_servings(client, order_id, soup, 3), 404) == "That meal isn't picked."
+    # Another household's draft is no one's here.
+    detail(set_servings(client, order_id, tacos, 3, NEIGHBOR), 404)
+    for servings in (0, 13, None, 2.5):
+        detail(set_servings(client, order_id, tacos, servings), 422)
+
+    assert servings_of(get_order(client, order_id)) == {tacos: 4}
 
 
 # Discarding.
@@ -1125,9 +1231,7 @@ def test_a_household_starts_with_the_default_settings_and_lists_its_members(
 ) -> None:
     # Dad was invited first.
     session.execute(
-        text(
-            "UPDATE household_member SET invited_at = now() - interval '1 day' WHERE user_id = :id"
-        ),
+        text("UPDATE app_user SET invited_at = now() - interval '1 day' WHERE user_id = :id"),
         {"id": DAD},
     )
     session.commit()
@@ -1175,7 +1279,7 @@ def test_household_settings_are_shared_and_only_those_sent_change(client: TestCl
         {"reminder_lead_days": 8},
         {"default_servings": 0},
         {"default_servings": 13},
-        {"name": "Renamed"},
+        {"id": "00000000-0000-0000-0000-000000000000"},
     ],
     ids=[
         "nothing",
@@ -1197,6 +1301,24 @@ def test_household_settings_out_of_range_are_refused(
     detail(patch_household(client, body), 422)
 
     assert household_settings(client) == before
+
+
+def test_members_rename_their_household(client: TestClient) -> None:
+    renamed = ok(patch_household(client, {"name": "  The Conns  "}, DAD))
+
+    assert renamed["name"] == "The Conns"
+    assert ok(client.get("/v1/me", headers=as_user(MOM)))["household"]["name"] == "The Conns"
+
+
+def test_a_household_name_is_unique_and_not_empty(client: TestClient) -> None:
+    taken = patch_household(client, {"name": "Test Household", "reminder_lead_days": 5})
+
+    assert detail(taken, 409) == "Another household is called that."
+    for name in ("", "   ", "x" * 61):
+        detail(patch_household(client, {"name": name}), 422)
+    # Nothing sent with a refused name was saved.
+    settings = household_settings(client)
+    assert (settings["name"], settings["reminder_lead_days"]) == ("Conn Castle", 2)
 
 
 def test_members_set_their_own_notification_time_and_time_zone(client: TestClient) -> None:
@@ -1258,7 +1380,7 @@ def test_placed_orders_are_listed_from_the_day_they_cover(client: TestClient) ->
     listed = placed_orders(client, start)
 
     assert [order["id"] for order in listed] == [first["id"], second["id"]]
-    [meal_id] = second["meal_ids"]
+    [meal_id] = picked(second)
     [meal] = [m for m in second["jobs"][0]["meals"] if m["id"] == meal_id]
     assert listed[1] | {"placed_at": None} == {
         "id": second["id"],
@@ -1267,7 +1389,7 @@ def test_placed_orders_are_listed_from_the_day_they_cover(client: TestClient) ->
         "placed_by": {"user_id": str(DAD), "name": "Dad"},
         "delivery_date": second["delivery_date"],
         "next_delivery_date": second["next_delivery_date"],
-        "meals": [meal],
+        "meals": [meal | {"servings": 4}],
     }
     # An order covers up to the day before its next delivery.
     last_of_first = start + timedelta(days=2)
@@ -1321,7 +1443,7 @@ def test_picks_of_placed_orders_stay_readable(client: TestClient) -> None:
     placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
     open_draft(client)  # the next order
 
-    for meal_id in placed["meal_ids"]:
+    for meal_id in picked(placed):
         assert ok(client.get(f"/v1/meals/{meal_id}", headers=as_user(MOM)))["id"] == meal_id
 
 
@@ -1340,7 +1462,7 @@ def test_meals_outside_the_households_orders_are_not_found(client: TestClient) -
 
 def test_members_rate_the_households_meals(client: TestClient) -> None:
     placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
-    [meal_id] = placed["meal_ids"]
+    [meal_id] = picked(placed)
     assert get_meal(client, meal_id)["rating"] is None
 
     no_content(rate(client, meal_id, "up"))
@@ -1358,7 +1480,7 @@ def test_members_rate_the_households_meals(client: TestClient) -> None:
 
 def test_meals_are_listed_with_their_ratings(client: TestClient) -> None:
     placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
-    [placed_meal] = placed["meal_ids"]
+    [placed_meal] = picked(placed)
     order_id, [liked, disliked] = with_suggestions(client, names=("Chili", "Liver"))
     no_content(rate(client, placed_meal, "down"))
     no_content(rate(client, liked, "favorite"))
@@ -1399,13 +1521,13 @@ def test_not_for_us_unpicks_the_meal_and_keeps_it_from_being_picked(client: Test
 
     no_content(rate(client, first, "not_for_us", DAD))
 
-    assert get_order(client, order_id)["meal_ids"] == [second]
+    assert picked(get_order(client, order_id)) == [second]
     message = detail(pick(client, order_id, first), 409)
     assert message == "You marked this meal 'don't show meals like this'."
-    assert get_order(client, order_id)["meal_ids"] == [second]
+    assert picked(get_order(client, order_id)) == [second]
     # Undone, it can be picked again.
     no_content(clear_rating(client, first))
-    assert sorted(ok(pick(client, order_id, first))["meal_ids"]) == sorted([first, second])
+    assert sorted(picked(ok(pick(client, order_id, first)))) == sorted([first, second])
 
 
 def test_other_ratings_leave_the_picks_alone(client: TestClient) -> None:
@@ -1415,18 +1537,18 @@ def test_other_ratings_leave_the_picks_alone(client: TestClient) -> None:
     no_content(rate(client, first, "down"))
     no_content(rate(client, second, "down"))
 
-    assert get_order(client, order_id)["meal_ids"] == [first]
-    assert sorted(ok(pick(client, order_id, second))["meal_ids"]) == sorted([first, second])
+    assert picked(get_order(client, order_id)) == [first]
+    assert sorted(picked(ok(pick(client, order_id, second)))) == sorted([first, second])
 
 
 def test_not_for_us_leaves_placed_orders_as_they_were(client: TestClient) -> None:
     placed = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
-    [meal_id] = placed["meal_ids"]
+    [meal_id] = picked(placed)
     open_draft(client)  # the next order
 
     no_content(rate(client, meal_id, "not_for_us"))
 
-    assert get_order(client, placed["id"])["meal_ids"] == [meal_id]
+    assert picked(get_order(client, placed["id"])) == [meal_id]
     [listed] = placed_orders(client)
     assert [meal["id"] for meal in listed["meals"]] == [meal_id]
 
@@ -1437,16 +1559,16 @@ def test_a_pick_and_a_not_for_us_mark_at_once_never_leave_the_meal_picked(
     order_id, meal_ids = with_suggestions(client, names=("A", "B", "C", "D", "E"))
 
     for meal_id in meal_ids:
-        picked, marked = run_at_once(
+        picking, marked = run_at_once(
             [
                 lambda meal_id=meal_id: pick(client, order_id, meal_id),
                 lambda meal_id=meal_id: rate(client, meal_id, "not_for_us", DAD),
             ]
         )
-        assert picked.status_code in (200, 409), picked.text
+        assert picking.status_code in (200, 409), picking.text
         assert marked.status_code == 204, marked.text
 
-    assert get_order(client, order_id)["meal_ids"] == []
+    assert picked(get_order(client, order_id)) == []
 
 
 # Error bodies.
@@ -1598,7 +1720,7 @@ def test_an_order_runs_to_completion_with_a_local_worker(
         ok(pick(client, order_id, meal_id))
         ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=1)))
         placed = ok(place(client, order_id))
-        assert (placed["status"], placed["meal_ids"]) == ("placed", [meal_id])
+        assert (placed["status"], picked(placed)) == ("placed", [meal_id])
         assert ok(client.get(f"/v1/meals/{meal_id}", headers=as_user(MOM)))["servings"] == 4
     finally:
         app.dependency_overrides.clear()

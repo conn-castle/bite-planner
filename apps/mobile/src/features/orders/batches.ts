@@ -31,8 +31,17 @@ export function newestBatchState({ jobs }: Batches): BatchState {
   return { status: 'done' }
 }
 
+/** A picked meal, and how many to make of it. */
+export interface PickedMeal {
+  meal: MealSummary
+  servings: number
+}
+
 /** The picked meals, in the order they were suggested. */
-export function pickedMeals(order: Batches & Pick<GroceryOrder, 'meal_ids'>): MealSummary[] {
-  const picked = new Set(order.meal_ids)
-  return suggestions(order).filter((meal) => picked.has(meal.id))
+export function pickedMeals(order: Batches & Pick<GroceryOrder, 'picks'>): PickedMeal[] {
+  const servings = new Map(order.picks.map((pick) => [pick.meal_id, pick.servings]))
+  return suggestions(order).flatMap((meal) => {
+    const count = servings.get(meal.id)
+    return count === undefined ? [] : [{ meal, servings: count }]
+  })
 }

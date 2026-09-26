@@ -9,10 +9,16 @@ import { isRecord } from '../../lib/isRecord'
  * stops being applied.
  */
 
-export interface SetMeal {
+/** A pick, with the servings it starts at (the household's default) shown until it's saved; or an unpick. */
+export type SetMeal =
+  | { orderId: string; mealId: string; picked: true; servings: number }
+  | { orderId: string; mealId: string; picked: false }
+
+/** How many to make of one of the picks. */
+export interface SetServings {
   orderId: string
   mealId: string
-  picked: boolean
+  servings: number
 }
 
 export interface SetDates {
@@ -30,15 +36,20 @@ export interface SetNotForUs {
   notForUs: boolean
 }
 
-export type OrderEdit = SetMeal | SetDates | SetNotForUs
+export type OrderEdit = SetMeal | SetServings | SetDates | SetNotForUs
 
 const isDate = (value: unknown): value is string | null => value === null || typeof value === 'string'
+
+const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value)
 
 /** Whether a pending mutation's variables are a change to an order (they are stored untyped). */
 export function isOrderEdit(value: unknown): value is OrderEdit {
   if (!isRecord(value) || typeof value.orderId !== 'string') return false
-  if (typeof value.mealId === 'string' && typeof value.picked === 'boolean') return true
-  if (typeof value.mealId === 'string' && typeof value.notForUs === 'boolean') return true
+  if (typeof value.mealId === 'string') {
+    if (typeof value.picked === 'boolean') return value.picked === false || isCount(value.servings)
+    if (typeof value.notForUs === 'boolean') return true
+    return isCount(value.servings)
+  }
   const { dates } = value
   return isRecord(dates) && isDate(dates.delivery_date) && isDate(dates.next_delivery_date)
 }
@@ -49,23 +60,33 @@ export function applyEdits(order: GroceryOrder, edits: readonly OrderEdit[]): Gr
     .filter((edit) => edit.orderId === order.id)
     .reduce((shown, edit) => {
       if ('dates' in edit) return { ...shown, ...edit.dates }
-      const others = shown.meal_ids.filter((id) => id !== edit.mealId)
+      const others = shown.picks.filter((pick) => pick.meal_id !== edit.mealId)
       if ('picked' in edit) {
         // A meal marked "not for us" can't be picked (the server refuses it), so a
         // pick made while the mark is still being saved isn't shown either.
         const notForUs = shown.jobs.some((job) =>
           job.meals.some((meal) => meal.id === edit.mealId && meal.rating === 'not_for_us'),
         )
-        return { ...shown, meal_ids: edit.picked && !notForUs ? [...others, edit.mealId] : others }
+        if (!edit.picked || notForUs) return { ...shown, picks: others }
+        // Picking it again keeps the servings it has.
+        const picked = others.length < shown.picks.length
+        return picked ? shown : { ...shown, picks: [...others, { meal_id: edit.mealId, servings: edit.servings }] }
       }
-      const rating = edit.notForUs ? 'not_for_us' : null
+      if ('notForUs' in edit) {
+        const rating = edit.notForUs ? 'not_for_us' : null
+        return {
+          ...shown,
+          jobs: shown.jobs.map((job) => ({
+            ...job,
+            meals: job.meals.map((meal) => (meal.id === edit.mealId ? { ...meal, rating } : meal)),
+          })),
+          picks: edit.notForUs ? others : shown.picks,
+        }
+      }
+      // Only a pick has servings (the server refuses the rest).
       return {
         ...shown,
-        jobs: shown.jobs.map((job) => ({
-          ...job,
-          meals: job.meals.map((meal) => (meal.id === edit.mealId ? { ...meal, rating } : meal)),
-        })),
-        meal_ids: edit.notForUs ? others : shown.meal_ids,
+        picks: shown.picks.map((pick) => (pick.meal_id === edit.mealId ? { ...pick, servings: edit.servings } : pick)),
       }
     }, order)
 }

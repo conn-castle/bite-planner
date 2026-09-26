@@ -11,13 +11,13 @@ import { Notice } from '../../ui/Notice'
 import { Skeleton } from '../../ui/Skeleton'
 import { MealPage } from '../meals/MealPage'
 import { suggestions } from './batches'
-import { DeliveryStep, NextDeliveryStep } from './DateSteps'
+import { DatesStep } from './DatesStep'
 import { FlowFrame } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
 import styles from './OrderFlow.module.css'
 import { nextQuery, useNextOrder, useOpenOrder, useOrder } from './orders'
 import { PickStep } from './PickStep'
-import { PlacedStep, ReviewStep } from './ReviewStep'
+import { PlacedStep } from './PlacedStep'
 import { WaitStep } from './WaitStep'
 
 // How often the flow checks whether the phone's calendar day has changed.
@@ -42,7 +42,12 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement }: OrderFl
 
   // Stable, or the nav would start over: it resets whenever its root changes.
   const root = useCallback(
-    () => <OrderFlow onClose={() => void modal.current?.dismiss()} onOpenMeal={(mealId) => void openMeal(nav.current, mealId)} />,
+    () => (
+      <OrderFlow
+        onClose={() => void modal.current?.dismiss()}
+        onOpenMeal={(mealId, servings) => void openMeal(nav.current, mealId, servings)}
+      />
+    ),
     [],
   )
 
@@ -59,10 +64,10 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement }: OrderFl
   )
 }
 
-/** Pushes a recipe onto the flow's nav. */
-async function openMeal(nav: HTMLIonNavElement | null, mealId: string) {
+/** Pushes a recipe onto the flow's nav: at a pick's servings, when it's one. */
+async function openMeal(nav: HTMLIonNavElement | null, mealId: string, servings: number | undefined) {
   if (!nav) return
-  await nav.push(() => <MealPage mealId={mealId} />)
+  await nav.push(() => <MealPage mealId={mealId} servings={servings} />)
   // A recipe once opened as a blank card (its page left invisible); report it if that happens again.
   const page = (await nav.getActive())?.element
   if (page && getComputedStyle(page).opacity === '0') {
@@ -70,11 +75,14 @@ async function openMeal(nav: HTMLIonNavElement | null, mealId: string) {
   }
 }
 
-type Step = 'pick' | 'delivery' | 'next' | 'review'
+type Step = 'pick' | 'dates'
+
+/** Opens a meal's recipe: at a pick's servings, when it's one. */
+type OpenMeal = (mealId: string, servings?: number) => void
 
 interface OrderFlowProps {
   onClose: () => void
-  onOpenMeal: (mealId: string) => void
+  onOpenMeal: OpenMeal
 }
 
 /** Opens the household's draft (creating it if needed) and shows the step it is at. */
@@ -167,49 +175,20 @@ interface OrderStepProps {
   step: Step
   setStep: (step: Step) => void
   onClose: () => void
-  onOpenMeal: (mealId: string) => void
+  onOpenMeal: OpenMeal
 }
 
 /**
  * The screen for where the order is. The step the user chose is shown unless
- * the order can't support it (e.g. another member removed every pick or
- * changed a date), in which case the earliest step that needs attention is.
+ * the order can't support it (e.g. another member removed every pick), in which
+ * case picking meals is.
  */
 function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps) {
   if (order.status === 'placed') return <PlacedStep order={order} onClose={onClose} />
   if (suggestions(order).length === 0) return <WaitStep order={order} onClose={onClose} />
 
-  const { delivery_date: delivery, next_delivery_date: next } = order
-  const hasPicks = order.meal_ids.length > 0
-  const deliveryValid = delivery !== null && delivery >= order.earliest_delivery_date
-
-  if (step === 'pick' || !hasPicks) {
-    return <PickStep order={order} onOpenMeal={onOpenMeal} onNext={() => setStep('delivery')} onClose={onClose} />
+  if (step === 'pick' || order.picks.length === 0) {
+    return <PickStep order={order} onOpenMeal={onOpenMeal} onNext={() => setStep('dates')} onClose={onClose} />
   }
-  if (step === 'delivery' || !deliveryValid) {
-    return (
-      <DeliveryStep order={order} onBack={() => setStep('pick')} onNext={() => setStep('next')} onClose={onClose} />
-    )
-  }
-  if (step === 'next' || next === null || next <= delivery) {
-    return (
-      <NextDeliveryStep
-        order={order}
-        delivery={delivery}
-        onBack={() => setStep('delivery')}
-        onNext={() => setStep('review')}
-        onClose={onClose}
-      />
-    )
-  }
-  return (
-    <ReviewStep
-      order={order}
-      delivery={delivery}
-      next={next}
-      onOpenMeal={onOpenMeal}
-      onBack={() => setStep('next')}
-      onClose={onClose}
-    />
-  )
+  return <DatesStep order={order} onOpenMeal={onOpenMeal} onBack={() => setStep('pick')} onClose={onClose} />
 }

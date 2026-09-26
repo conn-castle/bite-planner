@@ -2,12 +2,14 @@ import { MutationObserver, QueryClient, QueryClientProvider } from '@tanstack/re
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiRequest } from '../../lib/api/client'
+import { auth } from '../../lib/auth/auth'
 import { ApiError } from '../../lib/api/errors'
 import type { Household, PersonalSettings } from '../../lib/api/types'
 import { queryKeys } from '../../lib/query/keys'
 import { type Session, sessionQuery } from '../session/session'
 import {
   type HouseholdChange,
+  type NameChange,
   householdQuery,
   type PersonalChange,
   registerSettingsMutations,
@@ -19,7 +21,7 @@ import {
 vi.mock('../../lib/api/client', () => ({ apiRequest: vi.fn() }))
 vi.mock('../../lib/log', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
 // session.ts (imported for its query key) signs in through the real provider otherwise.
-vi.mock('../../lib/auth/auth', () => ({ auth: {} }))
+vi.mock('../../lib/auth/auth', () => ({ auth: { updateName: vi.fn() } }))
 vi.mock('../../lib/logUpload', () => ({ uploadLogs: vi.fn() }))
 vi.mock('../../lib/query/queryClient', () => ({ persister: {} }))
 const request = vi.mocked(apiRequest)
@@ -192,5 +194,39 @@ describe('changing a household setting', () => {
     await changeHousehold({ reminder_lead_days: 9 }).catch(() => undefined)
 
     expect(queryClient.getQueryState(queryKeys.household)?.isInvalidated).toBe(true)
+  })
+})
+
+describe('renaming', () => {
+  const session: Session = {
+    user: { id: 'sam', email: 'sam@example.com', name: 'Sam' },
+    household: { id: 'castle', name: 'Conn Castle' },
+    settings: { notification_time: '08:00:00', time_zone: 'Europe/Lisbon' },
+  }
+
+  it("the household shows its new name everywhere the session shows it", async () => {
+    queryClient.setQueryData<Session>(sessionQuery.queryKey, session)
+    request.mockResolvedValue(household({ name: 'The Conns' }))
+
+    await changeHousehold({ name: 'The Conns' })
+
+    expect(queryClient.getQueryData<Session>(sessionQuery.queryKey)?.household?.name).toBe('The Conns')
+    expect(queryClient.getQueryData<Household>(queryKeys.household)?.name).toBe('The Conns')
+  })
+
+  it('your own name is saved with the sign-in provider, and everything showing names is fetched again', async () => {
+    for (const key of [sessionQuery.queryKey, queryKeys.household, queryKeys.nextOrder, queryKeys.placedOrdersFrom()]) {
+      queryClient.setQueryData(key, {})
+    }
+
+    await new MutationObserver<void, Error, NameChange>(queryClient, { mutationKey: ['user', 'change-name'] }).mutate({
+      name: 'Samantha',
+    })
+
+    expect(vi.mocked(auth.updateName)).toHaveBeenCalledWith('Samantha')
+    expect(request).not.toHaveBeenCalled()
+    for (const key of [sessionQuery.queryKey, queryKeys.household, queryKeys.nextOrder, queryKeys.placedOrdersFrom()]) {
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true)
+    }
   })
 })

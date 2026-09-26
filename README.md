@@ -21,7 +21,7 @@ Error log lines, Lambda and Pipe failures ──► CloudWatch alarms ──► 
 3. The Pipe starts one Fargate task per message. The worker claims the job and runs Grok with a prompt asking for 20 low-effort meals (`meals_per_batch`).
 4. Grok calls `castle-chef meal add` once per meal. The CLI validates the meal and saves it as JSON in the job directory; the agent never touches the database.
 5. After Grok exits, the worker checks that exactly that many meals were saved, then stores them (each with its `job_id`) and marks the job `succeeded` in one transaction. Otherwise the job is `failed` with an error and nothing is stored. The task then exits.
-6. The app polls the draft and shows the suggestions. The member picks meals (more batches if they like), chooses the delivery date and the next delivery date, and places the order, which calls the grocery-service stub (it does nothing yet) and marks the order `placed`.
+6. The app polls the draft and shows the suggestions. The member picks meals (more batches if they like), chooses the delivery date, the next delivery date, and each meal's servings, and places the order, which calls the grocery-service stub (it does nothing yet) and marks the order `placed`.
 
 A batch takes one to two minutes: about 30 s to start the task (mostly Fargate provisioning), the rest is Grok.
 
@@ -176,7 +176,7 @@ A new stack has its own EFS, so run the agent login for it once. `cd infra && uv
 
 `apps/mobile/` is the Capacitor project and `src/` is the app's only source: `make dev` serves it directly, `make build` compiles it to `dist/`, and Capacitor copies `dist/` into the iOS project (`ios/App/App/public/`, gitignored). Both are build output.
 
-The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on every platform) with `IonReactRouter` (react-router 6, which Ionic 9 requires): three tabs, **Orders** (`/week`: start an order, or continue or discard the household's draft), **History** (`/history`, empty until past orders are built), and **Settings** (`/settings`), each with its own navigation stack. The create-order flow is a card over the page (pick meals, with a recipe view inside it; delivery date; next delivery; review; place). Sign-in and "not in a household" are shown instead of the tabs. `src/` is organized by feature:
+The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on every platform) with `IonReactRouter` (react-router 6, which Ionic 9 requires): three tabs, **Orders** (`/week`: start an order, or continue or discard the household's draft), **History** (`/history`: past orders and their meals), and **Settings** (`/settings`), each with its own navigation stack. The create-order flow is a card over the page (pick meals, with a recipe view inside it; then the dates and each meal's servings on one step, and place). Sign-in and "not in a household" are shown instead of the tabs. `src/` is organized by feature:
 
 | Path | What |
 | --- | --- |
@@ -306,7 +306,7 @@ Project `castle-chef` (`example-project`), database `neondb`, branches `main` (p
 Security model:
 
 - The app signs in with Neon Auth using an emailed one-time code (no passwords, no social providers) and gets a 15-minute JWT (EdDSA). The API verifies it against the branch's published keys (`castle_chef/auth.py`, behind an `AuthVerifier` interface so the provider can be swapped).
-- Invite-only: the API serves only accounts in a household (a `household_member` row with a `household_id`); anyone else gets 403. Sign-up is disabled in Neon Auth, but only for passwords: Neon's setting doesn't cover emailed codes, so anyone can request a code for any address, and entering it creates an empty account (tested on `dev`, 2026-09-24). Such accounts get no data (403). Accepted for the private TestFlight app. To close it, use Neon Auth's `send.otp` and `user.before_create` webhooks to email codes only to invited people, or wait for Neon to apply disable-sign-up to emailed codes.
+- Invite-only: the API serves only accounts in a household (an `app_user` row, the app's side of a Neon Auth account, with a `household_id`); anyone else gets 403. Sign-up is disabled in Neon Auth, but only for passwords: Neon's setting doesn't cover emailed codes, so anyone can request a code for any address, and entering it creates an empty account (tested on `dev`, 2026-09-24). Such accounts get no data (403). Accepted for the private TestFlight app. To close it, use Neon Auth's `send.otp` and `user.before_create` webhooks to email codes only to invited people, or wait for Neon to apply disable-sign-up to emailed codes.
 - Households are separate: every order, job, and meal belongs to a household through its order, members see only their household's, and another household's is 404 like a missing one. `GET /v1/me` reports the caller's `household` (`id`, `name`, or null).
 - The API enforces the ordering rules: one draft per household, one batch of suggestions at a time per draft, client-generated job ids that can't be reused for another order or by someone else, picks only from the draft's suggestions, valid dates, and no changes once placed.
 - The API and worker use the owner role through Neon's pooled endpoint; the agent has no database access. Local tools use the direct endpoint.

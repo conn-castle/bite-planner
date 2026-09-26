@@ -21,9 +21,7 @@ TABLES = sorted(COLUMN)
 # A well-formed insert into every table (so each fails on privileges, not syntax).
 INSERTS = {
     "household": f"INSERT INTO household (id, name) VALUES ('{uuid4()}', 'Castle')",
-    "household_member": (
-        f"INSERT INTO household_member (user_id, household_id) VALUES ('{uuid4()}', '{uuid4()}')"
-    ),
+    "app_user": (f"INSERT INTO app_user (user_id, household_id) VALUES ('{uuid4()}', '{uuid4()}')"),
     "grocery_order": (
         "INSERT INTO grocery_order (id, household_id, created_by, status) "
         f"VALUES ('{uuid4()}', '{uuid4()}', '{uuid4()}', 'draft')"

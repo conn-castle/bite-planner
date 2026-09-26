@@ -25,8 +25,8 @@ The flow being built toward, one piece at a time:
 4. The backend generates the shopping list, asynchronously (it takes minutes). When it's done, the user sees every item to be shopped for, and can remove items or change their quantities.
 5. The user submits the order, it's placed, and the confirmation shows the store order(s) it's associated with.
 
-- [ ] The dates, the picked meals, and their servings are on one view (step 3).
-- [ ] Each picked meal's servings are stored in the order. A meal starts at the household's default servings and can be changed per meal.
+- [x] The dates, the picked meals, and their servings are on one view (step 3).
+- [x] Each picked meal's servings are stored in the order. A meal starts at the household's default servings and can be changed per meal.
 
 ## Draft order
 

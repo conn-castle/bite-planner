@@ -1,8 +1,11 @@
 import { queryOptions } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api/client'
 import { isRetryable } from '../../lib/api/errors'
-import type { Meal } from '../../lib/api/types'
+import type { Meal, PlacedMeal } from '../../lib/api/types'
 import { queryKeys } from '../../lib/query/keys'
+
+/** The route of a placed order's meal, under a tab: its recipe at the servings ordered. */
+export const placedMealPath = (tab: string, meal: PlacedMeal) => `${tab}/meals/${meal.id}?servings=${meal.servings}`
 
 /** One meal's full recipe, and the household's rating of it. */
 export const mealQuery = (mealId: string) =>

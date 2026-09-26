@@ -38,7 +38,7 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
       meals,
     },
   ],
-  meal_ids: [],
+  picks: [],
 })
 
 const placed: PlacedOrder = {
@@ -48,7 +48,7 @@ const placed: PlacedOrder = {
   placed_by: { user_id: 'sam', name: 'Sam' },
   delivery_date: '2026-09-20',
   next_delivery_date: '2026-09-25',
-  meals: [meal('fajitas')],
+  meals: [{ ...meal('fajitas'), servings: 4 }],
 }
 
 describe('cachedMealSummary', () => {

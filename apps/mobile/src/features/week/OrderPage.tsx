@@ -1,3 +1,4 @@
+import { placedMealPath } from '../meals/meals'
 import { useIonRouter } from '@ionic/react'
 import { useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
@@ -99,7 +100,13 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
         footer={`These meals cover ${coverage(order)}. Cook them in any order.`}
       >
         {order.meals.map((meal) => (
-          <MealRow key={meal.id} meal={meal} onOpen={() => router.push(`${base}/meals/${meal.id}`)} rated />
+          <MealRow
+            key={meal.id}
+            meal={meal}
+            servings={meal.servings}
+            onOpen={() => router.push(placedMealPath(base, meal))}
+            rated
+          />
         ))}
       </Group>
 

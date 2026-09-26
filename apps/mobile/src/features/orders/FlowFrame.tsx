@@ -5,7 +5,7 @@ import { Icon } from '../../ui/Icon'
 import { FlowNotice } from './flowNotice'
 import styles from './FlowFrame.module.css'
 
-const STEP_NAMES = ['Pick meals', 'Delivery date', 'Next delivery', 'Review'] as const
+const STEP_NAMES = ['Pick meals', 'Dates and servings'] as const
 
 interface FlowFrameProps {
   /** Which of the steps this is, for the progress dots; null hides them. */

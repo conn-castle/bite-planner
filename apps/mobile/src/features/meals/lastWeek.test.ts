@@ -18,7 +18,7 @@ const order = (number: number, delivery: string, next: string, meals: MealSummar
   placed_by: { user_id: 'sam', name: 'Sam' },
   delivery_date: delivery,
   next_delivery_date: next,
-  meals,
+  meals: meals.map((meal) => ({ ...meal, servings: 4 })),
 })
 
 const TODAY = '2026-09-24'

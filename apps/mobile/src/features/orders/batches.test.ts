@@ -75,6 +75,13 @@ describe('newestBatchState', () => {
 describe('pickedMeals', () => {
   it('lists the picks in the order they were suggested, not the order they were picked', () => {
     const jobs = [batch('first', 'succeeded', ['a', 'b', 'c'])]
-    expect(pickedMeals({ jobs, meal_ids: ['c', 'a'] }).map((m) => m.id)).toEqual(['a', 'c'])
+    const picks = [
+      { meal_id: 'c', servings: 2 },
+      { meal_id: 'a', servings: 6 },
+    ]
+    expect(pickedMeals({ jobs, picks }).map(({ meal, servings }) => [meal.id, servings])).toEqual([
+      ['a', 6],
+      ['c', 2],
+    ])
   })
 })

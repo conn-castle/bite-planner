@@ -3,6 +3,7 @@ placing it. Every write to a draft locks its row first, so concurrent requests
 from the household's members apply one at a time."""
 
 import logging
+from dataclasses import dataclass
 from datetime import date, timedelta
 from uuid import UUID, uuid4
 
@@ -39,6 +40,10 @@ class NotASuggestion(Exception):
 
 
 class MealNotFound(Exception):
+    pass
+
+
+class NotPicked(Exception):
     pass
 
 
@@ -177,11 +182,28 @@ def pick(session: Session, household_id: UUID, order_id: UUID, meal_id: UUID) ->
     if ratings.is_not_for_us(session, household_id, meal_id):
         session.rollback()
         raise NotForUs("You marked this meal 'don't show meals like this'.")
+    # A new pick starts at the household's default servings; picking it again
+    # keeps the servings it has.
+    household = session.get_one(Household, household_id)
     session.execute(
         insert(GroceryOrderMeal)
-        .values(grocery_order_id=order_id, meal_id=meal_id)
+        .values(grocery_order_id=order_id, meal_id=meal_id, servings=household.default_servings)
         .on_conflict_do_nothing()
     )
+    session.commit()
+
+
+def set_servings(
+    session: Session, household_id: UUID, order_id: UUID, meal_id: UUID, servings: int
+) -> None:
+    """Change how many to make of one of the draft's picks. A meal that isn't
+    picked (e.g. just unpicked on another phone) is an error, never a new pick."""
+    lock_draft(session, household_id, order_id)
+    pick = session.get(GroceryOrderMeal, (order_id, meal_id))
+    if pick is None:
+        session.rollback()
+        raise NotPicked("That meal isn't picked.")
+    pick.servings = servings
     session.commit()
 
 
@@ -227,11 +249,19 @@ def set_dates(
 
 
 def place(
-    session: Session, household_id: UUID, order_id: UUID, user_id: UUID, today: date
+    session: Session,
+    household_id: UUID,
+    order_id: UUID,
+    user_id: UUID,
+    delivery: date,
+    next_delivery: date,
+    today: date,
 ) -> GroceryOrder:
-    """Place a draft: check it, send it to the grocery service, and mark it placed
-    by the user, now. Placing an order that's already placed returns it unchanged
-    (who placed it and when included), so a retry after a lost response is safe."""
+    """Place a draft with the dates the member saw: save them, check the draft,
+    send it to the grocery service, and mark it placed by the user, now; all under
+    the draft's lock, so another phone's change can't land in between. Placing an
+    order that's already placed returns it unchanged (its dates, who placed it and
+    when included), so a retry after a lost response is safe."""
     order = lock_order(session, household_id, order_id)
     if order is None:
         session.rollback()
@@ -239,10 +269,11 @@ def place(
     if order.status == GroceryOrderStatus.PLACED:
         session.rollback()
         return order
-    missing = _not_ready(session, order, today)
+    missing = _not_ready(session, order, delivery, next_delivery, today)
     if missing is not None:
         session.rollback()
         raise NotReady(missing)
+    order.delivery_date, order.next_delivery_date = delivery, next_delivery
     place_with_grocer(order)
     order.status = GroceryOrderStatus.PLACED
     order.placed_at = utc_now()
@@ -254,33 +285,19 @@ def place(
     return order
 
 
-def _not_ready(session: Session, order: GroceryOrder, today: date) -> str | None:
+def _not_ready(
+    session: Session, order: GroceryOrder, delivery: date, next_delivery: date, today: date
+) -> str | None:
     if not picks(session, order.id):
         return "Pick at least one meal."
-    if order.delivery_date is None:
-        return "Choose the delivery date."
-    if order.next_delivery_date is None:
-        return "Choose the next delivery date."
     try:
-        check_dates(order.delivery_date, order.next_delivery_date, today)
+        check_dates(delivery, next_delivery, today)
     except InvalidDates as error:
         return str(error)
     return None
 
 
 # Computed, not stored.
-
-
-def picked_meals(session: Session, order_id: UUID) -> list[Meal]:
-    """The order's picked meals, in the order they were suggested."""
-    return list(
-        session.exec(
-            select(Meal)
-            .join(GroceryOrderMeal, col(GroceryOrderMeal.meal_id) == Meal.id)
-            .where(GroceryOrderMeal.grocery_order_id == order_id)
-            .order_by(col(Meal.created_at), col(Meal.id))
-        ).all()
-    )
 
 
 def household_meal(
@@ -332,24 +349,32 @@ def clear_meal_rating(session: Session, household_id: UUID, meal_id: UUID) -> No
     session.commit()
 
 
-def picked_meals_of(session: Session, order_ids: list[UUID]) -> dict[UUID, list[Meal]]:
-    """Each order's picked meals, in the order they were suggested, in one query."""
-    meals: dict[UUID, list[Meal]] = {order_id: [] for order_id in order_ids}
+@dataclass(frozen=True)
+class Pick:
+    """A meal picked for an order, and how many to make of it."""
+
+    meal: Meal
+    servings: int
+
+
+def picks_of(session: Session, order_ids: list[UUID]) -> dict[UUID, list[Pick]]:
+    """Each order's picks, in the order their meals were suggested, in one query."""
+    found: dict[UUID, list[Pick]] = {order_id: [] for order_id in order_ids}
     if not order_ids:
-        return meals
-    for order_id, meal in session.exec(
-        select(GroceryOrderMeal.grocery_order_id, Meal)
+        return found
+    for order_id, servings, meal in session.exec(
+        select(GroceryOrderMeal.grocery_order_id, GroceryOrderMeal.servings, Meal)
         .join(Meal, col(Meal.id) == GroceryOrderMeal.meal_id)
         .where(col(GroceryOrderMeal.grocery_order_id).in_(order_ids))
         .order_by(col(Meal.created_at), col(Meal.id))
     ).all():
-        meals[order_id].append(meal)
-    return meals
+        found[order_id].append(Pick(meal=meal, servings=servings))
+    return found
 
 
-def picks(session: Session, order_id: UUID) -> list[UUID]:
-    """The ids of the order's picked meals, in the order they were suggested."""
-    return [meal.id for meal in picked_meals(session, order_id)]
+def picks(session: Session, order_id: UUID) -> list[Pick]:
+    """The order's picks, in the order their meals were suggested."""
+    return picks_of(session, [order_id])[order_id]
 
 
 def placed_orders(

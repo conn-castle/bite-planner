@@ -28,7 +28,7 @@ const placed: PlacedOrder = {
   placed_by: { user_id: 'sam', name: 'Sam' },
   delivery_date: '2026-09-20',
   next_delivery_date: '2026-09-25',
-  meals: [summary('fajitas'), summary('curry')],
+  meals: [summary('fajitas'), summary('curry')].map((meal) => ({ ...meal, servings: 4 })),
 }
 
 let queryClient: QueryClient

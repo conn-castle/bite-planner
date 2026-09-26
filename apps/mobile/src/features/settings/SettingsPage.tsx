@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { DECIDE_BY_OFFSET_DAYS, NAME_LENGTH, REMINDER_LEAD_DAYS, SERVINGS } from '../../lib/api/limits'
 import type { Household, PersonalSettings } from '../../lib/api/types'
 import { errorFields, logger } from '../../lib/log'
 import { Group, Row } from '../../ui/Group'
@@ -8,16 +9,20 @@ import { Page } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { Stepper } from '../../ui/Stepper'
 import { TimeField } from '../../ui/TimeField'
+import { useTextPrompt } from '../../ui/useTextPrompt'
 import { plural } from '../orders/format'
 import { signOut, useSession } from '../session/session'
 import styles from './SettingsPage.module.css'
 import {
   useChangeHousehold,
+  useChangeName,
   useChangePersonal,
   useHousehold,
   useHouseholdError,
+  useNameError,
   usePersonalError,
   usePersonalSettings,
+  useUserName,
 } from './settings'
 
 export function SettingsPage() {
@@ -48,6 +53,7 @@ export function SettingsPage() {
 function HouseholdGroup({ household, userId }: { household: Household; userId: string | undefined }) {
   const change = useChangeHousehold()
   const error = useHouseholdError()
+  const prompt = useTextPrompt()
   const { decide_by_offset_days: offset, reminder_lead_days: lead, default_servings: servings } = household
   const members = household.members.map((member) =>
     member.user_id === userId ? 'You' : (member.name ?? member.email ?? 'Someone'),
@@ -61,14 +67,27 @@ function HouseholdGroup({ household, userId }: { household: Household; userId: s
         footer="Shared by everyone in the household. Changing the decide-by or reminder days moves them for everyone."
       >
         <Row
+          label="Name"
+          detail={household.name}
+          chevron
+          onClick={() =>
+            prompt({
+              title: 'Household name',
+              value: household.name,
+              maxLength: NAME_LENGTH,
+              onSave: (name) => change.mutate({ name }),
+            })
+          }
+        />
+        <Row
           label="Decide by"
           sub={`${plural(offset, 'day')} before delivery`}
           detail={
             <Stepper
               inRow
               value={offset}
-              min={1}
-              max={7}
+              min={DECIDE_BY_OFFSET_DAYS.min}
+              max={DECIDE_BY_OFFSET_DAYS.max}
               label="Days before delivery"
               onChange={(value) => change.mutate({ decide_by_offset_days: value })}
             />
@@ -81,8 +100,8 @@ function HouseholdGroup({ household, userId }: { household: Household; userId: s
             <Stepper
               inRow
               value={lead}
-              min={0}
-              max={7}
+              min={REMINDER_LEAD_DAYS.min}
+              max={REMINDER_LEAD_DAYS.max}
               label="Days before decide-by"
               onChange={(value) => change.mutate({ reminder_lead_days: value })}
             />
@@ -90,13 +109,12 @@ function HouseholdGroup({ household, userId }: { household: Household; userId: s
         />
         <Row
           label="Default servings"
-          sub="Each meal you pick starts at this"
           detail={
             <Stepper
               inRow
               value={servings}
-              min={1}
-              max={12}
+              min={SERVINGS.min}
+              max={SERVINGS.max}
               label="Servings"
               onChange={(value) => change.mutate({ default_servings: value })}
             />
@@ -149,6 +167,10 @@ function PersonalGroup({ settings }: { settings: PersonalSettings }) {
 function AccountGroup() {
   const queryClient = useQueryClient()
   const { data: session } = useSession()
+  const name = useUserName()
+  const changeName = useChangeName()
+  const nameError = useNameError()
+  const prompt = useTextPrompt()
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
 
@@ -166,12 +188,33 @@ function AccountGroup() {
 
   return (
     <>
-      <Group title="Account" footer={signOutError ? `Couldn't sign out: ${signOutError}` : undefined}>
+      <Group
+        title="Account"
+        footer={
+          signOutError
+            ? `Couldn't sign out: ${signOutError}`
+            : nameError
+              ? `Couldn't change your name: ${nameError.message}`
+              : undefined
+        }
+      >
         {session && (
-          <Row
-            label={session.user.name || session.user.email}
-            sub={session.user.name ? session.user.email : undefined}
-          />
+          <>
+            <Row
+              label="Your name"
+              detail={name || 'Add'}
+              chevron
+              onClick={() =>
+                prompt({
+                  title: 'Your name',
+                  value: name ?? '',
+                  maxLength: NAME_LENGTH,
+                  onSave: (text) => changeName.mutate({ name: text }),
+                })
+              }
+            />
+            <Row label="Email" detail={session.user.email} />
+          </>
         )}
         <Row label="Sign out" tone="danger" onClick={() => void onSignOut()} disabled={signingOut} />
       </Group>

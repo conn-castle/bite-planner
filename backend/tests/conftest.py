@@ -58,7 +58,7 @@ def clean_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[No
         connection.execute(
             text(
                 "TRUNCATE meal_preference, grocery_order_meal, meal_ingredient, meal, job, "
-                'grocery_order, household_member, household, neon_auth."user" CASCADE'
+                'grocery_order, app_user, household, neon_auth."user" CASCADE'
             )
         )
 

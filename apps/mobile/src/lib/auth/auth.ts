@@ -21,6 +21,8 @@ export interface AuthClient {
   getUser(): Promise<User | null>
   /** A current bearer token for the API, or null when signed out. */
   getToken(): Promise<string | null>
+  /** Changes the signed-in user's own name (kept by the provider, the one place it's stored). */
+  updateName(name: string): Promise<void>
   signOut(): Promise<void>
 }
 
