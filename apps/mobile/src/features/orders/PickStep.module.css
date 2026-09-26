@@ -1,19 +1,5 @@
 /* The pick step (spec/mockup.html: .pick-note, .pgrid, .pc, .more). */
 
-.note {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  margin: 10px 0 0;
-  font-size: 13px;
-  color: var(--cc-ink-3);
-}
-
-.note svg {
-  font-size: 15px;
-  margin-top: 1px;
-}
-
 .notice {
   margin-top: 14px;
 }

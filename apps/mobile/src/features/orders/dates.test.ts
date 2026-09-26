@@ -4,6 +4,10 @@ import {
   datesForDelivery,
   defaultDeliveryDate,
   defaultNextDeliveryDate,
+  deliveryChoice,
+  deliveryWhy,
+  followingDates,
+  nextDeliveryWhy,
   deliveryBar,
   deliveryGap,
   nextDeliveryBar,
@@ -208,5 +212,45 @@ describe('nextDeliveryBar', () => {
   it('runs a week past the recommended day, or to a later chosen date', () => {
     expect(nextDeliveryBar(order, '2026-09-28', 3, '2026-10-01').at(-1)?.date).toBe('2026-10-08')
     expect(nextDeliveryBar(order, '2026-09-28', 3, '2026-10-20').at(-1)?.date).toBe('2026-10-20')
+  })
+})
+
+describe('what the dates mean', () => {
+  // Dates as said in English, whatever the machine's locale.
+  const EN = 'en-US'
+  const order = { number: 4, target_date: '2026-09-27', earliest_delivery_date: '2026-09-25' }
+
+  it('names where the delivery date comes from', () => {
+    expect(deliveryChoice(order, '2026-09-27')).toBe('target')
+    expect(deliveryChoice(order, '2026-09-29')).toBe('pick')
+    // The target passed: the soonest delivery takes its place.
+    const late = { ...order, target_date: '2026-09-23' }
+    expect(deliveryChoice(late, '2026-09-25')).toBe('soonest')
+    expect(deliveryChoice({ ...order, target_date: null }, '2026-09-27')).toBe('pick')
+  })
+
+  it("says how the delivery date lines up with the previous order's days", () => {
+    expect(deliveryWhy(order, '2026-09-27', 3, EN)).toBe("Starts the day after Order 3's last covered day, Sat 26.")
+    expect(deliveryWhy(order, '2026-09-29', 3, EN)).toBe('2 days with no meals covered before it arrives (Sun 27 – Mon 28).')
+    expect(deliveryWhy(order, '2026-09-26', 3, EN)).toBe('Arrives while Order 3 still covers 1 day. Groceries may overlap.')
+  })
+
+  it('says how the meals fit the days until the next delivery', () => {
+    expect(nextDeliveryWhy('2026-09-27', '2026-09-30', 3, EN)).toBe('3 meals, one a day, cover Sun 27 – Tue 29.')
+    expect(nextDeliveryWhy('2026-09-27', '2026-10-01', 3, EN)).toBe(
+      '3 meals cover 4 days, Sun 27 – Wed 30. Some days need leftovers or takeout.',
+    )
+    expect(nextDeliveryWhy('2026-09-27', '2026-09-29', 3, EN)).toBe(
+      '3 meals cover 2 days, Sun 27 – Mon 28. Some meals carry past the next delivery.',
+    )
+  })
+
+  it("says what the next delivery sets for the following order, by the household's rules", () => {
+    expect(followingDates(5, '2026-10-05', 1, 2, '2026-09-24', EN)).toBe(
+      'Order 5: decide by Sun, Oct 4, reminders start Fri, Oct 2.',
+    )
+    expect(followingDates(5, '2026-09-27', 1, 2, '2026-09-24', EN)).toBe(
+      'Order 5: decide by Sat, Sep 26, reminders start today.',
+    )
   })
 })

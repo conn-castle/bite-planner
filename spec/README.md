@@ -9,7 +9,7 @@ Where the two disagree, the requirements win. Decisions from reviews of the buil
 
 - Every row of days is one shared component (`apps/mobile/src/ui/DateBar`), configured with props (e.g. the compact strip on home) but sharing the same parts.
 - The delivery date's day row starts at the last day the previous order's meals cover, or at today if that's later; today is shown greyed out and labeled Today.
-- The dates, the picked meals, and their servings are one step, "Dates and servings" (after Pick meals), in place of the mockup's Delivery date and Next delivery steps: the dates are two rows (Delivery, Next delivery) that each open their day row in place, the meals below each have a servings stepper, and Place order is at its foot (the shopping list step will come between them).
+- The flow's steps each do one thing: Pick meals, Servings, Delivery date, Next delivery, Shopping list (waiting for it if needed, then reviewing it), and a final review that places the order. This replaces the single "Dates and servings" step decided earlier (built in step 5 of the build order), and adds Servings and the final review to the mockup's steps. The shopping list starts building as the member leaves Servings.
 - The next-delivery day row marks the days that have meals with a bar in the order's color, starts at the delivery day, and still marks the best day.
 - Placed order cards (home and the order view) have a 1px border in the order's color at 40% (`color-mix(in srgb, var(--c) 40%, transparent)`), not the mockup's neutral hairline, so each card matches its bar in the day strip.
 - The bar of an order not delivered yet is solid, in a lighter tint of the order's color (45% of it on white), not dashed as in the mockup.
@@ -42,14 +42,15 @@ Notifications, as decided:
 - In the app, iOS shows no banner; "ideas ready" shows as the mockup's toast unless the order flow is open. Reminders show nothing extra (Home already shows the order's state).
 - Settings' Personal group has a "Daily reminders" switch (each member's own, kept by the server; on by default): off, that member gets no daily reminders. "Your meal ideas are ready" has no switch: it goes only to whoever asked for the ideas. While iOS doesn't allow Castle Chef's notifications on the phone, the group starts with a row saying so and a button: Allow (iOS's prompt, the first time) or Open Settings (after that). The mockup's "Allow notifications: On" row isn't built.
 - Where the mockup says "yours at 8:00 AM", a member whose reminders are off (the switch, or iOS) sees "yours are off" (the draft card: "your reminders are off").
-- The Dates and servings step's next-delivery row says what it sets for the following order in one line ("Order 5: decide by …, reminders start …"), not the mockup's "What this sets" group.
+- The Next delivery step's card has no mini strip of days (the mockup's `.mini-strip`): the day row under it already marks the days the meals cover.
+- The Next delivery step says what it sets for the following order in one line ("Order 5: decide by …, reminders start …"), not the mockup's "What this sets" group.
 
 The order lock, as decided:
 
 - The lock belongs to one opening of the order flow on one phone, not just to the member. Opening the flow on another phone (or on the same phone after the app was closed) takes over the member's own lock at once; the phone that lost it shows "You're placing this order on another phone" with "Order here" (not in the mockup).
 - While the locked screen is open, it turns into the draft by itself once the other member closes the flow or their app goes away for 2 minutes.
 - Discarding the draft is refused while another member is ordering (the locked card has no Discard, as mocked).
-- The locked card and screen show the app's two steps (Pick meals, Dates and servings), not the mockup's four, and the card says what they're doing at that step ("Sam is choosing the dates and servings").
+- The locked card and screen show the app's steps, not the mockup's four, and the card says what they're doing at that step ("Sam is choosing the dates and servings"; with the one-thing-per-step flow, each step's own words).
 
 ## Build order
 
@@ -61,8 +62,8 @@ One piece at a time, each through the UI with real data:
 4. Settings: household (decide-by offset, reminder lead, default servings, members, name) and personal (notification time, your name). (done)
 5. Dates, meals, and servings on one view: the order flow's step 3 (requirements "Ordering flow"), with each meal's servings stored in the order. (done)
 6. Notifications: the daily reminders and "ideas ready", "Allow notifications" in Settings, and the mockup's reminder text on Home and in the order flow (the strip's reminder marks, "Reminders start …, daily · yours at 8:00 AM", the "Reminders on" chip, and "Reminders start" in the next-delivery step). Each member's reminder goes out at their clock time in their phone's zone: a time skipped by a daylight saving change has no reminder that day (EventBridge Scheduler skips it), a repeated one goes out once, and a member whose zone isn't known yet (hasn't opened the app) gets none. (done)
-7. The order lock: one member ordering at a time (requirements "Order lock"), with the mockup's "Sam is placing an order" card and locked flow screen.
-8. The shopping list, stages 1 and 2 (requirements "Shopping list"): a flow step after Dates and servings, where Place order moves. Python scales each picked meal's ingredients to its servings, then the agent combines them into one list grouped by aisle, in the background like meal ideas. The user removes items and changes quantities; the order view shows the list. Placing still calls the stub grocery service.
+7. The order lock: one member ordering at a time (requirements "Order lock"), with the mockup's "Sam is placing an order" card and locked flow screen. (done)
+8. The one-thing-per-step flow and the shopping list, stages 1 and 2 (requirements "Ordering flow" and "Shopping list"): Servings, Delivery date, and Next delivery become steps of their own, followed by Shopping list and a final review that places the order. Leaving Servings starts the list: Python scales each picked meal's ingredients to its servings, then the agent combines them into one list grouped by aisle, in the background like meal ideas, leaving out the items assumed on hand (shown only behind an icon). Changing the meals or servings afterwards rebuilds it from scratch. The user removes items and changes quantities; the order view shows the list. Placing still calls the stub grocery service.
 9. Grocery stores, stage 3: first research Instacart and Walmart (APIs, accounts, sign-in, preferences) and choose one or both; then an agent shops the list and chooses the exact products, the user sees them before placing, and the confirmation shows the store orders.
 10. Household members from the app: adding and removing people (requirements "Household"). Needs its own design first: how someone is invited and joins (today the admin command creates their Neon Auth account and emailed codes sign them in), what happens to a person who leaves, and whether a household can end up empty.
 

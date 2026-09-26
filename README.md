@@ -21,7 +21,7 @@ Error log lines, Lambda and Pipe failures ──► CloudWatch alarms ──► 
 3. The Pipe starts one Fargate task per message. The worker claims the job and runs Grok with a prompt asking for 20 low-effort meals (`meals_per_batch`).
 4. Grok calls `castle-chef meal add` once per meal. The CLI validates the meal and saves it as JSON in the job directory; the agent never touches the database.
 5. After Grok exits, the worker checks that exactly that many meals were saved, then stores them (each with its `job_id`) and marks the job `succeeded` in one transaction. Otherwise the job is `failed` with an error and nothing is stored. The task then exits.
-6. The app polls the draft and shows the suggestions. The member picks meals (more batches if they like), chooses the delivery date, the next delivery date, and each meal's servings, and places the order, which calls the grocery-service stub (it does nothing yet) and marks the order `placed`.
+6. The app polls the draft and shows the suggestions. The member picks meals (more batches if they like), chooses each meal's servings, the delivery date, and the next delivery date, reviews the order, and places it, which calls the grocery-service stub (it does nothing yet) and marks the order `placed`.
 
 A batch takes one to two minutes: about 30 s to start the task (mostly Fargate provisioning), the rest is Grok.
 
@@ -178,7 +178,7 @@ A new stack has its own EFS, so run the agent login for it once. `cd infra && uv
 
 `apps/mobile/` is the Capacitor project and `src/` is the app's only source: `make dev` serves it directly, `make build` compiles it to `dist/`, and Capacitor copies `dist/` into the iOS project (`ios/App/App/public/`, gitignored). Both are build output.
 
-The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on every platform) with `IonReactRouter` (react-router 6, which Ionic 9 requires): three tabs, **Orders** (`/week`: start an order, or continue or discard the household's draft), **History** (`/history`: past orders and their meals), and **Settings** (`/settings`), each with its own navigation stack. The create-order flow is a card over the page (pick meals, with a recipe view inside it; then the dates and each meal's servings on one step, and place). Sign-in and "not in a household" are shown instead of the tabs. `src/` is organized by feature:
+The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on every platform) with `IonReactRouter` (react-router 6, which Ionic 9 requires): three tabs, **Orders** (`/week`: start an order, or continue or discard the household's draft), **History** (`/history`: past orders and their meals), and **Settings** (`/settings`), each with its own navigation stack. The create-order flow is a card over the page, one thing per step: pick meals (with a recipe view inside it), servings, the delivery date, the next delivery date, and a final review that places the order. Sign-in and "not in a household" are shown instead of the tabs. `src/` is organized by feature:
 
 | Path | What |
 | --- | --- |

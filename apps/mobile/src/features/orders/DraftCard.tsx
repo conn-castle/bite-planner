@@ -53,7 +53,7 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
           : 'Pick meals'
   const subtitle =
     picks > 0
-      ? `${plural(picks, 'meal')} added for ${forDelivery}. Next, choose the dates and each meal's servings.`
+      ? `${plural(picks, 'meal')} added for ${forDelivery}. Next, choose each meal's servings and the delivery dates.`
       : ideas > 0
         ? `Add the ones you want for ${forDelivery}. Pick as many as you'll cook before the next one.`
         : working

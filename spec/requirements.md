@@ -20,13 +20,17 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 The flow being built toward, one piece at a time:
 
 1. Meal ideas are generated, and while they generate the user is asked to rate recent meals.
-2. The user picks meals.
-3. On one view, the user chooses the dates and reviews the picked meals, each with its servings shown and editable (− and + around the number).
-4. The backend generates the shopping list, asynchronously (it takes minutes). When it's done, the user sees every item to be shopped for, and can remove items or change their quantities.
-5. An agent shops the list at the grocery store(s) and chooses the exact products to order; the user sees those exact items before placing.
-6. The user submits the order, it's placed, and the confirmation shows the store order(s) it's associated with.
+2. Pick meals.
+3. Servings: each picked meal's servings (− and + around the number). Leaving this step starts building the shopping list.
+4. Delivery date.
+5. Next delivery date (which sets the next order's decide-by date).
+6. The shopping list: the user waits for it here if it isn't built yet, then reviews it (removes items, changes quantities).
+7. An agent shops the list at the grocery store(s) and chooses the exact products to order; the user sees those exact items before placing (with grocery stores, later).
+8. Final review: the user checks the order and confirms; it's placed, and the confirmation shows the store order(s) it's associated with.
 
-- [x] The dates, the picked meals, and their servings are on one view (step 3).
+Each step does one thing.
+
+- [x] The flow has one step each for servings, the delivery date, and the next delivery date (replacing the single "Dates and servings" step).
 - [x] Each picked meal's servings are stored in the order. A meal starts at the household's default servings and can be changed per meal.
 
 ## Draft order
@@ -67,8 +71,10 @@ The list is made in three stages:
 2. An AI agent combines those ingredients into one list of things to buy (e.g. "1 onion" and "1 cup diced onion" become onions), grouped by aisle.
 3. An agent shops that list at the grocery store(s) (Instacart and/or Walmart, whichever is easier to set up; both is ideal) and chooses the exact products to order, using the household's store accounts and preferences.
 
-- [ ] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings (stages 1 and 2), asynchronously (it takes minutes); the user sees it when it's done.
-- [ ] The user can remove items from the shopping list, such as things they already have, and change their quantities.
+- [ ] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings (stages 1 and 2), asynchronously (it takes minutes), starting as soon as the servings are chosen; the user sees it when it's done.
+- [ ] Changing the picked meals or their servings after the list was built rebuilds it from scratch; the user's changes to the old list are dropped. (Generation isn't deterministic and can change the list a lot, so there is no merging.)
+- [ ] The user can remove items from the shopping list and change their quantities.
+- [ ] Items assumed to be on hand are never on the list. The list is the same for every household and isn't editable: salt, pepper, olive oil, vegetable oil, water. When the meals need any of them, an icon on the shopping list shows it; tapping it lists the assumed items these recipes need. They aren't shown otherwise (they'd be noise).
 - [ ] Before placing, the user sees the exact products that will be ordered (stage 3).
 
 ## Placing and status

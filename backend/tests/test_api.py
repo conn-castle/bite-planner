@@ -1723,12 +1723,12 @@ def test_renewing_keeps_the_lock_and_says_where_the_member_is(
     opened = open_draft(client)
     order_id = opened["id"]
 
-    renewed = ok(renew(client, order_id, step="dates"))
+    renewed = ok(renew(client, order_id, step="delivery"))
 
     assert renewed["since"] == opened["lock"]["since"]
     assert renewed["expires_at"] > opened["lock"]["expires_at"]
-    assert renewed["step"] == "dates"
-    assert get_order(client, order_id, DAD)["lock"]["step"] == "dates"
+    assert renewed["step"] == "delivery"
+    assert get_order(client, order_id, DAD)["lock"]["step"] == "delivery"
     # Renewed after it lapsed, it's still hers while no one else has taken it.
     expire_lock(session, order_id)
     assert get_order(client, order_id, DAD)["lock"] is None

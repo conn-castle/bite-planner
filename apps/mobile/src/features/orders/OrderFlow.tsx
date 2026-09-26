@@ -13,7 +13,8 @@ import { MealPage } from '../meals/MealPage'
 import { loadingIdeas, setOrderFlowOpen, stopAwaitingIdeas, useAwaitedIdeas } from '../notifications/notifications'
 import { useSession } from '../session/session'
 import { suggestions } from './batches'
-import { DatesStep } from './DatesStep'
+import { shownDeliveryDate, shownNextDeliveryDate } from './dates'
+import { DeliveryStep } from './DeliveryStep'
 import { FlowFrame } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
 import { OrderSession } from './lock'
@@ -21,8 +22,11 @@ import { useOrderLock } from './useOrderLock'
 import { LockedStep } from './LockedStep'
 import styles from './OrderFlow.module.css'
 import { closeFlowSession, nextQuery, useNextOrder, useOpenOrder, useOrder } from './orders'
+import { NextDeliveryStep } from './NextDeliveryStep'
 import { PickStep } from './PickStep'
 import { PlacedStep } from './PlacedStep'
+import { ReviewStep } from './ReviewStep'
+import { ServingsStep } from './ServingsStep'
 import { WaitStep } from './WaitStep'
 
 // How often the flow checks whether the phone's calendar day has changed.
@@ -131,11 +135,8 @@ function OrderFlow({ orderId, session, onShown, onClose, onOpenMeal }: OrderFlow
   const order = useOrder(orderId ?? open.data?.id ?? cachedDraftId, session)
   const { refetch } = order
   const [step, setStep] = useState<Step>('pick')
-  // Where the flow is, as the lock tells the others: picking until there are picks to go on with.
-  const shownStep: Step =
-    step === 'dates' && order.shown !== undefined && suggestions(order.shown).length > 0 && order.shown.picks.length > 0
-      ? 'dates'
-      : 'pick'
+  // Where the flow is, as the lock tells the others.
+  const shownStep: Step = order.shown === undefined ? 'pick' : stepShown(order.shown, step)
   // The copy cached before opening (the next order's) may be out of date; the lock goes by the order itself.
   const known = !order.isPlaceholderData && !(orderId === undefined && open.isPending) ? order.shown : undefined
   const { lockedOut, takeOver } = useOrderLock(known, session, userId, shownStep)
@@ -274,16 +275,61 @@ interface OrderStepProps {
 }
 
 /**
- * The screen for where the order is. The step the user chose is shown unless
- * the order can't support it (e.g. another member removed every pick), in which
- * case picking meals is.
+ * The step to show: the one the user is at, unless the order can't support it
+ * (e.g. another change removed every pick: picking meals; no delivery date yet:
+ * that step).
  */
+function stepShown(order: GroceryOrder, step: Step): Step {
+  if (suggestions(order).length === 0 || order.picks.length === 0) return 'pick'
+  if ((step === 'next' || step === 'review') && shownDeliveryDate(order) === null) return 'delivery'
+  return step
+}
+
+/** The screen for where the order is, each step going on to the next. */
 function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps) {
   if (order.status === 'placed') return <PlacedStep order={order} onClose={onClose} />
   if (suggestions(order).length === 0) return <WaitStep order={order} onClose={onClose} />
 
-  if (step === 'pick' || order.picks.length === 0) {
-    return <PickStep order={order} onOpenMeal={onOpenMeal} onNext={() => setStep('dates')} onClose={onClose} />
+  const shown = stepShown(order, step)
+  const delivery = shownDeliveryDate(order)
+  if (shown === 'pick') {
+    return <PickStep order={order} onOpenMeal={onOpenMeal} onNext={() => setStep('servings')} onClose={onClose} />
   }
-  return <DatesStep order={order} onOpenMeal={onOpenMeal} onBack={() => setStep('pick')} onClose={onClose} />
+  if (shown === 'servings') {
+    return (
+      <ServingsStep
+        order={order}
+        onOpenMeal={onOpenMeal}
+        onBack={() => setStep('pick')}
+        onNext={() => setStep('delivery')}
+        onClose={onClose}
+      />
+    )
+  }
+  if (shown === 'delivery' || delivery === null) {
+    return <DeliveryStep order={order} onBack={() => setStep('servings')} onNext={() => setStep('next')} onClose={onClose} />
+  }
+  const next = shownNextDeliveryDate(delivery, order.next_delivery_date, order.picks.length)
+  if (shown === 'next') {
+    return (
+      <NextDeliveryStep
+        order={order}
+        delivery={delivery}
+        onBack={() => setStep('delivery')}
+        onNext={() => setStep('review')}
+        onClose={onClose}
+      />
+    )
+  }
+  return (
+    <ReviewStep
+      order={order}
+      delivery={delivery}
+      next={next}
+      onOpenMeal={onOpenMeal}
+      onChange={setStep}
+      onBack={() => setStep('next')}
+      onClose={onClose}
+    />
+  )
 }

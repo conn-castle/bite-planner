@@ -118,7 +118,7 @@ export interface GroceryOrder {
 }
 
 /** The create-order flow's steps, as a lock reports where its holder is. */
-export type OrderStep = 'pick' | 'dates'
+export type OrderStep = 'pick' | 'servings' | 'delivery' | 'next' | 'review'
 
 /**
  * The order lock: one ordering session (an opening of the flow, on one phone)

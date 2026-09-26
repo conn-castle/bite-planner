@@ -8,6 +8,7 @@ import { useNow } from '../../lib/useNow'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
+import { Note } from '../../ui/Note'
 import { Notice } from '../../ui/Notice'
 import { usePrefetchMeal } from '../meals/cached'
 import { formatMinutes } from '../meals/facts'
@@ -93,10 +94,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
         </>
       }
     >
-      <p className={styles.note}>
-        <Icon name="users" />
-        Your picks are saved for the household as you go.
-      </p>
+      <Note icon="users">Your picks are saved for the household as you go.</Note>
       {pickProblem ? (
         <div className={styles.notice}>
           <Notice>Couldn't add that meal: {pickProblem}</Notice>

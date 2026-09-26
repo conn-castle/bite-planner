@@ -8,7 +8,7 @@ import { StepDots } from '../../ui/StepDots'
 import { defaultDeliveryDate } from './dates'
 import { timeAgo } from './format'
 import styles from './LockedCard.module.css'
-import { STEP_NAMES, stepIndex } from './steps'
+import { STEP_NAMES, stepDoing, stepIndex } from './steps'
 
 interface LockedCardProps {
   order: GroceryOrder
@@ -23,7 +23,7 @@ export function LockedCard({ order, lock }: LockedCardProps) {
   const at = stepIndex(lock.step)
   const delivery = defaultDeliveryDate(order)
   const forDelivery = delivery === null ? '' : ` for ${formatDate(delivery, 'weekday')}'s delivery`
-  const doing = lock.step === 'pick' ? 'picking meals' : 'choosing the dates and servings'
+  const doing = stepDoing(lock.step)
 
   return (
     <OrderCard

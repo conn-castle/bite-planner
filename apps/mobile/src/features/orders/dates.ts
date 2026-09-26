@@ -1,6 +1,7 @@
 import type { GroceryOrder, ISODate, OrderDates } from '../../lib/api/types'
-import { addDays, dateRange, daysBetween } from '../../lib/dates'
+import { addDays, dateRange, daysBetween, formatDate, toLocalDate } from '../../lib/dates'
 import type { BarDay } from '../../ui/DateBar'
+import { plural } from './format'
 
 /** An order's dates: calendar days ("2026-09-28"), with the arithmetic in lib/dates.ts. */
 
@@ -110,4 +111,76 @@ export function nextDeliveryBar(order: Pick<GroceryOrder, 'number'>, delivery: I
     selectable: date > delivery,
     tag: date === delivery ? 'delivery' : date === recommended ? 'best' : null,
   }))
+}
+
+// What the dates mean, as the Delivery date and Next delivery steps say it.
+
+/** Where the delivery date comes from: the target date, the soonest delivery (the target passed), or the member's pick. */
+export function deliveryChoice(order: DeliveryLimits, delivery: ISODate): 'target' | 'soonest' | 'pick' {
+  const { target_date: target, earliest_delivery_date: earliest } = order
+  if (delivery === target) return 'target'
+  if (target !== null && target < earliest && delivery === earliest) return 'soonest'
+  return 'pick'
+}
+
+/** What the delivery date means next to the previous order's days, in the phone's locale (or `locale`). */
+export function deliveryWhy(
+  order: Pick<GroceryOrder, 'number' | 'target_date'>,
+  delivery: ISODate,
+  meals: number,
+  locale?: string,
+): string {
+  const previous = order.number - 1
+  const gap = deliveryGap(order.target_date, delivery)
+  if (gap === null) {
+    return `Your ${plural(meals, 'meal')} start ${toLocalDate(delivery).toLocaleDateString(locale, { weekday: 'long' })}.`
+  }
+  if (gap === 0) {
+    return `Starts the day after Order ${previous}'s last covered day, ${formatDate(addDays(delivery, -1), 'short', locale)}.`
+  }
+  if (gap > 0) {
+    // The days from the target date up to this delivery.
+    const days = dateRange(addDays(delivery, -gap), addDays(delivery, -1))
+    return `${plural(gap, 'day')} with no meals covered before it arrives (${dayRange(days, locale)}).`
+  }
+  return `Arrives while Order ${previous} still covers ${plural(-gap, 'day')}. Groceries may overlap.`
+}
+
+/** How the meals fit the days until the next delivery. */
+export function nextDeliveryWhy(delivery: ISODate, next: ISODate, meals: number, locale?: string): string {
+  const days = coveredDays(delivery, next)
+  const span = dayRange(days, locale)
+  if (days.length === meals) return `${plural(meals, 'meal')}, one a day, cover ${span}.`
+  return `${plural(meals, 'meal')} cover ${plural(days.length, 'day')}, ${span}.${
+    days.length > meals ? ' Some days need leftovers or takeout.' : ' Some meals carry past the next delivery.'
+  }`
+}
+
+/**
+ * What the next delivery sets for the order after this one: its decide-by date
+ * (the household's offset before it) and when reminders to decide it start
+ * (the household's lead before that), as the backend works them out.
+ */
+export function followingDates(
+  number: number,
+  next: ISODate,
+  offset: number,
+  lead: number,
+  today: ISODate,
+  locale?: string,
+): string {
+  const decideBy = addDays(next, -offset)
+  const start = addDays(decideBy, -lead)
+  return `Order ${number}: decide by ${formatDate(decideBy, 'medium', locale)}, reminders start ${
+    start <= today ? 'today' : formatDate(start, 'medium', locale)
+  }.`
+}
+
+/** "Mon 28 – Wed 30", or "Mon 28" for one day. */
+export function dayRange(days: ISODate[], locale?: string): string {
+  const first = days[0]
+  const last = days[days.length - 1]
+  if (first === undefined || last === undefined) return ''
+  const day = (date: ISODate) => formatDate(date, 'short', locale)
+  return first === last ? day(first) : `${day(first)} – ${day(last)}`
 }

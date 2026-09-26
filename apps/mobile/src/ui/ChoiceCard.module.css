@@ -1,0 +1,37 @@
+/* spec/mockup.html: .rec, .rec.off, .rt, .rd, .rw */
+.card {
+  margin-top: 20px;
+  padding: 18px;
+  border-radius: 22px;
+  background: var(--cc-accent-soft);
+  border: 1.5px solid var(--cc-accent);
+}
+
+.own {
+  background: var(--cc-bg);
+  border-color: var(--cc-hairline);
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cc-accent);
+}
+
+.title {
+  margin: 6px 0 0;
+  font: 700 26px/1.15 var(--cc-font-display);
+  color: var(--cc-ink);
+}
+
+.detail {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--cc-ink-2);
+}

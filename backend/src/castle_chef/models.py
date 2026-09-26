@@ -149,7 +149,10 @@ class OrderStep(StrEnum):
     """The create-order flow's steps, as its lock reports where the holder is."""
 
     PICK = "pick"  # picking meals, or waiting for ideas
-    DATES = "dates"  # dates and servings
+    SERVINGS = "servings"
+    DELIVERY = "delivery"  # the delivery date
+    NEXT = "next"  # the next delivery date
+    REVIEW = "review"  # the final review, which places it
 
 
 class GroceryOrder(TimestampMixin, SQLModel, table=True):
