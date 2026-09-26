@@ -14,7 +14,7 @@ skips a time in the hour lost in spring: that day has no reminder for it.
 
 import json
 import logging
-from datetime import datetime, time
+from datetime import date, datetime, time
 from functools import lru_cache
 from typing import Any, Literal, Protocol
 from uuid import UUID
@@ -294,18 +294,28 @@ def remind(event: ReminderEvent) -> None:
         previous = user.reminded_on
         user.reminded_on = day
         session.commit()
-    delivery = push.notify(event.user_id, notification)
+    # It reached none of their phones (failed sending, or before sending): give
+    # the day back and fail, so Lambda retries the firing (a phone that got it
+    # never gets it twice).
+    try:
+        delivery = push.notify(event.user_id, notification)
+    except Exception:
+        _give_back(event.user_id, day, previous)
+        raise
     if delivery.failed and not delivery.sent:
-        # It reached none of their phones: give the day back and fail, so Lambda
-        # retries the firing (a phone that got it never gets it twice).
-        with get_session() as session:
-            session.execute(
-                update(AppUser)
-                .where(col(AppUser.user_id) == event.user_id, col(AppUser.reminded_on) == day)
-                .values(reminded_on=previous)
-            )
-            session.commit()
+        _give_back(event.user_id, day, previous)
         raise ReminderNotSent(f"No phone of {event.user_id} could be reached; retried by Lambda.")
+
+
+def _give_back(user_id: UUID, day: date, previous: date | None) -> None:
+    """Undo the claim on `day`, so a retry sends that day's reminder."""
+    with get_session() as session:
+        session.execute(
+            update(AppUser)
+            .where(col(AppUser.user_id) == user_id, col(AppUser.reminded_on) == day)
+            .values(reminded_on=previous)
+        )
+        session.commit()
 
 
 def handle_event(event: dict[str, Any]) -> dict[str, Any]:

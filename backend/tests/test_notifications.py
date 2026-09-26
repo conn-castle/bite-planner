@@ -457,6 +457,27 @@ def test_a_reminder_that_reached_no_phone_fails_so_it_is_retried(
     assert len(sender.sent) == 2
 
 
+def test_a_reminder_that_failed_before_sending_is_retried(
+    client: TestClient, due_order: date, monkeypatch: pytest.MonkeyPatch, session: Session
+) -> None:
+    def unavailable() -> push.PushSender:
+        raise RuntimeError("Set CASTLE_CHEF_APNS_KEY and CASTLE_CHEF_APNS_KEY_ID.")
+
+    monkeypatch.setattr(push, "get_sender", unavailable)
+    day = due_order - timedelta(days=1)
+
+    with pytest.raises(RuntimeError):
+        reminders.remind(firing(day))
+    session.expire_all()
+    assert session.get_one(AppUser, MOM).reminded_on is None
+
+    # Lambda's retry, once it can send.
+    sender = RecordingSender()
+    monkeypatch.setattr(push, "get_sender", lambda: sender)
+    reminders.remind(firing(day))
+    assert [token for token, _ in sender.sent] == [PHONE]
+
+
 def test_a_reminder_that_reached_one_phone_is_not_sent_again(
     client: TestClient, due_order: date, sender: RecordingSender
 ) -> None:

@@ -224,7 +224,9 @@ class Delivery:
 
 def notify(user_id: UUID, notification: Notification) -> Delivery:
     """Send a notification to each of this user's phones. Failures are logged (an
-    error trips the alarm); phones APNs no longer knows are forgotten."""
+    error trips the alarm); phones APNs no longer knows are forgotten. It raises
+    only before sending to any phone (their phones can't be read, or the sender
+    isn't configured)."""
     fields = {"user_id": str(user_id), "kind": notification.kind}
     with get_session() as session:
         devices = [
@@ -254,15 +256,20 @@ def notify(user_id: UUID, notification: Notification) -> Delivery:
         else:
             # Can also mean a development build's token, or the wrong APNs environment.
             log.warning("push.bad_device_token", extra=device)
-        with get_session() as session:
-            # Only as it was when sent: a phone reported again (or moved to someone
-            # else) meanwhile is kept.
-            session.execute(
-                delete(PushDevice).where(
-                    col(PushDevice.token) == token,
-                    col(PushDevice.user_id) == user_id,
-                    col(PushDevice.updated_at) == seen,
+        try:
+            with get_session() as session:
+                # Only as it was when sent: a phone reported again (or moved to
+                # someone else) meanwhile is kept.
+                session.execute(
+                    delete(PushDevice).where(
+                        col(PushDevice.token) == token,
+                        col(PushDevice.user_id) == user_id,
+                        col(PushDevice.updated_at) == seen,
+                    )
                 )
-            )
-            session.commit()
+                session.commit()
+        except Exception:
+            # Sending has begun: failing now would have it retried for every phone.
+            # APNs will reject the token again next time.
+            log.exception("push.forget_failed", extra=device)
     return Delivery(sent=sent_count, failed=failed_count)

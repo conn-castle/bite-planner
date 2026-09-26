@@ -262,6 +262,15 @@ describe('an order opened from "ideas ready" before fresh data arrived', () => {
     expect(push.loadingIdeas(awaited, shown(2000))).toBe(false)
   })
 
+  it('has the order fetched again, however recently its copy was cached', () => {
+    queryClient.setQueryData(queryKeys.order('d'), { id: 'd' })
+
+    push.awaitIdeas(queryClient, 'd', Date.now())
+
+    expect(queryClient.getQueryState(queryKeys.order('d'))?.isInvalidated).toBe(true)
+    expect(read(push.useAwaitedIdeas)).toMatchObject({ orderId: 'd' })
+  })
+
   it('shows at once when the copy on the phone already has the ideas, or it is another order', () => {
     expect(push.loadingIdeas(awaited, shown(500, true))).toBe(false)
     expect(push.loadingIdeas(awaited, { ...shown(500), id: 'other' })).toBe(false)

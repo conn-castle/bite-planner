@@ -312,8 +312,13 @@ export function useAwaitedIdeas(): AwaitedIdeas | null {
   return useSyncExternalStore(awaitedIdeas.subscribe, awaitedIdeas.get, awaitedIdeas.get)
 }
 
-export function awaitIdeas(orderId: string, since: number) {
+/**
+ * Shows the order as loading its ideas, and has it fetched again when the flow
+ * shows it (a copy cached moments ago would otherwise be kept, and wait forever).
+ */
+export function awaitIdeas(queryClient: QueryClient, orderId: string, since: number) {
   awaitedIdeas.set({ orderId, since })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.order(orderId) })
 }
 
 /** The order is showing as fetched after the tap (or was closed): stop waiting, and log how long it took. */

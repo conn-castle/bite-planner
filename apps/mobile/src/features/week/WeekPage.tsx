@@ -84,7 +84,7 @@ export function WeekPage() {
     const cachedDraft = queryClient.getQueryData<NextOrder>(nextQuery.queryKey)?.draft
     const early = about.kind === 'ideas_ready' && cachedDraft?.id === about.orderId
     if (early) {
-      awaitIdeas(about.orderId, tapped.at)
+      awaitIdeas(queryClient, about.orderId, tapped.at)
       openFlow(about.orderId)
       logger.info('push.tap_opened', { kind: about.kind, open: true, early: true, ms: since(tapped.at) })
     }
