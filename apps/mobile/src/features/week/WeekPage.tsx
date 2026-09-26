@@ -4,8 +4,6 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GroceryOrder, ISODate, NextOrder, PlacedMeal, PlacedOrder } from '../../lib/api/types'
 import { addDays, formatDate, localDate, toLocalDate } from '../../lib/dates'
-import { apiRequest } from '../../lib/api/client'
-import { ApiError } from '../../lib/api/errors'
 import { errorFields, logger } from '../../lib/log'
 import { useNow } from '../../lib/useNow'
 import { IconButton } from '../../ui/Button'
@@ -20,7 +18,14 @@ import { DraftCard } from '../orders/DraftCard'
 import { plural } from '../orders/format'
 import { OrderFlowModal } from '../orders/OrderFlow'
 import { nextQuery, useDiscardOrder, useNextOrder, usePlacedOrders } from '../orders/orders'
-import { clearTapped, type Delivered, tapResult, useTapped, useYourReminder } from '../notifications/notifications'
+import {
+  awaitIdeas,
+  clearTapped,
+  resolveTap,
+  stopAwaitingIdeas,
+  useTapped,
+  useYourReminder,
+} from '../notifications/notifications'
 import { useSession } from '../session/session'
 import { coveringFrom, dayCaption, homeCards, homeStrip } from './home'
 import { NextCard } from './NextCard'
@@ -57,42 +62,55 @@ export function WeekPage() {
     void queryClient.invalidateQueries({ queryKey: nextQuery.queryKey })
   }, [today, queryClient])
 
-  function openFlow() {
+  // The order the flow opens: a notification's, or (undefined) the household's draft, made if there's none.
+  const [flowOrderId, setFlowOrderId] = useState<string>()
+  function openFlow(orderId?: string) {
     setPresentingElement(page.current ?? undefined)
+    setFlowOrderId(orderId)
     setFlowOpen(true)
   }
 
   // A tapped notification lands here: with fresh data, open the draft it's about,
   // if it's still the one to work on. Otherwise Home stays, with a note saying
   // why (its top card has the next step); nothing starts a draft without a tap
-  // in the app.
+  // in the app. "Ideas ready" for the draft already cached opens it at once,
+  // loading its ideas, rather than waiting on the phone's connection.
   const tapped = useTapped()
   useEffect(() => {
-    if (!tapped || tapped.kind === 'test') return
+    if (!tapped || tapped.about.kind === 'test') return
+    const about = tapped.about
     let current = true
-    async function act(about: Exclude<Delivered, { kind: 'test' }>) {
-      const fresh = await queryClient.fetchQuery({ ...nextQuery, staleTime: 0 })
-      const tappedOrder =
-        about.kind === 'ideas_ready' && fresh.draft?.id !== about.orderId
-          ? await apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${about.orderId}`).catch((error: unknown) => {
-              if (error instanceof ApiError && error.status === 404) return 'discarded' as const
-              throw error
-            })
-          : null
-      return tapResult(about, fresh, tappedOrder)
+    const since = (at: number) => Math.round(Date.now() - at)
+    const cachedDraft = queryClient.getQueryData<NextOrder>(nextQuery.queryKey)?.draft
+    const early = about.kind === 'ideas_ready' && cachedDraft?.id === about.orderId
+    if (early) {
+      awaitIdeas(about.orderId, tapped.at)
+      openFlow(about.orderId)
+      logger.info('push.tap_opened', { kind: about.kind, open: true, early: true, ms: since(tapped.at) })
     }
-    act(tapped)
+    resolveTap(about)
       .then((result) => {
         if (!current) return
-        logger.info('push.tap_opened', { kind: tapped.kind, open: result.open })
         clearTapped()
-        if (result.open) openFlow()
-        else void presentAlert({ header: result.header, message: result.message, buttons: ['OK'] })
+        if (early && result.open) return
+        logger.info('push.tap_opened', { kind: about.kind, open: result.open, early, ms: since(tapped.at) })
+        if (result.open) {
+          openFlow(result.orderId)
+          return
+        }
+        // Opened early, but the draft is gone or placed: close it and say why.
+        if (early) {
+          stopAwaitingIdeas('closed')
+          setFlowOpen(false)
+        }
+        void presentAlert({ header: result.header, message: result.message, buttons: ['OK'] })
       })
       .catch((error: unknown) => {
         if (!current) return
-        logger.warn('push.tap_failed', errorFields(error))
+        logger.warn('push.tap_failed', { ...errorFields(error), ms: since(tapped.at) })
         clearTapped()
+        // Opened early, the flow shows its own problem (and keeps trying).
+        if (early) return
         void presentAlert({
           header: "Couldn't open the order",
           message: error instanceof Error ? error.message : String(error),
@@ -130,7 +148,7 @@ export function WeekPage() {
       overline={toLocalDate(today).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
       actions={
         // Opens the flow, which continues the household's draft or starts one.
-        <IconButton variant="white" aria-label={next.data?.draft ? 'Continue order' : 'New order'} onClick={openFlow}>
+        <IconButton variant="white" aria-label={next.data?.draft ? 'Continue order' : 'New order'} onClick={() => openFlow()}>
           <Icon name="plus" />
         </IconButton>
       }
@@ -165,7 +183,7 @@ export function WeekPage() {
           next={next.data}
           placed={placed.data}
           today={today}
-          onStart={openFlow}
+          onStart={() => openFlow()}
           onDiscard={confirmDiscard}
           discarding={discard.isPending}
           onOpenOrder={(orderId) => router.push(`/week/orders/${orderId}`)}
@@ -173,7 +191,12 @@ export function WeekPage() {
         />
       )}
 
-      <OrderFlowModal isOpen={flowOpen} onDismiss={() => setFlowOpen(false)} presentingElement={presentingElement} />
+      <OrderFlowModal
+        isOpen={flowOpen}
+        onDismiss={() => setFlowOpen(false)}
+        presentingElement={presentingElement}
+        orderId={flowOrderId}
+      />
     </Page>
   )
 }

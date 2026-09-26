@@ -4,7 +4,7 @@ import { type ActionPerformed, PushNotifications, type PushNotificationSchema } 
 import { MutationObserver, type QueryClient } from '@tanstack/react-query'
 import { useSyncExternalStore } from 'react'
 import { apiRequest } from '../../lib/api/client'
-import { isRetryable } from '../../lib/api/errors'
+import { ApiError, isRetryable } from '../../lib/api/errors'
 import type { GroceryOrder, NextOrder } from '../../lib/api/types'
 import { isRecord } from '../../lib/isRecord'
 import { errorFields, logger } from '../../lib/log'
@@ -222,7 +222,7 @@ export function parseDelivered(data: unknown): Delivered | null {
  * the tap doesn't seem to do nothing. `tappedOrder` is the order an "ideas
  * ready" was about, when it's no longer the draft ('discarded' once it's gone).
  */
-export type TapResult = { open: true } | { open: false; header: string; message: string }
+export type TapResult = { open: true; orderId: string } | { open: false; header: string; message: string }
 
 export function tapResult(
   tapped: Exclude<Delivered, { kind: 'test' }>,
@@ -233,7 +233,7 @@ export function tapResult(
     const number = tapped.orderNumber
     if (next.number === number) {
       return next.draft
-        ? { open: true }
+        ? { open: true, orderId: next.draft.id }
         : {
             open: false,
             header: `Order ${number} isn't started yet`,
@@ -248,7 +248,7 @@ export function tapResult(
         }
       : { open: false, header: `Order ${number} isn't open`, message: "Home shows what's next." }
   }
-  if (next.draft?.id === tapped.orderId) return { open: true }
+  if (next.draft?.id === tapped.orderId) return { open: true, orderId: tapped.orderId }
   if (tappedOrder === 'discarded') {
     return {
       open: false,
@@ -266,11 +266,75 @@ export function tapResult(
   return { open: false, header: "That order isn't open", message: "Home shows what's next." }
 }
 
-/** A notification the member tapped, waiting for Home to act on it (see WeekPage). */
-const tapped = store<Delivered | null>(null)
+/**
+ * Works out what a tap leads to from the server's current state: fetched here,
+ * not through the next-order query, which another request (e.g. the flow's own
+ * saving) may cancel.
+ */
+export async function resolveTap(about: Exclude<Delivered, { kind: 'test' }>): Promise<TapResult> {
+  const next = await apiRequest<NextOrder>('GET', '/v1/grocery-orders/next')
+  const tappedOrder =
+    about.kind === 'ideas_ready' && next.draft?.id !== about.orderId
+      ? await apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${about.orderId}`).catch((error: unknown) => {
+          if (error instanceof ApiError && error.status === 404) return 'discarded' as const
+          throw error
+        })
+      : null
+  return tapResult(about, next, tappedOrder)
+}
 
-export function useTapped(): Delivered | null {
+/** A notification the member tapped: what it's about, and when (to log how long opening it takes). */
+export interface Tap {
+  about: Delivered
+  at: number
+}
+
+/** A tap waiting for Home to act on it (see WeekPage). */
+const tapped = store<Tap | null>(null)
+
+export function useTapped(): Tap | null {
   return useSyncExternalStore(tapped.subscribe, tapped.get, tapped.get)
+}
+
+/**
+ * The draft an "ideas ready" tap opened before fresh data arrived (the phone's
+ * connection can take seconds after waking): shown as loading its ideas, not as
+ * the copy from before they were ready, until it's fetched again after `since`.
+ */
+export interface AwaitedIdeas {
+  orderId: string
+  since: number
+}
+
+const awaitedIdeas = store<AwaitedIdeas | null>(null)
+
+export function useAwaitedIdeas(): AwaitedIdeas | null {
+  return useSyncExternalStore(awaitedIdeas.subscribe, awaitedIdeas.get, awaitedIdeas.get)
+}
+
+export function awaitIdeas(orderId: string, since: number) {
+  awaitedIdeas.set({ orderId, since })
+}
+
+/** The order is showing as fetched after the tap (or was closed): stop waiting, and log how long it took. */
+export function stopAwaitingIdeas(outcome: 'shown' | 'closed') {
+  const awaited = awaitedIdeas.get()
+  if (!awaited) return
+  awaitedIdeas.set(null)
+  logger.info('push.ideas_awaited', { outcome, ms: Date.now() - awaited.since })
+}
+
+/**
+ * Whether the flow shows an order as loading its ideas: an "ideas ready" tap
+ * opened it and it hasn't been fetched since (a placeholder, or data older than
+ * the tap), with no ideas in it yet.
+ */
+export function loadingIdeas(
+  awaited: AwaitedIdeas | null,
+  order: { id: string; hasIdeas: boolean; placeholder: boolean; fetchedAt: number },
+): boolean {
+  if (!awaited || awaited.orderId !== order.id || order.hasIdeas) return false
+  return order.placeholder || order.fetchedAt < awaited.since
 }
 
 /** Home has acted on the tap (or decided there's nothing to open): it's done. */
@@ -301,7 +365,7 @@ export function dismissToast() {
 /** Tapping the in-app toast: the same as tapping the notification. */
 export function tapToast(shown: Toast) {
   toast.set(null)
-  tapped.set(shown.delivered)
+  tapped.set({ about: shown.delivered, at: Date.now() })
 }
 
 // Whether the order flow is open: "ideas ready" needs no toast then (the ideas are showing).
@@ -330,7 +394,7 @@ function tappedNotification(action: ActionPerformed) {
   const delivered = parseDelivered(action.notification.data)
   logger.info('push.tapped', { kind: delivered?.kind ?? null })
   // A test notification only opens the app.
-  if (delivered && delivered.kind !== 'test') tapped.set(delivered)
+  if (delivered && delivered.kind !== 'test') tapped.set({ about: delivered, at: Date.now() })
 }
 
 /**

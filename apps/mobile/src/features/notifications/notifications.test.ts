@@ -217,14 +217,14 @@ describe('a notification arriving while the app is open', () => {
     push.tapToast(toast)
 
     expect(currentToast()).toBeNull()
-    expect(currentTapped()).toEqual({ kind: 'ideas_ready', orderId: 'draft' })
+    expect(currentTapped()).toEqual({ about: { kind: 'ideas_ready', orderId: 'draft' }, at: expect.any(Number) })
   })
 })
 
 describe('a tapped notification', () => {
   it('waits for Home to open what it is about', () => {
     fire('pushNotificationActionPerformed', { notification: { data: { kind: 'reminder', order_number: 4 } } })
-    expect(currentTapped()).toEqual({ kind: 'reminder', orderNumber: 4 })
+    expect(currentTapped()).toEqual({ about: { kind: 'reminder', orderNumber: 4 }, at: expect.any(Number) })
 
     push.clearTapped()
     expect(currentTapped()).toBeNull()
@@ -250,6 +250,24 @@ function read<T>(hook: () => T, wrap = (children: ReturnType<typeof createElemen
 
 const currentToast = () => read(push.useToast)
 const currentTapped = () => read(push.useTapped)
+
+describe('an order opened from "ideas ready" before fresh data arrived', () => {
+  const awaited = { orderId: 'd', since: 1000 }
+  const shown = (fetchedAt: number, hasIdeas = false, placeholder = false) => ({ id: 'd', hasIdeas, placeholder, fetchedAt })
+
+  it('shows as loading its ideas until it has been fetched since the tap', () => {
+    expect(push.loadingIdeas(awaited, shown(500))).toBe(true)
+    expect(push.loadingIdeas(awaited, shown(2000, false, true))).toBe(true)
+    // Fetched since: shown as it is, ideas or not (a failed batch shows why).
+    expect(push.loadingIdeas(awaited, shown(2000))).toBe(false)
+  })
+
+  it('shows at once when the copy on the phone already has the ideas, or it is another order', () => {
+    expect(push.loadingIdeas(awaited, shown(500, true))).toBe(false)
+    expect(push.loadingIdeas(awaited, { ...shown(500), id: 'other' })).toBe(false)
+    expect(push.loadingIdeas(null, shown(500))).toBe(false)
+  })
+})
 
 describe('what a tap leads to', () => {
   const draft = (id: string, number: number, status: 'draft' | 'placed' = 'draft'): GroceryOrder => ({
@@ -277,8 +295,14 @@ describe('what a tap leads to', () => {
   })
 
   it('opens the order flow when the draft is the one it is about', () => {
-    expect(push.tapResult({ kind: 'reminder', orderNumber: 4 }, next(4, draft('d', 4)), null)).toEqual({ open: true })
-    expect(push.tapResult({ kind: 'ideas_ready', orderId: 'd' }, next(4, draft('d', 4)), null)).toEqual({ open: true })
+    expect(push.tapResult({ kind: 'reminder', orderNumber: 4 }, next(4, draft('d', 4)), null)).toEqual({
+      open: true,
+      orderId: 'd',
+    })
+    expect(push.tapResult({ kind: 'ideas_ready', orderId: 'd' }, next(4, draft('d', 4)), null)).toEqual({
+      open: true,
+      orderId: 'd',
+    })
   })
 
   it('says why not when the reminder is for an order placed since, or not started', () => {
@@ -290,6 +314,34 @@ describe('what a tap leads to', () => {
       open: false,
       header: "Order 4 isn't started yet",
     })
+  })
+
+  it("is worked out from the server's current next order, asking after the tapped order only when needed", async () => {
+    // The module's own copy (modules are fresh for each test).
+    const { ApiError } = await import('../../lib/api/errors')
+    request.mockImplementation(async (_method, path) => {
+      if (path === '/v1/grocery-orders/next') return next(5, null)
+      throw new ApiError(404, 'Not found.')
+    })
+
+    await expect(push.resolveTap({ kind: 'ideas_ready', orderId: 'd' })).resolves.toMatchObject({
+      open: false,
+      header: 'That draft was discarded',
+    })
+    expect(request.mock.calls).toEqual([
+      ['GET', '/v1/grocery-orders/next'],
+      ['GET', '/v1/grocery-orders/d'],
+    ])
+
+    request.mockReset()
+    request.mockResolvedValue(next(4, draft('d', 4)))
+    await expect(push.resolveTap({ kind: 'reminder', orderNumber: 4 })).resolves.toEqual({ open: true, orderId: 'd' })
+    expect(request.mock.calls).toEqual([['GET', '/v1/grocery-orders/next']])
+  })
+
+  it('fails when the server cannot be reached, rather than guessing', async () => {
+    request.mockRejectedValue(new TypeError('Load failed'))
+    await expect(push.resolveTap({ kind: 'reminder', orderNumber: 4 })).rejects.toThrow('Load failed')
   })
 
   it('says why not when the ideas were for a draft discarded or placed since', () => {

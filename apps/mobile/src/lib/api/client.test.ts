@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../auth/auth', () => ({ auth: { getToken: async () => 'token' } }))
+const logged = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
+vi.mock('../log', () => ({
+  logger: logged,
+  errorFields: (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+}))
 
 const fetchMock = vi.fn<typeof fetch>()
 
 beforeEach(() => {
   fetchMock.mockReset()
+  for (const log of Object.values(logged)) log.mockReset()
   vi.stubGlobal('fetch', fetchMock)
   vi.stubEnv('VITE_API_URL', 'https://api.example.test/')
 })
@@ -62,5 +68,71 @@ describe('apiRequest', () => {
 
     await expect(failure).rejects.toBeInstanceOf(ApiError)
     await expect(failure).rejects.toMatchObject({ status: 429, message: 'A batch is already running.' })
+  })
+})
+
+describe('request logging', () => {
+  const ORDER = '701c7fd5-b606-4c7f-a420-27c59be911cc'
+
+  it('logs a request that fails to reach the server, with how long it took and no ids', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Load failed'))
+    const { apiRequest } = await import('./client')
+
+    await expect(apiRequest('GET', `/v1/grocery-orders/${ORDER}?x=1`)).rejects.toThrow('Load failed')
+
+    expect(logged.warn).toHaveBeenCalledWith('api.request_failed', {
+      method: 'GET',
+      route: '/v1/grocery-orders/{id}',
+      ms: expect.any(Number),
+      error: 'Load failed',
+    })
+  })
+
+  it('logs a refused request with its status, keeping device tokens out', async () => {
+    fetchMock.mockResolvedValue(Response.json({ detail: 'Nope.' }, { status: 409 }))
+    const { apiRequest } = await import('./client')
+
+    await expect(apiRequest('PUT', `/v1/me/devices/${'ab'.repeat(32)}`)).rejects.toThrow('Nope.')
+
+    expect(logged.warn).toHaveBeenCalledWith('api.request_failed', {
+      method: 'PUT',
+      route: '/v1/me/devices/{token}',
+      ms: expect.any(Number),
+      status: 409,
+    })
+  })
+
+  it('logs an answer that breaks off while it arrives', async () => {
+    fetchMock.mockResolvedValue(new Response('{"id": "o', { status: 200 }))
+    const { apiRequest } = await import('./client')
+
+    await expect(apiRequest('GET', '/v1/grocery-orders/next')).rejects.toThrow()
+
+    expect(logged.warn).toHaveBeenCalledTimes(1)
+    expect(logged.warn.mock.calls[0]?.[0]).toBe('api.request_failed')
+  })
+
+  it('logs a slow request, and nothing for a quick one or the log upload itself', async () => {
+    const { apiRequest } = await import('./client')
+    const clock = vi.spyOn(performance, 'now')
+
+    clock.mockReturnValueOnce(0).mockReturnValue(4500)
+    fetchMock.mockResolvedValue(Response.json({}))
+    await apiRequest('GET', '/v1/grocery-orders/next')
+    expect(logged.info).toHaveBeenCalledWith('api.request_slow', {
+      method: 'GET',
+      route: '/v1/grocery-orders/next',
+      ms: 4500,
+    })
+
+    logged.info.mockReset()
+    clock.mockReturnValueOnce(0).mockReturnValue(100)
+    fetchMock.mockResolvedValue(Response.json({}))
+    await apiRequest('GET', '/v1/grocery-orders/next')
+    fetchMock.mockRejectedValue(new TypeError('Load failed'))
+    await expect(apiRequest('POST', '/v1/logs', {})).rejects.toThrow()
+    expect(logged.info).not.toHaveBeenCalled()
+    expect(logged.warn).not.toHaveBeenCalled()
+    clock.mockRestore()
   })
 })

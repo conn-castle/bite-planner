@@ -10,7 +10,7 @@ import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
 import { Skeleton } from '../../ui/Skeleton'
 import { MealPage } from '../meals/MealPage'
-import { setOrderFlowOpen } from '../notifications/notifications'
+import { loadingIdeas, setOrderFlowOpen, stopAwaitingIdeas, useAwaitedIdeas } from '../notifications/notifications'
 import { suggestions } from './batches'
 import { DatesStep } from './DatesStep'
 import { FlowFrame } from './FlowFrame'
@@ -29,6 +29,11 @@ interface OrderFlowModalProps {
   onDismiss: () => void
   /** The page the card modal slides over. */
   presentingElement: HTMLElement | undefined
+  /**
+   * Opens this order as it is, rather than the household's draft (made if there's
+   * none): a notification's, which must never start a new one.
+   */
+  orderId?: string
 }
 
 /**
@@ -36,7 +41,7 @@ interface OrderFlowModalProps {
  * or a swipe down) keeps the household's draft to resume later. A recipe opens
  * inside the card, on its own navigation stack.
  */
-export function OrderFlowModal({ isOpen, onDismiss, presentingElement }: OrderFlowModalProps) {
+export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId }: OrderFlowModalProps) {
   const queryClient = useQueryClient()
   const modal = useRef<HTMLIonModalElement>(null)
   const nav = useRef<HTMLIonNavElement>(null)
@@ -47,18 +52,21 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement }: OrderFl
     return () => setOrderFlowOpen(false)
   }, [isOpen])
 
-  // Stable, or the nav would start over: it resets whenever its root changes.
+  // Stable while open, or the nav would start over: it resets whenever its root
+  // changes (the order it opens changes only as it opens, or for a new notification).
   const root = useCallback(
     () => (
       <OrderFlow
+        orderId={orderId}
         onClose={() => void modal.current?.dismiss()}
         onOpenMeal={(mealId, servings) => void openMeal(nav.current, mealId, servings)}
       />
     ),
-    [],
+    [orderId],
   )
 
   function dismissed() {
+    stopAwaitingIdeas('closed')
     // The flow kept its own copy of the order current; the next order's may be out of date.
     void queryClient.invalidateQueries({ queryKey: nextQuery.queryKey })
     onDismiss()
@@ -88,19 +96,37 @@ type Step = 'pick' | 'dates'
 type OpenMeal = (mealId: string, servings?: number) => void
 
 interface OrderFlowProps {
+  /** This order, as it is; otherwise the household's draft, made if there's none. */
+  orderId: string | undefined
   onClose: () => void
   onOpenMeal: OpenMeal
 }
 
-/** Opens the household's draft (creating it if needed) and shows the step it is at. */
-function OrderFlow({ onClose, onOpenMeal }: OrderFlowProps) {
+/** Opens the household's draft (creating it if needed), or the order given, and shows the step it is at. */
+function OrderFlow({ orderId, onClose, onOpenMeal }: OrderFlowProps) {
   const open = useOpenOrder()
   const { mutate: openOrder } = open
   // The household's draft shows at once when it's cached, while opening it confirms it (or makes one).
   const cachedDraftId = useNextOrder().data?.draft?.id
-  const order = useOrder(open.data?.id ?? cachedDraftId)
+  const order = useOrder(orderId ?? open.data?.id ?? cachedDraftId)
   const { refetch } = order
   const [step, setStep] = useState<Step>('pick')
+  // Opened from "ideas ready" before fresh data arrived: loading its ideas, not
+  // the copy from before they were ready.
+  const awaited = useAwaitedIdeas()
+  const shownOrder = order.shown
+  const loading =
+    shownOrder !== undefined &&
+    loadingIdeas(awaited, {
+      id: shownOrder.id,
+      hasIdeas: suggestions(shownOrder).length > 0,
+      placeholder: order.isPlaceholderData,
+      fetchedAt: order.dataUpdatedAt,
+    })
+  const awaitedOrder = awaited?.orderId
+  useEffect(() => {
+    if (awaitedOrder !== undefined && shownOrder?.id === awaitedOrder && !loading) stopAwaitingIdeas('shown')
+  }, [awaitedOrder, shownOrder, loading])
 
   // A new day moves the earliest delivery date: fetch the order's limits again.
   const today = localDate(useNow(DAY_CHECK_MS))
@@ -111,13 +137,14 @@ function OrderFlow({ onClose, onOpenMeal }: OrderFlowProps) {
     void refetch()
   }, [today, refetch])
 
-  // Opening the flow gets or creates the draft, once (a development re-mount must not repeat it).
+  // Opening the flow gets or creates the draft, once (a development re-mount must
+  // not repeat it); a given order is only fetched.
   const opened = useRef(false)
   useEffect(() => {
-    if (opened.current) return
+    if (opened.current || orderId !== undefined) return
     opened.current = true
     openOrder({ jobId: crypto.randomUUID() })
-  }, [openOrder])
+  }, [openOrder, orderId])
 
   // A discarded draft wins over the copy still on screen, once opening has settled
   // (it may be making a new draft to replace a cached one that's gone).
@@ -135,12 +162,17 @@ function OrderFlow({ onClose, onOpenMeal }: OrderFlowProps) {
     ) : null
     return (
       <FlowNotice value={notice}>
-        <OrderStep order={order.shown} step={step} setStep={setStep} onClose={onClose} onOpenMeal={onOpenMeal} />
+        {loading ? (
+          <FlowLoading onClose={onClose} label="Loading your meal ideas…" />
+        ) : (
+          <OrderStep order={order.shown} step={step} setStep={setStep} onClose={onClose} onOpenMeal={onOpenMeal} />
+        )}
       </FlowNotice>
     )
   }
 
   const problem = open.error ?? order.error
+  if (!gone && !problem) return <FlowLoading onClose={onClose} />
   return (
     <FlowFrame
       step={null}
@@ -157,22 +189,44 @@ function OrderFlow({ onClose, onOpenMeal }: OrderFlowProps) {
             This draft is gone: someone in your household discarded it.
           </Notice>
         </div>
-      ) : problem ? (
+      ) : (
         <div className={styles.problem}>
-          <Notice action={<button onClick={() => openOrder({ jobId: crypto.randomUUID() })}>Try again</button>}>
-            Couldn't open the order: {problem.message}
+          <Notice
+            action={
+              // A given order is fetched again, never made.
+              <button onClick={() => (orderId ? void refetch() : openOrder({ jobId: crypto.randomUUID() }))}>
+                Try again
+              </button>
+            }
+          >
+            Couldn't open the order: {problem?.message}
           </Notice>
         </div>
-      ) : (
-        <div className={styles.loading} aria-busy="true">
-          <Skeleton height={36} width="60%" radius={10} />
-          <Skeleton height={18} width="90%" radius={8} />
-          <div className={styles.grid}>
-            <Skeleton height={190} />
-            <Skeleton height={190} />
-          </div>
-        </div>
       )}
+    </FlowFrame>
+  )
+}
+
+/** The flow while its order loads: the shape of the meals to come, and what it's waiting for, if said. */
+function FlowLoading({ onClose, label }: { onClose: () => void; label?: string }) {
+  return (
+    <FlowFrame
+      step={null}
+      onClose={onClose}
+      footer={
+        <Button variant="secondary" block onClick={onClose}>
+          Close
+        </Button>
+      }
+    >
+      <div className={styles.loading} aria-busy="true">
+        {label ? <p className={styles.label}>{label}</p> : <Skeleton height={36} width="60%" radius={10} />}
+        <Skeleton height={18} width="90%" radius={8} />
+        <div className={styles.grid}>
+          <Skeleton height={190} />
+          <Skeleton height={190} />
+        </div>
+      </div>
     </FlowFrame>
   )
 }
