@@ -2,6 +2,7 @@ import { IonLabel, IonPage, IonRouterOutlet, IonTabBar, IonTabButton, IonTabs } 
 import { Navigate, Route, useParams, useSearchParams } from 'react-router-dom'
 import { HistoryPage } from '../features/history/HistoryPage'
 import { MealPage } from '../features/meals/MealPage'
+import { PushHost } from '../features/notifications/PushHost'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { SERVINGS } from '../lib/api/limits'
 import { OrderPage } from '../features/week/OrderPage'
@@ -19,55 +20,58 @@ const TABS: { tab: string; label: string; icon: IconName }[] = [
 export function Tabs() {
   useWarmCaches()
   return (
-    <IonTabs>
-      <IonRouterOutlet>
-        <Route path="/week" element={<WeekPage />} />
-        {/* Pages pushed in the Orders and History tabs; NavPage explains the IonPage around them. */}
-        <Route
-          path="/week/orders/:orderId"
-          element={
-            <IonPage>
-              <OrderPage tab={{ href: '/week', backLabel: 'Orders' }} />
-            </IonPage>
-          }
-        />
-        <Route
-          path="/week/meals/:mealId"
-          element={
-            <IonPage>
-              <RoutedMeal href="/week" />
-            </IonPage>
-          }
-        />
-        <Route path="/history" element={<HistoryPage />} />
-        <Route
-          path="/history/orders/:orderId"
-          element={
-            <IonPage>
-              <OrderPage tab={{ href: '/history', backLabel: 'History' }} />
-            </IonPage>
-          }
-        />
-        <Route
-          path="/history/meals/:mealId"
-          element={
-            <IonPage>
-              <RoutedMeal href="/history" />
-            </IonPage>
-          }
-        />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<Navigate to="/week" replace />} />
-      </IonRouterOutlet>
-      <IonTabBar slot="bottom">
-        {TABS.map(({ tab, label, icon }) => (
-          <IonTabButton key={tab} tab={tab} href={`/${tab}`}>
-            <Icon name={icon} />
-            <IonLabel>{label}</IonLabel>
-          </IonTabButton>
-        ))}
-      </IonTabBar>
-    </IonTabs>
+    <>
+      <PushHost />
+      <IonTabs>
+        <IonRouterOutlet>
+          <Route path="/week" element={<WeekPage />} />
+          {/* Pages pushed in the Orders and History tabs; NavPage explains the IonPage around them. */}
+          <Route
+            path="/week/orders/:orderId"
+            element={
+              <IonPage>
+                <OrderPage tab={{ href: '/week', backLabel: 'Orders' }} />
+              </IonPage>
+            }
+          />
+          <Route
+            path="/week/meals/:mealId"
+            element={
+              <IonPage>
+                <RoutedMeal href="/week" />
+              </IonPage>
+            }
+          />
+          <Route path="/history" element={<HistoryPage />} />
+          <Route
+            path="/history/orders/:orderId"
+            element={
+              <IonPage>
+                <OrderPage tab={{ href: '/history', backLabel: 'History' }} />
+              </IonPage>
+            }
+          />
+          <Route
+            path="/history/meals/:mealId"
+            element={
+              <IonPage>
+                <RoutedMeal href="/history" />
+              </IonPage>
+            }
+          />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/week" replace />} />
+        </IonRouterOutlet>
+        <IonTabBar slot="bottom">
+          {TABS.map(({ tab, label, icon }) => (
+            <IonTabButton key={tab} tab={tab} href={`/${tab}`}>
+              <Icon name={icon} />
+              <IonLabel>{label}</IonLabel>
+            </IonTabButton>
+          ))}
+        </IonTabBar>
+      </IonTabs>
+    </>
   )
 }
 

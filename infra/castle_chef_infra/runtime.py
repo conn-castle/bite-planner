@@ -3,6 +3,7 @@
   app ─► API Lambda (Function URL) ─► Neon; SQS jobs queue
          jobs queue ─► EventBridge Pipe ─► one Fargate worker task per job
          failures (jobs DLQ, ECS "task stopped") ─► failure-handler Lambda
+  one EventBridge Scheduler schedule per member ─► Reminders Lambda ─► APNs
          CloudWatch alarms ─► SNS email
 
 Nothing runs or polls while idle.
@@ -25,6 +26,7 @@ from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_lambda_event_sources as lambda_event_sources
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_pipes as pipes
+from aws_cdk import aws_scheduler as scheduler
 from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sns_subscriptions as sns_subscriptions
 from aws_cdk import aws_sqs as sqs
@@ -35,6 +37,9 @@ WORKER_CONTAINER = "worker"  # castle_chef.failures.WORKER_CONTAINER
 AGENT_UID = 65532  # the image's agent user (CASTLE_CHEF_AGENT_UID)
 GROK_AUTH_DIR = "/mnt/agent-auth/grok"
 LOG_RETENTION = logs.RetentionDays.THREE_MONTHS
+# The APNs auth key (Production, topic com.conncastle.castlechef) and its id.
+APNS_KEY_PARAMETER = "/castle-chef/shared/apns-key-base64"
+APNS_KEY_ID_PARAMETER = "/castle-chef/shared/apns-key-id"
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,12 @@ class RuntimeStack(Stack):
 
         database_url = ssm.StringParameter.from_secure_string_parameter_attributes(
             self, "DatabaseUrl", parameter_name=config.database_url_parameter
+        )
+        apns_key = ssm.StringParameter.from_secure_string_parameter_attributes(
+            self, "ApnsKey", parameter_name=APNS_KEY_PARAMETER
+        )
+        apns_key_id = ssm.StringParameter.from_string_parameter_name(
+            self, "ApnsKeyId", string_parameter_name=APNS_KEY_ID_PARAMETER
         )
 
         # Network: public subnets only, no NAT (nothing to pay for while idle).
@@ -169,9 +180,16 @@ class RuntimeStack(Stack):
             linux_parameters=linux,
             stop_timeout=Duration.seconds(120),
             logging=ecs.LogDriver.aws_logs(stream_prefix="worker", log_group=worker_logs),
-            secrets={"DATABASE_URL": ecs.Secret.from_ssm_parameter(database_url)},
+            # The agent the worker starts never gets these (worker.py).
+            secrets={
+                "DATABASE_URL": ecs.Secret.from_ssm_parameter(database_url),
+                "CASTLE_CHEF_APNS_KEY": ecs.Secret.from_ssm_parameter(apns_key),
+                "CASTLE_CHEF_APNS_KEY_ID": ecs.Secret.from_ssm_parameter(apns_key_id),
+            },
             environment={
                 "CASTLE_CHEF_RELEASE": config.release,
+                # "Your meal ideas are ready", when a batch succeeds.
+                "CASTLE_CHEF_PUSH": "apns",
                 "GROK_AUTH_PATH": f"{GROK_AUTH_DIR}/auth.json",
                 "CASTLE_CHEF_AGENT_LOCK_FILE": f"{GROK_AUTH_DIR}/agent.lock",
             },
@@ -333,6 +351,98 @@ class RuntimeStack(Stack):
             targets=[events_targets.LambdaFunction(failure_handler)],
         )
 
+        # Reminders: one schedule per member (created by the API, not here) invokes
+        # this function at their notification time; it sends through APNs.
+        reminders_name = f"{self.stack_name}-Reminders"
+        # Named, so the API and the function itself can be told its ARN without a
+        # circular reference.
+        reminders_arn = f"arn:aws:lambda:{self.region}:{self.account}:function:{reminders_name}"
+        schedule_group = scheduler.CfnScheduleGroup(
+            self, "ReminderSchedules", name=f"{self.stack_name}-reminders"
+        )
+        scheduler_role = iam.Role(
+            self,
+            "SchedulerRole",
+            assumed_by=iam.ServicePrincipal(
+                "scheduler.amazonaws.com",
+                conditions={"StringEquals": {"aws:SourceAccount": self.account}},
+            ),
+        )
+        scheduler_role.add_to_policy(
+            iam.PolicyStatement(actions=["lambda:InvokeFunction"], resources=[reminders_arn])
+        )
+        scheduler_environment = {
+            "CASTLE_CHEF_REMINDER_SCHEDULER": "aws",
+            "CASTLE_CHEF_REMINDER_SCHEDULE_GROUP": schedule_group.name or "",
+            "CASTLE_CHEF_REMINDER_FUNCTION_ARN": reminders_arn,
+            "CASTLE_CHEF_REMINDER_ROLE_ARN": scheduler_role.role_arn,
+        }
+        manage_schedules = [
+            iam.PolicyStatement(
+                actions=[
+                    "scheduler:CreateSchedule",
+                    "scheduler:UpdateSchedule",
+                    "scheduler:DeleteSchedule",
+                    "scheduler:GetSchedule",
+                ],
+                resources=[
+                    f"arn:aws:scheduler:{self.region}:{self.account}:schedule/{schedule_group.name}/*"
+                ],
+            ),
+            iam.PolicyStatement(
+                actions=["iam:PassRole"],
+                resources=[scheduler_role.role_arn],
+                conditions={"StringEquals": {"iam:PassedToService": "scheduler.amazonaws.com"}},
+            ),
+        ]
+        reminders_logs = logs.LogGroup(self, "RemindersLogs", retention=LOG_RETENTION)
+        reminders = lambda_.DockerImageFunction(
+            self,
+            "Reminders",
+            function_name=reminders_name,
+            code=lambda_.DockerImageCode.from_ecr(
+                repositories["api"], tag_or_digest=config.api_image_digest
+            ),
+            architecture=lambda_.Architecture.X86_64,
+            memory_size=512,
+            timeout=Duration.seconds(60),
+            reserved_concurrent_executions=2,
+            log_group=reminders_logs,
+            # Scheduler invokes it asynchronously: Lambda's own retries of a
+            # failed firing, and how late it may still run one.
+            retry_attempts=2,
+            max_event_age=Duration.minutes(15),
+            environment=common_environment
+            | scheduler_environment
+            | {
+                "CASTLE_CHEF_SSM_PARAMETERS": json.dumps(
+                    {
+                        "DATABASE_URL": config.database_url_parameter,
+                        "CASTLE_CHEF_APNS_KEY": APNS_KEY_PARAMETER,
+                        "CASTLE_CHEF_APNS_KEY_ID": APNS_KEY_ID_PARAMETER,
+                    }
+                ),
+                "CASTLE_CHEF_REMINDERS_HANDLER": "true",
+                "CASTLE_CHEF_PUSH": "apns",
+                "AWS_LWA_PASS_THROUGH_PATH": "/events",
+                # A failed firing fails the invocation, so Lambda retries it (the
+                # adapter otherwise returns the error response as a success).
+                "AWS_LWA_ERROR_STATUS_CODES": "500-599",
+            },
+        )
+        for grant in (database_url, apns_key, apns_key_id):
+            grant.grant_read(reminders)
+        for statement in manage_schedules:
+            reminders.add_to_role_policy(statement)
+            api.add_to_role_policy(statement)
+        # The deploy's sync finds schedules left by removed members (the action
+        # only takes "*").
+        reminders.add_to_role_policy(
+            iam.PolicyStatement(actions=["scheduler:ListSchedules"], resources=["*"])
+        )
+        for name, value in scheduler_environment.items():
+            api.add_environment(name, value)
+
         # Alarms → email. Unexpected problems log at error level everywhere.
         alarms = sns.Topic(self, "Alarms", display_name="Castle Chef alarms")
         alarms.add_subscription(sns_subscriptions.EmailSubscription(config.alarm_email))
@@ -341,6 +451,7 @@ class RuntimeStack(Stack):
             "Api": api_logs,
             "Worker": worker_logs,
             "FailureHandler": failures_logs,
+            "Reminders": reminders_logs,
         }.items():
             errors = logs.MetricFilter(
                 self,
@@ -360,7 +471,11 @@ class RuntimeStack(Stack):
                 f"Castle Chef {name.lower()} logged an error",
                 notify,
             )
-        for name, function in {"Api": api, "FailureHandler": failure_handler}.items():
+        for name, function in {
+            "Api": api,
+            "FailureHandler": failure_handler,
+            "Reminders": reminders,
+        }.items():
             self._alarm(
                 f"{name}LambdaErrors",
                 function.metric_errors(period=Duration.minutes(5)),
@@ -380,7 +495,25 @@ class RuntimeStack(Stack):
             notify,
         )
 
+        for metric_name, description in {
+            "TargetErrorCount": "Castle Chef reminder schedules could not invoke Reminders",
+            "InvocationDroppedCount": "Castle Chef reminder schedules dropped a reminder",
+        }.items():
+            self._alarm(
+                f"Reminders{metric_name}",
+                cloudwatch.Metric(
+                    namespace="AWS/Scheduler",
+                    metric_name=metric_name,
+                    dimensions_map={"ScheduleGroup": schedule_group.name or ""},
+                    statistic="Sum",
+                    period=Duration.minutes(5),
+                ),
+                description,
+                notify,
+            )
+
         self.api_url = api_url.url
+        self.reminders = reminders
         self.cluster = cluster
         self.pipe_name = pipe.ref
         self.worker = worker

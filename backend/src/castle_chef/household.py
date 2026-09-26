@@ -130,6 +130,14 @@ def invite(session: Session, email: str, name: str, household_name: str) -> UUID
     return user_id
 
 
+def member_id(session: Session, email: str) -> UUID:
+    """The id of the household member with this email."""
+    user_id = _auth_user_id(session, email)
+    if user_id is None or session.get(AppUser, user_id) is None:
+        raise HouseholdError(f"{email} isn't in a household.")
+    return user_id
+
+
 def remove(session: Session, email: str) -> None:
     """Remove from their household and delete the Neon Auth account."""
     user_id = _auth_user_id(session, email)

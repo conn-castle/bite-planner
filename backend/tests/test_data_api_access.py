@@ -42,6 +42,9 @@ INSERTS = {
         "INSERT INTO meal_ingredient (id, meal_id, position, name) "
         f"VALUES ('{uuid4()}', '{uuid4()}', 0, 'beef')"
     ),
+    "push_device": (
+        f"INSERT INTO push_device (token, user_id) VALUES ('{'ab' * 32}', '{uuid4()}')"
+    ),
     "meal_preference": (
         "INSERT INTO meal_preference (household_id, meal_id, rating) "
         f"VALUES ('{uuid4()}', '{uuid4()}', 'up')"

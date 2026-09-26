@@ -6,6 +6,7 @@ import { Chip } from '../../ui/Chip'
 import { Countdown } from '../../ui/Countdown'
 import { Icon } from '../../ui/Icon'
 import { OrderCard, OrderCardActions, OrderCardBody, OrderCardLine } from '../../ui/OrderCard'
+import { YourReminder } from '../notifications/YourReminder'
 import { lastCovered, onHand, urgency } from './home'
 import styles from './NextCard.module.css'
 
@@ -31,7 +32,19 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
   // Today's meals, and the last day they cover.
   const hand = onHand(placed, today)
   const handLine = hand ? `Your ${hand.meals} on hand last through ${through(hand.through, today)}. ` : ''
-  const countdown = <Countdown days={days} tone={now === 'soon' ? 'accent' : 'quiet'} />
+  const countdown = <Countdown days={days} tone={now === 'soon' || now === 'remind' ? 'accent' : 'quiet'} />
+  // Reminders: to everyone once they've started; when they start, before.
+  const everyoneLine = (
+    <OrderCardLine icon="bell">
+      Reminders go to everyone daily until it's placed · <YourReminder bold />
+    </OrderCardLine>
+  )
+  const start = next.reminders_start_date
+  const startLine = start && (
+    <OrderCardLine icon="bell">
+      Reminders start <b>{formatDate(start, 'short')}</b>, daily · <YourReminder />
+    </OrderCardLine>
+  )
   const decideLine = (
     <OrderCardLine icon="cal">
       Decide by <b>{formatDate(decideBy, 'short')}</b> · delivery {formatDate(target, 'short')}
@@ -59,6 +72,7 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
               No meals on hand since {formatDate(addDays(last, 1), 'short')}
             </OrderCardLine>
           )}
+          {everyoneLine}
           <OrderCardActions>
             <Button variant="danger" block onClick={onStart}>
               Pick meals now
@@ -84,6 +98,33 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
         aside={countdown}
       >
         <OrderCardBody>
+          {everyoneLine}
+          <OrderCardActions>
+            <Button variant="accent" block onClick={onStart}>
+              Pick meals
+            </Button>
+          </OrderCardActions>
+        </OrderCardBody>
+      </OrderCard>
+    )
+  }
+
+  if (now === 'remind') {
+    return (
+      <OrderCard
+        number={next.number}
+        look="remind"
+        chip={
+          <Chip tone="accentText" icon="bell">
+            Reminders on
+          </Chip>
+        }
+        title={`Pick meals for ${formatDate(target, 'weekday')}'s delivery`}
+        subtitle={`${handLine}Decide by ${formatDate(decideBy, 'weekday')}, ${formatDate(decideBy, 'monthDay')}, and groceries arrive ${formatDate(target, 'weekday')}.`}
+        aside={countdown}
+      >
+        <OrderCardBody>
+          {everyoneLine}
           <OrderCardActions>
             <Button variant="accent" block onClick={onStart}>
               Pick meals
@@ -101,11 +142,16 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
         look="draft"
         chip={<Chip>Draft</Chip>}
         title="You're all caught up"
-        subtitle={`${hand ? `${capitalize(hand.meals)} on hand through ${through(hand.through, today)}. ` : ''}Pick ${formatDate(target, 'weekday')}'s meals by ${formatDate(decideBy, 'weekday')}.`}
+        subtitle={`${hand ? `${capitalize(hand.meals)} on hand through ${through(hand.through, today)}. ` : ''}${
+          start
+            ? `Reminders to pick ${formatDate(target, 'weekday')}'s meals start ${relativeDay(start, today, 'long')}.`
+            : `Pick ${formatDate(target, 'weekday')}'s meals by ${formatDate(decideBy, 'weekday')}.`
+        }`}
         aside={countdown}
       >
         <OrderCardBody>
           {decideLine}
+          {startLine}
           <OrderCardActions>
             <Button variant="white" block onClick={onStart}>
               Start early
@@ -126,6 +172,7 @@ export function NextCard({ next, placed, today, top, onStart }: NextCardProps) {
       aside={countdown}
     >
       <OrderCardBody>
+        {startLine}
         <OrderCardActions>
           <Button variant="secondary" onClick={onStart}>
             Start early <Icon name="chevR" />

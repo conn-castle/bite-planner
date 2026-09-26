@@ -12,7 +12,7 @@ from typing import Annotated, Any, Self
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -28,13 +28,12 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
+from castle_chef import failures, orders, push, ratings, reminders
 from castle_chef import household as households
 from castle_chef import log as logging_config
-from castle_chef import orders, ratings
 from castle_chef.auth import AuthError, AuthUnavailable, AuthVerifier, NeonAuthVerifier, Principal
 from castle_chef.db import get_request_session
 from castle_chef.dispatch import DispatchError, JobDispatcher, get_dispatcher
-from castle_chef.failures import handle_event
 from castle_chef.jobs import (
     STALE_ERROR,
     BatchRunning,
@@ -124,6 +123,8 @@ class GroceryOrderOut(BaseModel):
     target_date: date | None
     # The target date less the household's decide-by offset.
     decide_by_date: date | None
+    # The decide-by date less the household's reminder lead: daily reminders from then.
+    reminders_start_date: date | None
     earliest_delivery_date: date
     delivery_date: date | None
     next_delivery_date: date | None
@@ -154,6 +155,8 @@ class NextOrderOut(BaseModel):
     # The last placed order's next delivery date; none before the first order.
     target_date: date | None
     decide_by_date: date | None
+    # The first day of the daily reminders to decide it; none without a target date.
+    reminders_start_date: date | None
     earliest_delivery_date: date
     # Its draft, once someone has started one.
     draft: GroceryOrderOut | None
@@ -201,6 +204,8 @@ class PersonalSettingsOut(BaseModel):
     notification_time: time
     # The phone's IANA zone; none until the app first reports it.
     time_zone: str | None
+    # Whether they get the daily reminder to pick meals ("ideas ready" always goes out).
+    reminders_on: bool
 
 
 class MeOut(BaseModel):
@@ -258,6 +263,7 @@ class HouseholdSettingsIn(PartialUpdate):
 class PersonalSettingsIn(PartialUpdate):
     notification_time: time | None = None
     time_zone: str | None = None
+    reminders_on: bool | None = None
 
     @field_validator("notification_time")
     @classmethod
@@ -272,6 +278,10 @@ class PersonalSettingsIn(PartialUpdate):
         if value is not None:
             zone(value)
         return value
+
+
+# Apple's push address for the app on a phone: hex, 32 bytes today, possibly longer.
+DeviceToken = Annotated[str, Path(pattern="^[0-9a-fA-F]{64,200}$")]
 
 
 class JobIn(BaseModel):
@@ -419,6 +429,7 @@ def order_out(session: Session, order: GroceryOrder, today: date) -> GroceryOrde
     )
 
     target = orders.target_date(session, order)
+    decide_by = orders.decide_by_date(session, order.household_id, target)
     return GroceryOrderOut(
         id=order.id,
         number=orders.number(session, order),
@@ -426,7 +437,8 @@ def order_out(session: Session, order: GroceryOrder, today: date) -> GroceryOrde
         created_by=MemberOut(user_id=order.created_by, name=people[order.created_by]),
         created_at=order.created_at,
         target_date=target,
-        decide_by_date=orders.decide_by_date(session, order.household_id, target),
+        decide_by_date=decide_by,
+        reminders_start_date=orders.reminders_start_date(session, order.household_id, decide_by),
         earliest_delivery_date=orders.earliest_delivery_date(today),
         delivery_date=order.delivery_date,
         next_delivery_date=order.next_delivery_date,
@@ -546,7 +558,11 @@ def account(session: Session, user_id: UUID) -> tuple[str | None, str | None]:
 
 
 def personal_settings_out(user: AppUser) -> PersonalSettingsOut:
-    return PersonalSettingsOut(notification_time=user.notification_time, time_zone=user.time_zone)
+    return PersonalSettingsOut(
+        notification_time=user.notification_time,
+        time_zone=user.time_zone,
+        reminders_on=user.reminders_on,
+    )
 
 
 def household_out(session: Session, household: Household) -> HouseholdOut:
@@ -601,13 +617,25 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    # Non-HTTP Lambda events, posted here by the Lambda Web Adapter, on the two
+    # functions without a URL; each serves its own.
+    if settings.failure_handler and settings.reminders_handler:
+        raise RuntimeError(
+            "Set CASTLE_CHEF_FAILURE_HANDLER or CASTLE_CHEF_REMINDERS_HANDLER, not both."
+        )
     if settings.failure_handler:
 
         @api.post("/events")
-        def events(event: dict[str, Any]) -> dict[str, str]:
-            # Non-HTTP Lambda events, posted here by the Lambda Web Adapter.
-            handle_event(event)
+        def failure_events(event: dict[str, Any]) -> dict[str, str]:
+            failures.handle_event(event)
             return {"status": "handled"}
+
+    elif settings.reminders_handler:
+
+        @api.post("/events")
+        def reminder_events(event: dict[str, Any]) -> dict[str, Any]:
+            # The response is the invocation's result (the deploy reads the sync's).
+            return reminders.handle_event(event)
 
     @api.get("/v1/me")
     def me(
@@ -635,15 +663,51 @@ def create_app() -> FastAPI:
         caller: Annotated[Member, Depends(member)],
         session: Annotated[Session, Depends(db)],
     ) -> PersonalSettingsOut:
-        """Change the caller's own settings; only the fields sent."""
-        user = session.get_one(AppUser, caller.user_id)
+        """Change the caller's own settings; only the fields sent. A new time or zone
+        moves their reminder schedule too, or changes nothing if it can't."""
+        user = reminders.lock_user(session, caller.user_id)
+        if user is None:  # removed since `member` checked
+            raise HTTPException(status.HTTP_403_FORBIDDEN, NOT_IN_A_HOUSEHOLD)
+        before = (user.notification_time, user.time_zone)
         if body.notification_time is not None:
             user.notification_time = body.notification_time
         if body.time_zone is not None:
             user.time_zone = body.time_zone
+        # Turned off, the schedule stays: each firing checks the switch.
+        if body.reminders_on is not None:
+            user.reminders_on = body.reminders_on
+        if (user.notification_time, user.time_zone) != before:
+            try:
+                reminders.save_schedule(user)
+            except reminders.ScheduleError as error:
+                session.rollback()
+                log.error("settings.schedule_failed", extra={"error": str(error)})
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Couldn't update your reminder time. Try again.",
+                ) from error
         session.commit()
         log.info("settings.personal_updated", extra={"fields": sorted(body.model_fields_set)})
         return personal_settings_out(user)
+
+    @api.put("/v1/me/devices/{token}", status_code=status.HTTP_204_NO_CONTENT)
+    def register_device(
+        token: DeviceToken,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> None:
+        """This phone gets the caller's notifications (taken over from whoever
+        signed in on it before)."""
+        push.register_device(session, caller.user_id, token.lower())
+
+    @api.delete("/v1/me/devices/{token}", status_code=status.HTTP_204_NO_CONTENT)
+    def unregister_device(
+        token: DeviceToken,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> None:
+        """This phone stops getting the caller's notifications (signing out)."""
+        push.unregister_device(session, caller.user_id, token.lower())
 
     @api.get("/v1/household")
     def get_household(
@@ -732,10 +796,14 @@ def create_app() -> FastAPI:
         """The household's next order, and its draft if someone has started one."""
         draft = orders.get_draft(session, caller.household_id)
         target = orders.next_target_date(session, caller.household_id)
+        decide_by = orders.decide_by_date(session, caller.household_id, target)
         return NextOrderOut(
             number=orders.next_number(session, caller.household_id),
             target_date=target,
-            decide_by_date=orders.decide_by_date(session, caller.household_id, target),
+            decide_by_date=decide_by,
+            reminders_start_date=orders.reminders_start_date(
+                session, caller.household_id, decide_by
+            ),
             earliest_delivery_date=orders.earliest_delivery_date(day),
             draft=order_out(session, draft, day) if draft else None,
         )

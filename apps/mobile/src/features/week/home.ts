@@ -28,15 +28,34 @@ export function phase(order: Pick<PlacedOrder, 'delivery_date' | 'next_delivery_
 
 /**
  * How pressing the next order is: the first order (nothing to decide by),
- * past its decide-by date, due today or tomorrow, or not yet.
+ * past its decide-by date, due today or tomorrow, its reminders started, or
+ * not yet.
  */
-export type Urgency = 'first' | 'late' | 'soon' | 'calm'
+export type Urgency = 'first' | 'late' | 'soon' | 'remind' | 'calm'
 
-export function urgency(next: Pick<NextOrder, 'decide_by_date'>, today: ISODate): Urgency {
+export function urgency(next: Pick<NextOrder, 'decide_by_date' | 'reminders_start_date'>, today: ISODate): Urgency {
   const decideBy = next.decide_by_date
   if (decideBy === null) return 'first'
   if (decideBy < today) return 'late'
-  return decideBy <= addDays(today, 1) ? 'soon' : 'calm'
+  if (decideBy <= addDays(today, 1)) return 'soon'
+  const start = next.reminders_start_date
+  return start !== null && start <= today ? 'remind' : 'calm'
+}
+
+/**
+ * Whether the next order's daily reminder goes out on a day: from the day they
+ * start, every day until it's placed (after its decide-by date that's only
+ * known through today).
+ */
+export function remindsOn(
+  next: Pick<NextOrder, 'decide_by_date' | 'reminders_start_date'>,
+  date: ISODate,
+  today: ISODate,
+): boolean {
+  const start = next.reminders_start_date
+  const decideBy = next.decide_by_date
+  if (start === null || decideBy === null) return false
+  return start <= date && (date <= decideBy || date <= today)
 }
 
 /** The placed order whose meals cover the day. */
@@ -67,7 +86,10 @@ export function homeStrip(placed: PlacedOrder[], next: NextOrder, today: ISODate
       .map((order): DayMark => ({ kind: 'delivery', order: order.number, placed: true }))
     if (next.target_date === date) marks.push({ kind: 'delivery', order: next.number, placed: false })
     if (next.decide_by_date === date) marks.push({ kind: 'decide', late: date < today })
-    else if (placed.some((order) => placedOn(order) === date)) marks.push({ kind: 'decided' })
+    else {
+      if (remindsOn(next, date, today)) marks.push({ kind: 'reminder' })
+      if (placed.some((order) => placedOn(order) === date)) marks.push({ kind: 'decided' })
+    }
     return {
       date,
       coveredBy: cover?.number ?? null,
@@ -80,11 +102,16 @@ export function homeStrip(placed: PlacedOrder[], next: NextOrder, today: ISODate
   })
 }
 
-/** What the strip says about a day: its order's color (a number) and what happens on it. */
+/**
+ * What the strip says about a day: its order's color (a number) and what
+ * happens on it. `reminderTime` is when the member's own reminder goes out ("8:00 AM").
+ */
 export function dayCaption(
   placed: PlacedOrder[],
   next: NextOrder,
   date: ISODate,
+  today: ISODate,
+  reminderTime: string | null,
 ): { order: number | null; lines: string[] } {
   const lines: string[] = []
   const cover = coverOf(placed, date)
@@ -103,6 +130,7 @@ export function dayCaption(
     lines.push(`Order ${next.number} target delivery (not placed)`)
   }
   if (next.decide_by_date === date) lines.push(`Decide Order ${next.number}`)
+  if (remindsOn(next, date, today)) lines.push(reminderTime ? `Reminder ${reminderTime}` : 'Reminder')
   for (const decided of placed.filter((o) => placedOn(o) === date)) lines.push(`Order ${decided.number} placed`)
   if (lines.length === 0) lines.push(placed.length > 0 || next.draft ? 'No meals covered' : 'Nothing planned yet')
   return { order, lines }
@@ -113,7 +141,7 @@ export type HomeCard = { kind: 'placed'; order: PlacedOrder; top: boolean } | { 
 
 /**
  * The cards, the next step first: suggestions being made > a draft with ideas
- * > the first order > overdue > due today or tomorrow > delivery today >
+ * > the first order > overdue > due today or tomorrow > reminders started > delivery today >
  * groceries on the way > not due yet. Meals on hand are never the next step;
  * that card sits under the top one. Finished orders leave Home.
  */
@@ -138,7 +166,7 @@ function nextRank(next: NextOrder, today: ISODate): number {
     if (newestBatchState(next.draft).status === 'running') return 2
     if (suggestions(next.draft).length > 0) return 3
   }
-  return { first: 4, late: 5, soon: 6, calm: 10 }[urgency(next, today)]
+  return { first: 4, late: 5, soon: 6, remind: 7, calm: 10 }[urgency(next, today)]
 }
 
 /** Today's order's meals ("3 meals") and the last day they cover, if an order covers today. */

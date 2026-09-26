@@ -1,3 +1,5 @@
+require "tmpdir"
+
 default_platform(:ios)
 
 def connect_api_key
@@ -7,6 +9,19 @@ def connect_api_key
     key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"),
     is_key_content_base64: true
   )
+end
+
+# The exported app can receive production push notifications (App.entitlements,
+# granted by the App Store profile); fails the lane before uploading otherwise.
+def check_push_entitlement(ipa)
+  Dir.mktmpdir do |dir|
+    sh("unzip", "-q", ipa, "-d", dir, log: false)
+    entitlements = File.join(dir, "entitlements.plist")
+    sh("codesign", "-d", "--entitlements", entitlements, "--xml", File.join(dir, "Payload", "App.app"), log: false)
+    environment = sh("/usr/libexec/PlistBuddy", "-c", "Print :aps-environment", entitlements, log: false).strip
+    UI.user_error!("The app's aps-environment is #{environment.inspect}, not \"production\"") unless environment == "production"
+    UI.success("The app's aps-environment is production")
+  end
 end
 
 platform :ios do
@@ -39,6 +54,7 @@ platform :ios do
       output_directory: "build",
       xcargs: "MARKETING_VERSION=#{version} CURRENT_PROJECT_VERSION=#{build_number}"
     )
+    check_push_entitlement(lane_context[SharedValues::IPA_OUTPUT_PATH])
     # Processing is awaited by the `processed` lane on a cheaper Linux runner.
     upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: true)
     File.write(ENV["GITHUB_OUTPUT"], "version=#{version}\nbuild_number=#{build_number}\n", mode: "a") if ENV["GITHUB_OUTPUT"]

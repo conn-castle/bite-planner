@@ -4,6 +4,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GroceryOrder, ISODate, NextOrder, PlacedMeal, PlacedOrder } from '../../lib/api/types'
 import { addDays, formatDate, localDate, toLocalDate } from '../../lib/dates'
+import { apiRequest } from '../../lib/api/client'
+import { ApiError } from '../../lib/api/errors'
+import { errorFields, logger } from '../../lib/log'
 import { useNow } from '../../lib/useNow'
 import { IconButton } from '../../ui/Button'
 import { CardStack } from '../../ui/CardStack'
@@ -17,6 +20,7 @@ import { DraftCard } from '../orders/DraftCard'
 import { plural } from '../orders/format'
 import { OrderFlowModal } from '../orders/OrderFlow'
 import { nextQuery, useDiscardOrder, useNextOrder, usePlacedOrders } from '../orders/orders'
+import { clearTapped, type Delivered, tapResult, useTapped, useYourReminder } from '../notifications/notifications'
 import { useSession } from '../session/session'
 import { coveringFrom, dayCaption, homeCards, homeStrip } from './home'
 import { NextCard } from './NextCard'
@@ -57,6 +61,48 @@ export function WeekPage() {
     setPresentingElement(page.current ?? undefined)
     setFlowOpen(true)
   }
+
+  // A tapped notification lands here: with fresh data, open the draft it's about,
+  // if it's still the one to work on. Otherwise Home stays, with a note saying
+  // why (its top card has the next step); nothing starts a draft without a tap
+  // in the app.
+  const tapped = useTapped()
+  useEffect(() => {
+    if (!tapped || tapped.kind === 'test') return
+    let current = true
+    async function act(about: Exclude<Delivered, { kind: 'test' }>) {
+      const fresh = await queryClient.fetchQuery({ ...nextQuery, staleTime: 0 })
+      const tappedOrder =
+        about.kind === 'ideas_ready' && fresh.draft?.id !== about.orderId
+          ? await apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${about.orderId}`).catch((error: unknown) => {
+              if (error instanceof ApiError && error.status === 404) return 'discarded' as const
+              throw error
+            })
+          : null
+      return tapResult(about, fresh, tappedOrder)
+    }
+    act(tapped)
+      .then((result) => {
+        if (!current) return
+        logger.info('push.tap_opened', { kind: tapped.kind, open: result.open })
+        clearTapped()
+        if (result.open) openFlow()
+        else void presentAlert({ header: result.header, message: result.message, buttons: ['OK'] })
+      })
+      .catch((error: unknown) => {
+        if (!current) return
+        logger.warn('push.tap_failed', errorFields(error))
+        clearTapped()
+        void presentAlert({
+          header: "Couldn't open the order",
+          message: error instanceof Error ? error.message : String(error),
+          buttons: ['OK'],
+        })
+      })
+    return () => {
+      current = false
+    }
+  }, [tapped, queryClient, presentAlert])
 
   // Discarding affects everyone in the household, so it asks first.
   function confirmDiscard(order: GroceryOrder) {
@@ -152,7 +198,8 @@ function Home({ next, placed, today, onStart, onDiscard, discarding, onOpenOrder
   const cards = useMemo(() => homeCards(placed, next, today), [placed, next, today])
   const shownDay = chosenDay ?? today
 
-  const { order, lines } = dayCaption(placed, next, shownDay)
+  const reminder = useYourReminder()
+  const { order, lines } = dayCaption(placed, next, shownDay, today, reminder.time)
   const caption: DayCaption = {
     day: shownDay === today ? 'Today' : shownDay === addDays(today, 1) ? 'Tomorrow' : formatDate(shownDay, 'medium'),
     order,

@@ -3,13 +3,16 @@ import { useState } from 'react'
 import { DECIDE_BY_OFFSET_DAYS, NAME_LENGTH, REMINDER_LEAD_DAYS, SERVINGS } from '../../lib/api/limits'
 import type { Household, PersonalSettings } from '../../lib/api/types'
 import { errorFields, logger } from '../../lib/log'
+import { Button } from '../../ui/Button'
 import { Group, Row } from '../../ui/Group'
 import { Notice } from '../../ui/Notice'
 import { Page } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { Stepper } from '../../ui/Stepper'
+import { Switch } from '../../ui/Switch'
 import { TimeField } from '../../ui/TimeField'
 import { useTextPrompt } from '../../ui/useTextPrompt'
+import { askPermission, openNotificationSettings, pushAvailable, usePermission } from '../notifications/notifications'
 import { plural } from '../orders/format'
 import { signOut, useSession } from '../session/session'
 import styles from './SettingsPage.module.css'
@@ -140,11 +143,23 @@ function PersonalGroup({ settings }: { settings: PersonalSettings }) {
       <Group
         title="Personal"
         footerIcon="bell"
-        footer="Just for you. Everyone else in the household gets the same reminders at their own time."
+        footer="Just for you. Everyone else in the household gets the same reminders at their own time. Meal ideas you ask for always tell you when they're ready."
       >
+        {pushAvailable && <AllowNotificationsRow />}
+        <Row
+          label="Daily reminders"
+          sub="To pick meals, until the order is placed"
+          detail={
+            <Switch
+              checked={settings.reminders_on}
+              label="Daily reminders"
+              onChange={(on) => change.mutate({ reminders_on: on })}
+            />
+          }
+        />
         <Row
           label="Notification time"
-          sub="Your daily reminder until the order is placed"
+          sub="When your daily reminder comes"
           detail={
             <TimeField
               // "08:00:00" from the server; the field shows hours and minutes.
@@ -161,6 +176,46 @@ function PersonalGroup({ settings }: { settings: PersonalSettings }) {
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * Shown only while iOS doesn't let Castle Chef notify this phone (iOS keeps that
+ * setting, not the app): a button to allow it the first time, and to iOS
+ * Settings after that, where only the person can turn it on.
+ */
+function AllowNotificationsRow() {
+  const permission = usePermission()
+  const [problem, setProblem] = useState<string | null>(null)
+  if (permission === null || permission === 'on') return null
+
+  async function open() {
+    setProblem(null)
+    try {
+      if (permission === 'not-set') await askPermission()
+      else await openNotificationSettings()
+    } catch (error) {
+      logger.warn('push.settings_failed', errorFields(error))
+      setProblem(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  return (
+    <Row
+      label={permission === 'not-set' ? 'Notifications need your OK' : 'Notifications are off in iOS'}
+      sub={
+        problem
+          ? `Couldn't open it: ${problem}`
+          : permission === 'not-set'
+            ? 'Allow them to get reminders and meal ideas on this phone'
+            : 'Turn them on in iOS Settings to get reminders and meal ideas'
+      }
+      detail={
+        <Button variant="accent" onClick={() => void open()}>
+          {permission === 'not-set' ? 'Allow' : 'Open Settings'}
+        </Button>
+      }
+    />
   )
 }
 

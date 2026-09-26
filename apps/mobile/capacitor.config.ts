@@ -10,6 +10,8 @@ const config: CapacitorConfig = {
     // Hidden by the app once its first screen has rendered (src/app/native.ts).
     SplashScreen: { launchAutoHide: false, backgroundColor: '#ffffff' },
     StatusBar: { style: 'LIGHT' },
+    // No banner while the app is open: it shows its own (features/notifications).
+    PushNotifications: { presentationOptions: [] },
   },
 };
 

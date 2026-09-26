@@ -10,6 +10,7 @@ import { Group, Row } from '../../ui/Group'
 import { Notice } from '../../ui/Notice'
 import { Stepper } from '../../ui/Stepper'
 import { MealRow } from '../meals/MealRow'
+import { useHousehold } from '../settings/settings'
 import { pickedMeals } from './batches'
 import {
   coveredDays,
@@ -44,6 +45,7 @@ interface DatesStepProps {
  * place; they start at the target date and one day per meal.
  */
 export function DatesStep({ order, onOpenMeal, onBack, onClose }: DatesStepProps) {
+  const household = useHousehold().shown
   const setDates = useSetDates()
   const setServings = useSetServings()
   const place = usePlaceOrder()
@@ -146,6 +148,11 @@ export function DatesStep({ order, onOpenMeal, onBack, onClose }: DatesStepProps
                 Covers {dayRange(coveredDays(delivery, next))}.
                 {next === defaultNextDeliveryDate(delivery, meals.length) ? ' Recommended: one day per meal.' : ''}
               </p>
+              {household && (
+                <p className={styles.why}>
+                  {followingDates(order.number + 1, next, household.decide_by_offset_days, household.reminder_lead_days, today)}
+                </p>
+              )}
             </div>
           )}
         </Group>
@@ -175,6 +182,19 @@ export function DatesStep({ order, onOpenMeal, onBack, onClose }: DatesStepProps
       </div>
     </FlowFrame>
   )
+}
+
+/**
+ * What the next delivery sets for the order after this one: its decide-by date
+ * (the household's offset before it) and when reminders to decide it start
+ * (the household's lead before that), as the backend works them out.
+ */
+function followingDates(number: number, next: ISODate, offset: number, lead: number, today: ISODate): string {
+  const decideBy = addDays(next, -offset)
+  const start = addDays(decideBy, -lead)
+  return `Order ${number}: decide by ${formatDate(decideBy, 'medium')}, reminders start ${
+    start <= today ? 'today' : formatDate(start, 'medium')
+  }.`
 }
 
 /** Where the delivery date comes from. */

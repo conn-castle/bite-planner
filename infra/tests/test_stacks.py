@@ -74,8 +74,10 @@ def test_worker_is_locked_down_and_pinned(runtime: Template) -> None:
     # Needed to start, and stop, the agent as its own user.
     assert not dropped & {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL"}
     assert "Add" not in capabilities
-    assert [s["Name"] for s in container["Secrets"]] == ["DATABASE_URL"]
-    assert "DATABASE_URL" not in {e["Name"] for e in container.get("Environment", [])}
+    secrets = ["DATABASE_URL", "CASTLE_CHEF_APNS_KEY", "CASTLE_CHEF_APNS_KEY_ID"]
+    assert [s["Name"] for s in container["Secrets"]] == secrets
+    environment = {e["Name"] for e in container.get("Environment", [])}
+    assert not environment & set(secrets)
 
 
 def test_worker_login_storage_belongs_to_the_agent_user(runtime: Template) -> None:
@@ -202,6 +204,61 @@ def test_stopped_workers_reach_the_failure_handler(runtime: Template) -> None:
     assert mapping["Properties"]["EventSourceArn"] == {"Fn::GetAtt": [dead_letters, "Arn"]}
 
 
+def reminders_function(runtime: Template) -> tuple[str, dict]:
+    [(name, reminders)] = [
+        (name, f["Properties"])
+        for name, f in runtime.find_resources("AWS::Lambda::Function").items()
+        if f["Properties"]["Environment"]["Variables"].get("CASTLE_CHEF_REMINDERS_HANDLER")
+    ]
+    return name, reminders
+
+
+def test_each_members_schedule_invokes_the_reminders_function_only(runtime: Template) -> None:
+    name, reminders = reminders_function(runtime)
+    variables = reminders["Environment"]["Variables"]
+    assert json.loads(variables["CASTLE_CHEF_SSM_PARAMETERS"]) == {
+        "DATABASE_URL": "/castle-chef/test/database-url-pooled",
+        "CASTLE_CHEF_APNS_KEY": "/castle-chef/shared/apns-key-base64",
+        "CASTLE_CHEF_APNS_KEY_ID": "/castle-chef/shared/apns-key-id",
+    }
+    assert variables["CASTLE_CHEF_PUSH"] == "apns"
+    assert variables["AWS_LWA_PASS_THROUGH_PATH"] == "/events"
+    # An error response fails the invocation, so Lambda retries the firing.
+    assert variables["AWS_LWA_ERROR_STATUS_CODES"] == "500-599"
+    assert reminders["FunctionName"] == "Runtime-Reminders"
+    # Late firings aren't retried for long.
+    runtime.has_resource_properties(
+        "AWS::Lambda::EventInvokeConfig",
+        {"FunctionName": {"Ref": name}, "MaximumEventAgeInSeconds": 900, "MaximumRetryAttempts": 2},
+    )
+    runtime.has_resource_properties("AWS::Scheduler::ScheduleGroup", {"Name": "Runtime-reminders"})
+    # The role the schedules run as can only invoke Reminders.
+    [role] = [
+        name
+        for name, role in runtime.find_resources("AWS::IAM::Role").items()
+        if "scheduler.amazonaws.com" in str(role["Properties"]["AssumeRolePolicyDocument"])
+    ]
+    [policy] = [
+        p["Properties"]["PolicyDocument"]["Statement"]
+        for p in runtime.find_resources("AWS::IAM::Policy").values()
+        if p["Properties"]["Roles"] == [{"Ref": role}]
+    ]
+    assert [(s["Action"], s["Effect"]) for s in policy] == [("lambda:InvokeFunction", "Allow")]
+    assert "function:Runtime-Reminders" in json.dumps(policy[0]["Resource"])
+
+
+def test_the_api_keeps_members_schedules_but_never_holds_the_push_key(runtime: Template) -> None:
+    [api] = [
+        f
+        for f in functions(runtime).values()
+        if "CASTLE_CHEF_JOBS_QUEUE_URL" in f["Environment"]["Variables"]
+    ]
+    variables = api["Environment"]["Variables"]
+    assert variables["CASTLE_CHEF_REMINDER_SCHEDULER"] == "aws"
+    assert variables["CASTLE_CHEF_REMINDER_SCHEDULE_GROUP"] == "Runtime-reminders"
+    assert "APNS" not in variables["CASTLE_CHEF_SSM_PARAMETERS"]
+
+
 def test_alarms_email_the_owner(runtime: Template) -> None:
     runtime.has_resource_properties(
         "AWS::SNS::Subscription", {"Protocol": "email", "Endpoint": "owner@example.com"}
@@ -316,5 +373,5 @@ def test_services_log_the_deployed_release(runtime: Template) -> None:
         {e["Name"]: e["Value"] for e in worker_container(runtime)["Environment"]},
         *(f["Environment"]["Variables"] for f in functions(runtime).values()),
     ]
-    assert len(environments) == 3  # the worker, the API, the failure handler
+    assert len(environments) == 4  # the worker, the API, the failure handler, Reminders
     assert all(env["CASTLE_CHEF_RELEASE"] == "2026.9.24.1" for env in environments)

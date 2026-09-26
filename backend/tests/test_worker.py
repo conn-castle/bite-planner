@@ -15,12 +15,13 @@ import pytest
 from sqlmodel import Session, col, select
 from typer.testing import CliRunner
 
-from castle_chef import orders, worker
+from castle_chef import orders, push, worker
 from castle_chef.cli import app
 from castle_chef.db import get_engine
 from castle_chef.jobs import claim_job, fail_job
 from castle_chef.meals import IngredientInput, MealInput, add_meals
 from castle_chef.models import (
+    AppUser,
     GroceryOrder,
     Household,
     Job,
@@ -28,7 +29,9 @@ from castle_chef.models import (
     JobStatus,
     Meal,
     MealRating,
+    PushDevice,
 )
+from castle_chef.push import Notification, NotificationKind, Outcome, Sent
 
 runner = CliRunner()
 FAKE_AGENT = Path(__file__).parent / "fake_agent.py"
@@ -88,6 +91,80 @@ def test_job_succeeds_when_agent_adds_a_batch_of_meals(
     ]
     prompt = (tmp_path / "jobs" / str(job.id) / "fake-agent-prompt.md").read_text()
     assert "Create 3 distinct meals" in prompt
+
+
+class RecordingSender:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, Notification]] = []
+
+    def send(self, token: str, notification: Notification) -> Sent:
+        self.sent.append((token, notification))
+        return Sent(Outcome.SENT)
+
+
+@pytest.fixture
+def sender(monkeypatch: pytest.MonkeyPatch) -> RecordingSender:
+    recording = RecordingSender()
+    monkeypatch.setattr(push, "get_sender", lambda: recording)
+    return recording
+
+
+def with_phone(session: Session, job: Job) -> str:
+    """The member who asked for the batch, with a registered phone (its token)."""
+    order = session.get_one(GroceryOrder, job.grocery_order_id)
+    session.add(AppUser(user_id=job.requested_by, household_id=order.household_id))
+    session.add(PushDevice(token="ab" * 32, user_id=job.requested_by))
+    session.commit()
+    return "ab" * 32
+
+
+def test_whoever_asked_for_the_batch_hears_when_its_ideas_are_ready(
+    session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, sender: RecordingSender
+) -> None:
+    phone = with_phone(session, job)
+    batch_size(monkeypatch, 3)
+    use_fake_agent(monkeypatch, meals=3)
+
+    run_job(job)
+
+    [(token, notification)] = sender.sent
+    assert token == phone
+    # The household's first order: nothing yet to decide it by.
+    assert (notification.kind, notification.title, notification.body, notification.order_id) == (
+        NotificationKind.IDEAS_READY,
+        "Your meal ideas are ready",
+        "3 ideas for Order 1.",
+        job.grocery_order_id,
+    )
+
+
+def test_a_failed_batch_sends_nothing(
+    session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, sender: RecordingSender
+) -> None:
+    with_phone(session, job)
+    use_fake_agent(monkeypatch, meals=0, exit_code=3)
+
+    run_job(job)
+
+    assert sender.sent == []
+
+
+def test_a_batch_stays_succeeded_when_its_notification_cannot_be_sent(
+    session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with_phone(session, job)
+    use_fake_agent(monkeypatch, meals=1)
+
+    def broken() -> None:
+        raise RuntimeError("Set CASTLE_CHEF_APNS_KEY and CASTLE_CHEF_APNS_KEY_ID.")
+
+    monkeypatch.setattr(push, "get_sender", broken)
+
+    run_job(job)
+
+    assert reload(session, job).status == JobStatus.SUCCEEDED
+    [failed] = [e for e in log_events(tmp_path / "logs") if e["event"] == "job.notify_failed"]
+    assert failed["level"] == "error"
 
 
 def test_a_batch_is_20_meals_by_default(

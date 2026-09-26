@@ -5,6 +5,7 @@ import logging
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -13,12 +14,12 @@ import typer
 from pydantic import ValidationError
 from sqlmodel import Session
 
-from castle_chef import household, worker
+from castle_chef import household, push, worker
 from castle_chef import log as logging_config
 from castle_chef.db import get_session
 from castle_chef.dispatch import JOB_ID_ENV
 from castle_chef.meals import MealInput, save_meal
-from castle_chef.settings import get_settings
+from castle_chef.settings import get_settings, load_ssm_parameters
 
 app = typer.Typer(no_args_is_help=True)
 meal_app = typer.Typer(no_args_is_help=True, help="Manage meals.")
@@ -48,6 +49,9 @@ def household_session() -> Iterator[Session]:
 @app.callback()
 def main(ctx: typer.Context) -> None:
     """Castle Chef backend."""
+    # Secrets named in CASTLE_CHEF_SSM_PARAMETERS, before settings are first read
+    # (e.g. the APNs key for `household notify-test`).
+    load_ssm_parameters()
     # `meal add` runs inside the agent's sandbox, which can only write the job
     # directory, so it logs to stderr only (the agent sees it).
     log_file = (
@@ -145,3 +149,21 @@ def household_remove(email: str) -> None:
     with household_session() as session:
         household.remove(session, email)
     typer.echo(f"Removed {email}.")
+
+
+@household_app.command("notify-test")
+def household_notify_test(email: str) -> None:
+    """Send a test notification to this member's phones (checks push end to end).
+    Sends through APNs with CASTLE_CHEF_PUSH=apns and the key (see README "Notifications")."""
+    with household_session() as session:
+        user_id = household.member_id(session, email)
+    push.notify(
+        user_id,
+        push.Notification(
+            kind=push.NotificationKind.TEST,
+            title="Test notification",
+            body="Castle Chef can reach this phone.",
+            expires_in=timedelta(minutes=10),
+        ),
+    )
+    typer.echo(f"Sent to {email}'s phones; see the log for each one.")

@@ -53,6 +53,7 @@ export function PlacedCard({
   if (now === 'waiting') {
     const following = followingOrder(order, placed, next)
     const decide = following?.kind === 'next' && following.next.decide_by_date
+    const remindFrom = following?.kind === 'next' ? following.next.reminders_start_date : null
     body = top ? (
       <>
         <p className={styles.act}>
@@ -63,7 +64,14 @@ export function PlacedCard({
             Groceries for {meals} arrive {relativeDay(order.delivery_date, today, 'long')},{' '}
             {formatDate(order.delivery_date, 'monthDay')}.
           </span>
-          {decide && <span className={styles.more}>Next, pick meals by {formatDate(decide, 'medium')}.</span>}
+          {decide && (
+            <span className={styles.more}>
+              Next, pick meals by {formatDate(decide, 'medium')}
+              {remindFrom
+                ? `; reminders start ${relativeDay(remindFrom < today ? today : remindFrom, today, 'long')}.`
+                : '.'}
+            </span>
+          )}
         </p>
         {viewOrder}
       </>

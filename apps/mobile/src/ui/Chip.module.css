@@ -24,6 +24,11 @@
   color: var(--cc-ink);
 }
 
+.accentText {
+  background: var(--cc-bg);
+  color: var(--cc-accent);
+}
+
 .accent {
   background: var(--cc-accent);
   color: var(--cc-on-ink);

@@ -113,7 +113,7 @@ describe('the settings on screen', () => {
   })
 
   it('show a new notification time at once, and keep it with the session once saved', async () => {
-    const settings: PersonalSettings = { notification_time: '08:00:00', time_zone: 'Europe/Lisbon' }
+    const settings: PersonalSettings = { notification_time: '08:00:00', time_zone: 'Europe/Lisbon', reminders_on: true }
     queryClient.setQueryData<Session>(sessionQuery.queryKey, {
       user: { id: 'sam', email: 'sam@example.com', name: 'Sam' },
       household: { id: 'castle', name: 'Conn Castle' },
@@ -131,6 +131,26 @@ describe('the settings on screen', () => {
     expect(request.mock.calls).toEqual([['PATCH', '/v1/me/settings', { notification_time: '06:30' }]])
     expect(queryClient.getQueryData<Session>(sessionQuery.queryKey)?.settings?.notification_time).toBe('06:30:00')
     expect(onScreen().personal?.notification_time).toBe('06:30:00')
+  })
+
+  it('show daily reminders turned off at once, keeping the notification time', async () => {
+    const settings: PersonalSettings = { notification_time: '07:15:00', time_zone: 'Europe/Lisbon', reminders_on: true }
+    queryClient.setQueryData<Session>(sessionQuery.queryKey, {
+      user: { id: 'sam', email: 'sam@example.com', name: 'Sam' },
+      household: { id: 'castle', name: 'Conn Castle' },
+      settings,
+    })
+    let answer = (_saved: PersonalSettings) => {}
+    request.mockImplementation(() => new Promise((resolve) => (answer = resolve)))
+
+    const saving = changePersonal({ reminders_on: false })
+    await later(0)
+    expect(onScreen().personal).toEqual({ ...settings, reminders_on: false })
+
+    answer({ ...settings, reminders_on: false })
+    await saving
+    expect(request.mock.calls).toEqual([['PATCH', '/v1/me/settings', { reminders_on: false }]])
+    expect(queryClient.getQueryData<Session>(sessionQuery.queryKey)?.settings?.reminders_on).toBe(false)
   })
 })
 
@@ -201,7 +221,7 @@ describe('renaming', () => {
   const session: Session = {
     user: { id: 'sam', email: 'sam@example.com', name: 'Sam' },
     household: { id: 'castle', name: 'Conn Castle' },
-    settings: { notification_time: '08:00:00', time_zone: 'Europe/Lisbon' },
+    settings: { notification_time: '08:00:00', time_zone: 'Europe/Lisbon', reminders_on: true },
   }
 
   it("the household shows its new name everywhere the session shows it", async () => {

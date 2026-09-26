@@ -41,7 +41,7 @@ The flow being built toward, one piece at a time:
 - [x] The user can mark a suggestion as "don't show meals like this", and toggle it back off. This is offered only while picking suggestions.
 - [x] Future suggestions avoid meals like the ones marked "don't show meals like this"; these preferences belong to the household.
 - [x] The user can generate 20 more suggestions, added below the current ones.
-- [ ] The user can leave while suggestions are generating and gets a notification when they're ready.
+- [x] The user can leave while suggestions are generating and gets a notification when they're ready.
 - [ ] Each meal shows an icon.
 
 ## Rating meals
@@ -77,9 +77,9 @@ The flow being built toward, one piece at a time:
 
 ## Notifications
 
-- [ ] The app sends push notifications to household members.
-- [ ] Reminders to order start a set number of days before the decide-by date and go out daily at each member's notification time until the order is placed, including after the decide-by date.
-- [ ] Reminders go to every member, including while another member is ordering.
+- [x] The app sends push notifications to household members.
+- [x] Reminders to order start a set number of days before the decide-by date and go out daily at each member's notification time until the order is placed, including after the decide-by date.
+- [x] Reminders go to every member, including while another member is ordering.
 
 ## Household
 

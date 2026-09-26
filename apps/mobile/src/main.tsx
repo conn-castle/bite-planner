@@ -17,6 +17,7 @@ import './theme/app.css'
 import { App } from './app/App'
 import { ErrorBoundary } from './app/ErrorBoundary'
 import { registerRatingMutations } from './features/meals/ratings'
+import { listenForPush, registerDeviceMutations } from './features/notifications/notifications'
 import { registerOrderMutations } from './features/orders/orders'
 import { registerSettingsMutations } from './features/settings/settings'
 import { logger, logUncaughtErrors } from './lib/log'
@@ -31,6 +32,8 @@ logger.info('app.start', {
 registerOrderMutations(queryClient)
 registerRatingMutations(queryClient)
 registerSettingsMutations(queryClient)
+registerDeviceMutations(queryClient)
+listenForPush(queryClient)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

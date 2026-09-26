@@ -10,6 +10,7 @@ const order: GroceryOrder = {
   created_at: '2026-09-25T12:00:00Z',
   target_date: '2026-09-29',
   decide_by_date: '2026-09-28',
+  reminders_start_date: null,
   earliest_delivery_date: '2026-09-26',
   delivery_date: '2026-09-29',
   next_delivery_date: '2026-10-02',

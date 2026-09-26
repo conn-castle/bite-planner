@@ -300,6 +300,14 @@
   background: var(--cc-danger);
 }
 
+/* .dc .ic .rem */
+.reminder {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cc-accent);
+}
+
 .decided {
   box-sizing: border-box;
   width: 6px;

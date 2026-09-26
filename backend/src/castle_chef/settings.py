@@ -37,6 +37,25 @@ class Settings(BaseSettings):
     # Serve the failure handler's `/events` route (its own Lambda function, which
     # has no public URL; see failures.py). Never on the public API.
     failure_handler: bool = False
+    # Serve the reminders' `/events` route instead (the Reminders Lambda function,
+    # started by each member's EventBridge Scheduler schedule; see reminders.py).
+    reminders_handler: bool = False
+
+    # How reminder schedules are kept: `aws` (EventBridge Scheduler) or `local`
+    # (development: logged, nothing scheduled).
+    reminder_scheduler: Literal["aws", "local"] = "local"
+    # The schedule group, the Reminders function it invokes, and the role it
+    # invokes it as (aws only).
+    reminder_schedule_group: str | None = None
+    reminder_function_arn: str | None = None
+    reminder_role_arn: str | None = None
+
+    # How notifications are sent: `apns` (Apple's push service) or `local`
+    # (development: logged, nothing sent).
+    push: Literal["apns", "local"] = "local"
+    # The APNs auth key (.p8, base64; SSM /castle-chef/shared/apns-key-base64) and its id.
+    apns_key: str | None = None
+    apns_key_id: str | None = None
 
     # How the API starts a job: `sqs` (the queue on AWS) or `local` (a
     # `castle-chef job run` subprocess, for development).

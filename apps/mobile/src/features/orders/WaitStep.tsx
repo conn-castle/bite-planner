@@ -2,9 +2,12 @@ import type { GroceryOrder } from '../../lib/api/types'
 import { useNow } from '../../lib/useNow'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
+import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import { ProgressBar } from '../../ui/ProgressBar'
 import { RatePrompt } from '../meals/RatePrompt'
+import { useNotifiedOfIdeas } from '../notifications/notifications'
+import { useSession } from '../session/session'
 import { newestBatchState } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { elapsed } from './format'
@@ -26,6 +29,11 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
   const now = useNow(1000)
   const start = () => generate.mutate({ orderId: order.id, jobId: crypto.randomUUID() })
   const running = batch.status === 'running' || generate.isPending
+  // "Ideas ready" reaches this phone only for its own batch, with notifications on.
+  const userId = useSession().data?.user.id ?? null
+  // Who started the batch being made (this member, when it was just asked for here).
+  const startedBy = batch.status === 'running' ? batch.job.requested_by.user_id : generate.isPending ? userId : null
+  const notified = useNotifiedOfIdeas(running ? startedBy : null)
 
   return (
     <FlowFrame
@@ -34,15 +42,24 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
       footer={
         <>
           <FooterSummary
-            title="You can close this"
+            title={notified ? 'You can leave' : 'You can close this'}
             detail={
-              running
-                ? 'The draft is saved, and its meal ideas will be here when you come back.'
-                : 'The draft is saved for the household.'
+              notified
+                ? "The card on Home keeps working and we'll notify you."
+                : running
+                  ? 'The draft is saved, and its meal ideas will be here when you come back.'
+                  : 'The draft is saved for the household.'
             }
           />
           <Button variant="secondary" large onClick={onClose}>
-            Close
+            {notified ? (
+              <>
+                <Icon name="bell" />
+                Notify me
+              </>
+            ) : (
+              'Close'
+            )}
           </Button>
         </>
       }

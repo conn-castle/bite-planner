@@ -30,10 +30,12 @@ const NAME_CHANGES = { id: 'user-name' }
 /** One or more household settings (or its name) to change; the others stay as they are. */
 export type HouseholdChange = Partial<HouseholdSettings & Pick<Household, 'name'>>
 
-/** A member's own setting to change (their time zone is kept up to date by the session; see session.ts). */
-export interface PersonalChange {
-  notification_time: ClockTime
-}
+/**
+ * A member's own setting to change: their reminder time, or whether they get
+ * daily reminders at all (their time zone is kept up to date by the session;
+ * see session.ts).
+ */
+export type PersonalChange = { notification_time: ClockTime } | { reminders_on: boolean }
 
 const HOUSEHOLD_SETTINGS: readonly (keyof HouseholdSettings)[] = [
   'decide_by_offset_days',
@@ -63,7 +65,9 @@ function isNameChange(value: unknown): value is NameChange {
 }
 
 function isPersonalChange(value: unknown): value is PersonalChange {
-  return isRecord(value) && typeof value.notification_time === 'string' && /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(value.notification_time)
+  if (!isRecord(value)) return false
+  if ('reminders_on' in value) return typeof value.reminders_on === 'boolean'
+  return typeof value.notification_time === 'string' && /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(value.notification_time)
 }
 
 export const householdQuery = queryOptions({
@@ -94,8 +98,8 @@ export function registerSettingsMutations(queryClient: QueryClient) {
             session?.household ? { ...session, household: { ...session.household, name: household.name } } : session,
         )
       }
-      // Decide-by dates are computed from the offset.
-      if (change.decide_by_offset_days !== undefined) {
+      // Decide-by and reminder dates are computed from the offset and the lead.
+      if (change.decide_by_offset_days !== undefined || change.reminder_lead_days !== undefined) {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: queryKeys.nextOrder }),
           queryClient.invalidateQueries({ queryKey: queryKeys.orders }),

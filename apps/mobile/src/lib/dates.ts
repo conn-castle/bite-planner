@@ -1,4 +1,4 @@
-import type { ISODate } from './api/types'
+import type { ClockTime, ISODate } from './api/types'
 
 /**
  * Calendar days ("2026-09-28"), such as delivery dates. They have no time of
@@ -91,4 +91,10 @@ export function relativeMoment(at: Date, today: ISODate, locale?: string): strin
   if (day === today) return `today at ${time}`
   if (day === addDays(today, -1)) return `yesterday at ${time}`
   return `on ${formatDate(day, 'medium', locale)} at ${time}`
+}
+
+/** A clock time ("08:00:00") in the phone's locale: "8:00 AM". */
+export function formatClockTime(time: ClockTime, locale?: string): string {
+  const [hours, minutes] = time.split(':').map(Number)
+  return new Date(2000, 0, 1, hours, minutes).toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' })
 }

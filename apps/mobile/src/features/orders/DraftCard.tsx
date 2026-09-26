@@ -6,6 +6,7 @@ import { Chip } from '../../ui/Chip'
 import { MealStack } from '../../ui/MealStack'
 import { OrderCard, OrderCardActions, OrderCardBody, OrderCardLine } from '../../ui/OrderCard'
 import { ProgressBar } from '../../ui/ProgressBar'
+import { useNotifiedOfIdeas, useYourReminder } from '../notifications/notifications'
 import { newestBatchState, suggestions } from './batches'
 import { defaultDeliveryDate } from './dates'
 import styles from './DraftCard.module.css'
@@ -26,9 +27,11 @@ interface DraftCardProps {
 
 /** The household's unplaced order: where it's at, when to decide by, and continue or discard it. */
 export function DraftCard({ order, userId, today, onContinue, onDiscard, discarding }: DraftCardProps) {
+  const reminder = useYourReminder()
   const ideas = suggestions(order).length
   const picks = order.picks.length
   const batch = newestBatchState(order)
+  const notified = useNotifiedOfIdeas(batch.status === 'running' ? batch.job.requested_by.user_id : null)
   const working = batch.status === 'running'
   // Ticks each second while a batch is being made, for the time it has taken.
   const now = useNow(working ? 1000 : 60_000)
@@ -54,7 +57,9 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
       : ideas > 0
         ? `Add the ones you want for ${forDelivery}. Pick as many as you'll cook before the next one.`
         : working
-          ? `Chef is picking ${BATCH_SIZE} ideas for ${forDelivery}. This takes a minute or two. You can leave; they'll be here when you come back.`
+          ? `Chef is picking ${BATCH_SIZE} ideas for ${forDelivery}. This takes a minute or two. ${
+              notified ? "You can leave; we'll notify you when they're ready." : "You can leave; they'll be here when you come back."
+            }`
           : 'No meals added yet.'
   const chip =
     look === 'late' ? (
@@ -104,12 +109,17 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
         {look !== 'working' &&
           decideBy !== null &&
           (late ? (
-            <OrderCardLine icon="cal" tone="danger">
-              Was due {formatDate(decideBy, 'short')}
+            <OrderCardLine icon="bell" tone="danger">
+              Was due {formatDate(decideBy, 'short')} · reminders keep going daily until it's placed
             </OrderCardLine>
           ) : (
-            <OrderCardLine icon="cal">
-              Decide by <b>{formatDate(decideBy, 'short')}</b>
+            <OrderCardLine icon="bell">
+              Decide by <b>{formatDate(decideBy, 'short')}</b> ·{' '}
+              {reminder.off
+                ? 'your reminders are off'
+                : reminder.time
+                  ? `reminders daily at ${reminder.time}`
+                  : 'reminders daily'}
             </OrderCardLine>
           ))}
         <OrderCardActions>

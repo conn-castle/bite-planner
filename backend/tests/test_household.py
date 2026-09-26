@@ -13,8 +13,9 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 from typer.testing import CliRunner, Result
 
+from castle_chef import push
 from castle_chef.cli import app
-from castle_chef.models import AppUser, GroceryOrder, GroceryOrderStatus, Household
+from castle_chef.models import AppUser, GroceryOrder, GroceryOrderStatus, Household, PushDevice
 
 runner = CliRunner()
 FAKE_NEONCTL = Path(__file__).parent / "fake_neonctl.py"
@@ -174,6 +175,44 @@ def test_remove_deletes_membership_and_account(session: Session, fake_neonctl: P
     assert calls(fake_neonctl)[-1][3] == "DELETE"
     assert session.exec(select(AppUser)).all() == []
     assert run("household", "members", "Conn Castle").stdout == ""
+
+
+def test_notify_test_reaches_a_members_phones(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
+    [mom] = session.exec(select(AppUser)).all()
+    session.add(PushDevice(token="ab" * 32, user_id=mom.user_id))
+    session.commit()
+    sent: list[tuple[str, str]] = []
+
+    class Recording:
+        def send(self, token: str, notification: push.Notification) -> push.Sent:
+            sent.append((token, notification.title))
+            return push.Sent(push.Outcome.SENT)
+
+    monkeypatch.setattr(push, "get_sender", Recording)
+
+    result = run("household", "notify-test", "mom@example.com")
+
+    assert result.exit_code == 0, result.output
+    assert sent == [("ab" * 32, "Test notification")]
+    assert (
+        "nobody@example.com isn't in a household."
+        in run("household", "notify-test", "nobody@example.com").stderr
+    )
+
+
+def test_removing_someone_forgets_their_phones(session: Session) -> None:
+    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
+    [mom] = session.exec(select(AppUser)).all()
+    session.add(PushDevice(token="ab" * 32, user_id=mom.user_id))
+    session.commit()
+
+    assert run("household", "remove", "mom@example.com").exit_code == 0
+
+    session.expire_all()
+    assert session.exec(select(PushDevice)).all() == []
 
 
 def test_removing_an_unknown_account_fails_clearly(fake_neonctl: Path) -> None:

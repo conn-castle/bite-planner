@@ -11,11 +11,13 @@ export type DayTag = 'today' | 'target' | 'soonest' | 'best' | 'delivery'
 /**
  * What happens on a day, as a small mark under it (compact strip only): an
  * order's groceries arrive (in its color once placed), the day to decide the
- * next order by (red once passed), or an order was placed.
+ * next order by (red once passed), a reminder to decide it goes out, or an
+ * order was placed.
  */
 export type DayMark =
   | { kind: 'delivery'; order: number; placed: boolean }
   | { kind: 'decide'; late: boolean }
+  | { kind: 'reminder' }
   | { kind: 'decided' }
 
 /** One day in a date bar. */
@@ -50,6 +52,7 @@ const DAYS_BEFORE_SELECTED = 2
 function markText(mark: DayMark): string {
   if (mark.kind === 'delivery') return `Order ${mark.order} ${mark.placed ? 'delivery' : 'target delivery'}`
   if (mark.kind === 'decide') return mark.late ? 'decide-by date, passed' : 'decide-by date'
+  if (mark.kind === 'reminder') return 'reminder'
   return 'order placed'
 }
 
@@ -270,5 +273,6 @@ function DayMarkIcon({ mark }: { mark: DayMark }) {
     )
   }
   if (mark.kind === 'decide') return <span className={`${styles.decide} ${mark.late ? styles.late : ''}`} />
+  if (mark.kind === 'reminder') return <span className={styles.reminder} />
   return <span className={styles.decided} />
 }

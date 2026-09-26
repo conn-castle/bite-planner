@@ -18,6 +18,8 @@ export interface PersonalSettings {
   notification_time: ClockTime
   /** The phone's IANA zone; null until the app first reports it. */
   time_zone: string | null
+  /** Whether they get the daily reminder to pick meals ("ideas ready" always goes out). */
+  reminders_on: boolean
 }
 
 export interface Me {
@@ -102,6 +104,8 @@ export interface GroceryOrder {
   target_date: ISODate | null
   /** The target date less the household's decide-by offset. */
   decide_by_date: ISODate | null
+  /** The decide-by date less the household's reminder lead: daily reminders from then. */
+  reminders_start_date: ISODate | null
   earliest_delivery_date: ISODate
   delivery_date: ISODate | null
   next_delivery_date: ISODate | null
@@ -142,6 +146,8 @@ export interface NextOrder {
   /** The last placed order's next delivery date; null before the first order. */
   target_date: ISODate | null
   decide_by_date: ISODate | null
+  /** The first day of the daily reminders to decide it (they go on until it's placed); null without a target date. */
+  reminders_start_date: ISODate | null
   earliest_delivery_date: ISODate
   /** Its draft, once someone has started one. */
   draft: GroceryOrder | null

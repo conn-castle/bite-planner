@@ -19,7 +19,7 @@ const me = (timeZone: string | null): Me => ({
   name: 'Sam',
   member: true,
   household: { id: 'castle', name: 'Conn Castle' },
-  settings: { notification_time: '08:00:00', time_zone: timeZone },
+  settings: { notification_time: '08:00:00', time_zone: timeZone, reminders_on: true },
 })
 
 let queryClient: QueryClient
@@ -35,7 +35,7 @@ describe("the phone's time zone", () => {
     for (const stored of [null, 'America/New_York']) {
       request.mockReset()
       request.mockImplementation(async (method) =>
-        method === 'GET' ? me(stored) : { notification_time: '08:00:00', time_zone: 'Europe/Lisbon' },
+        method === 'GET' ? me(stored) : { notification_time: '08:00:00', time_zone: 'Europe/Lisbon', reminders_on: true },
       )
 
       const session = await queryClient.fetchQuery({ ...sessionQuery, staleTime: 0 })
@@ -81,7 +81,7 @@ describe('signing out', () => {
   it("isn't undone by a session fetch still on its way", async () => {
     request.mockImplementation(async (method) => {
       await new Promise((resolve) => setTimeout(resolve, 20))
-      return method === 'GET' ? me('America/New_York') : { notification_time: '08:00:00', time_zone: 'Europe/Lisbon' }
+      return method === 'GET' ? me('America/New_York') : { notification_time: '08:00:00', time_zone: 'Europe/Lisbon', reminders_on: true }
     })
     const fetching = queryClient.fetchQuery(sessionQuery).catch(() => undefined)
 

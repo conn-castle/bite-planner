@@ -112,6 +112,7 @@ async function storeOrder(queryClient: QueryClient, order: GroceryOrder) {
     number: order.number,
     target_date: order.target_date,
     decide_by_date: order.decide_by_date,
+    reminders_start_date: order.reminders_start_date,
     earliest_delivery_date: order.earliest_delivery_date,
     draft: order,
   })

@@ -20,6 +20,7 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   created_at: '2026-09-24T09:00:00Z',
   target_date: '2026-09-27',
   decide_by_date: '2026-09-26',
+  reminders_start_date: null,
   earliest_delivery_date: '2026-09-25',
   delivery_date: null,
   next_delivery_date: null,
@@ -61,6 +62,7 @@ describe('marking a suggestion "not for us"', () => {
       number: 4,
       target_date: '2026-09-27',
       decide_by_date: '2026-09-26',
+      reminders_start_date: null,
       earliest_delivery_date: '2026-09-25',
       draft: shownDraft,
     })

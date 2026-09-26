@@ -3,8 +3,11 @@ import styles from './Chip.module.css'
 import { Icon, type IconName } from './Icon'
 
 interface ChipProps {
-  /** Outlined (the default), accent for something ready to act on, success, or danger (e.g. overdue). */
-  tone?: 'default' | 'accent' | 'success' | 'danger'
+  /**
+   * Outlined (the default), outlined with accent text (e.g. reminders on),
+   * accent for something ready to act on, success, or danger (e.g. overdue).
+   */
+  tone?: 'default' | 'accentText' | 'accent' | 'success' | 'danger'
   icon?: IconName
   children: ReactNode
 }

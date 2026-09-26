@@ -92,6 +92,16 @@ class RepositoriesStack(Stack):
                 actions=["cloudformation:DescribeStacks", "ecs:ListTasks"], resources=["*"]
             )
         )
+        # After each deploy, the Reminders function rebuilds every member's
+        # reminder schedule from the database.
+        self.deploy_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["lambda:InvokeFunction"],
+                resources=[
+                    f"arn:aws:lambda:{self.region}:{self.account}:function:CastleChef*-Reminders"
+                ],
+            )
+        )
         # `cdk deploy` works through the account's CDK bootstrap roles.
         self.deploy_role.add_to_policy(
             iam.PolicyStatement(

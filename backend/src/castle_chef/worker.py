@@ -23,11 +23,12 @@ from alembic.util.exc import CommandError
 from pydantic import ValidationError
 from sqlmodel import Session, select
 
-from castle_chef import ratings
+from castle_chef import push, ratings
 from castle_chef.db import get_engine, get_session
 from castle_chef.jobs import claim_job, finish_job
 from castle_chef.meals import MealInput, add_meals, load_meals
 from castle_chef.models import GroceryOrder, Job, JobKind
+from castle_chef.notifications import ideas_ready
 from castle_chef.settings import REPO_ROOT, get_settings
 
 log = logging.getLogger(__name__)
@@ -126,6 +127,22 @@ def run_job(job_id: UUID) -> None:
         _finish(job_id, error=f"Could not save the meals: {error!r}")
         return
     log.info("job.succeeded", extra=fields | {"meal_count": len(meals)})
+    _notify_requester(job_id)
+
+
+def _notify_requester(job_id: UUID) -> None:
+    """ "Your meal ideas are ready", to whoever started the batch. The job's success
+    stands whatever happens here; a failure is logged as an error."""
+    try:
+        with get_session() as session:
+            job = session.get(Job, job_id)
+            if job is None:  # discarded with its draft meanwhile
+                return
+            notification = ideas_ready(session, job)
+            requester = job.requested_by
+        push.notify(requester, notification)
+    except Exception:
+        log.exception("job.notify_failed", extra={"job_id": str(job_id)})
 
 
 def _finish(job_id: UUID, error: str) -> None:

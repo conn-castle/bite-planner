@@ -363,7 +363,7 @@ def test_me_reports_membership_household_and_account(client: TestClient) -> None
         "name": "Mom",
         "member": True,
         "household": {"id": str(CASTLE), "name": "Conn Castle"},
-        "settings": {"notification_time": "08:00:00", "time_zone": None},
+        "settings": {"notification_time": "08:00:00", "time_zone": None, "reminders_on": True},
     }
     assert ok(client.get("/v1/me", headers=as_user(NEIGHBOR)))["household"] == {
         "id": str(OTHER_HOUSE),
@@ -453,6 +453,7 @@ def test_a_household_starts_with_its_first_order_not_yet_started(client: TestCli
         "number": 1,
         "target_date": None,
         "decide_by_date": None,
+        "reminders_start_date": None,
         "earliest_delivery_date": tomorrow().isoformat(),
         "draft": None,
     }
@@ -471,6 +472,7 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "created_at": None,
         "target_date": None,
         "decide_by_date": None,
+        "reminders_start_date": None,
         "earliest_delivery_date": tomorrow().isoformat(),
         "delivery_date": None,
         "next_delivery_date": None,
@@ -1188,6 +1190,8 @@ def test_the_next_order_is_decided_by_its_target_less_the_households_offset(
         "number": 2,
         "target_date": target.isoformat(),
         "decide_by_date": (target - timedelta(days=1)).isoformat(),
+        # Two days (the default reminder lead) before that.
+        "reminders_start_date": (target - timedelta(days=3)).isoformat(),
         "earliest_delivery_date": tomorrow().isoformat(),
         "draft": None,
     }
@@ -1196,10 +1200,16 @@ def test_the_next_order_is_decided_by_its_target_less_the_households_offset(
     draft = open_draft(client)
     shown = next_order(client, DAD)
     assert shown["draft"] == draft
-    assert (shown["number"], shown["target_date"], shown["decide_by_date"]) == (
+    assert (
+        shown["number"],
+        shown["target_date"],
+        shown["decide_by_date"],
+        shown["reminders_start_date"],
+    ) == (
         draft["number"],
         draft["target_date"],
         draft["decide_by_date"],
+        draft["reminders_start_date"],
     )
 
     # A household that decides three days ahead.
@@ -1209,6 +1219,10 @@ def test_the_next_order_is_decided_by_its_target_less_the_households_offset(
     assert get_order(client, draft["id"])["decide_by_date"] == decide_by
     # The first order had nothing before it to decide by.
     assert get_order(client, first["id"])["decide_by_date"] is None
+    # Reminders start the household's lead before the decide-by date: moved by both.
+    assert next_order(client)["reminders_start_date"] == (target - timedelta(days=5)).isoformat()
+    ok(client.patch("/v1/household", headers=as_user(DAD), json={"reminder_lead_days": 0}))
+    assert next_order(client)["reminders_start_date"] == decide_by
 
 
 # Settings.
@@ -1325,17 +1339,29 @@ def test_members_set_their_own_notification_time_and_time_zone(client: TestClien
     assert ok(patch_personal(client, {"notification_time": "06:45"})) == {
         "notification_time": "06:45:00",
         "time_zone": None,
+        "reminders_on": True,
     }
     # The zone is set on its own (the app reports it), leaving the time.
     assert ok(patch_personal(client, {"time_zone": FAR_EAST})) == {
         "notification_time": "06:45:00",
         "time_zone": FAR_EAST,
+        "reminders_on": True,
     }
+    # Daily reminders switched off, leaving the rest.
+    assert ok(patch_personal(client, {"reminders_on": False}))["reminders_on"] is False
 
     me = ok(client.get("/v1/me", headers=as_user(MOM)))
     dad = ok(client.get("/v1/me", headers=as_user(DAD)))
-    assert me["settings"] == {"notification_time": "06:45:00", "time_zone": FAR_EAST}
-    assert dad["settings"] == {"notification_time": "08:00:00", "time_zone": None}
+    assert me["settings"] == {
+        "notification_time": "06:45:00",
+        "time_zone": FAR_EAST,
+        "reminders_on": False,
+    }
+    assert dad["settings"] == {
+        "notification_time": "08:00:00",
+        "time_zone": None,
+        "reminders_on": True,
+    }
 
 
 @pytest.mark.parametrize(
@@ -1348,6 +1374,8 @@ def test_members_set_their_own_notification_time_and_time_zone(client: TestClien
         {"notification_time": "07:30:15"},
         {"notification_time": "07:30+02:00"},
         {"notification_time": "25:00"},
+        {"reminders_on": None},
+        {"reminders_on": "sometimes"},
     ],
     ids=[
         "nothing",
@@ -1357,6 +1385,8 @@ def test_members_set_their_own_notification_time_and_time_zone(client: TestClien
         "seconds",
         "with a zone",
         "not a time",
+        "reminders null",
+        "reminders not a switch",
     ],
 )
 def test_personal_settings_that_are_not_valid_are_refused(
@@ -1367,6 +1397,7 @@ def test_personal_settings_that_are_not_valid_are_refused(
     assert ok(client.get("/v1/me", headers=as_user(MOM)))["settings"] == {
         "notification_time": "08:00:00",
         "time_zone": None,
+        "reminders_on": True,
     }
 
 

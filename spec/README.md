@@ -31,10 +31,18 @@ Settings, as reviewed:
 - The mockup's Dislikes row isn't built, and won't be: ratings and "not for us" cover it.
 - Members is a read-only row listing everyone in the household ("You, Sam"), with no chevron; adding and removing members isn't scheduled yet.
 - Default servings is a stepper (1–12), like the decide-by and reminder days, not the mockup's placeholder row.
-- "Allow notifications" comes with Notifications (build step 6).
 - The Household group starts with the household's Name; Account has Your name and Email. A name changes in a small dialog.
 - Settings has no preview of the next order's dates (the mockup's "With these settings, Order N"): settings hold settings.
 - The "By order" / "All meals" switch's track is a tint of ink (8%), not the mockup's `--cc-fill-strong`, which is all but the color of the warm page behind it.
+
+Notifications, as decided:
+
+- "Your meal ideas are ready" goes only to the member who started the batch.
+- Tapping a notification opens the order flow only when the household's draft is the one it's about (a reminder's order, or the draft whose ideas are ready); otherwise it opens Home with an alert saying why (already placed, not started yet, or the draft was discarded), and Home's top card has the next step. A tap never starts a draft (the mockup opens the flow either way).
+- In the app, iOS shows no banner; "ideas ready" shows as the mockup's toast unless the order flow is open. Reminders show nothing extra (Home already shows the order's state).
+- Settings' Personal group has a "Daily reminders" switch (each member's own, kept by the server; on by default): off, that member gets no daily reminders. "Your meal ideas are ready" has no switch: it goes only to whoever asked for the ideas. While iOS doesn't allow Castle Chef's notifications on the phone, the group starts with a row saying so and a button: Allow (iOS's prompt, the first time) or Open Settings (after that). The mockup's "Allow notifications: On" row isn't built.
+- Where the mockup says "yours at 8:00 AM", a member whose reminders are off (the switch, or iOS) sees "yours are off" (the draft card: "your reminders are off").
+- The Dates and servings step's next-delivery row says what it sets for the following order in one line ("Order 5: decide by …, reminders start …"), not the mockup's "What this sets" group.
 
 ## Build order
 
@@ -45,12 +53,11 @@ One piece at a time, each through the UI with real data:
 3. History and ratings: past orders and all meals with search and filters; thumbs up, thumbs down, and favorite; the prompt to rate last week's meals; and "don't show meals like this" while picking (a household meal preference, like ratings) (done)
 4. Settings: household (decide-by offset, reminder lead, default servings, members, name) and personal (notification time, your name). (done)
 5. Dates, meals, and servings on one view: the order flow's step 3 (requirements "Ordering flow"), with each meal's servings stored in the order. (done)
-6. Notifications: the daily reminders and "ideas ready", "Allow notifications" in Settings, and the mockup's reminder text on Home and in the order flow (the strip's reminder marks, "Reminders start …, daily · yours at 8:00 AM", the "Reminders on" chip, and "Reminders start" in the next-delivery step). Each member's reminder goes out at their clock time in their phone's zone: a time skipped by a daylight saving change goes out when the clock jumps, a repeated one only once, and a member whose zone isn't known yet (hasn't opened the app) gets none. Needs an APNs key from the Apple Developer site.
+6. Notifications: the daily reminders and "ideas ready", "Allow notifications" in Settings, and the mockup's reminder text on Home and in the order flow (the strip's reminder marks, "Reminders start …, daily · yours at 8:00 AM", the "Reminders on" chip, and "Reminders start" in the next-delivery step). Each member's reminder goes out at their clock time in their phone's zone: a time skipped by a daylight saving change has no reminder that day (EventBridge Scheduler skips it), a repeated one goes out once, and a member whose zone isn't known yet (hasn't opened the app) gets none. (done)
 7. The rest of the order flow: the order lock, the shopping list (generated in the background, then edited), and the confirmation with the store orders.
 8. Household members from the app: adding and removing people (requirements "Household"). Needs its own design first: how someone is invited and joins (today the admin command creates their Neon Auth account and emailed codes sign them in), what happens to a person who leaves, and whether a household can end up empty.
 
 ## Open questions
 
-- The "ideas ready" notification: only the member who started the generation, or everyone?
 - Resuming a draft: back to the step where it was left, or to picking meals (as mocked)?
 - Home: should the current order's meals always be visible, even when another card is on top?

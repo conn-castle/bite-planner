@@ -1,5 +1,5 @@
 /*
- * spec/mockup.html: .pass, .pass.draft (.soon, .late, .gen, .ready), .pass-head,
+ * spec/mockup.html: .pass, .pass.draft (.remind, .soon, .late, .gen, .ready), .pass-head,
  * .pass-over, .pass-title, .pass-sub, .pass-body, .perf, .draft-row, .cover, .note
  */
 
@@ -30,6 +30,13 @@
   background: transparent;
   border: 1.5px dashed rgba(20, 19, 17, 0.2);
   box-shadow: none;
+}
+
+/* .pass.draft.remind */
+.remind {
+  background: var(--cc-bg);
+  border: 1.5px solid rgba(20, 19, 17, 0.1);
+  box-shadow: var(--cc-shadow-card);
 }
 
 .ready {

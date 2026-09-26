@@ -10,6 +10,7 @@ import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
 import { Skeleton } from '../../ui/Skeleton'
 import { MealPage } from '../meals/MealPage'
+import { setOrderFlowOpen } from '../notifications/notifications'
 import { suggestions } from './batches'
 import { DatesStep } from './DatesStep'
 import { FlowFrame } from './FlowFrame'
@@ -39,6 +40,12 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement }: OrderFl
   const queryClient = useQueryClient()
   const modal = useRef<HTMLIonModalElement>(null)
   const nav = useRef<HTMLIonNavElement>(null)
+
+  // While it's open, "ideas ready" needs no toast: the ideas show here.
+  useEffect(() => {
+    setOrderFlowOpen(isOpen)
+    return () => setOrderFlowOpen(false)
+  }, [isOpen])
 
   // Stable, or the nav would start over: it resets whenever its root changes.
   const root = useCallback(

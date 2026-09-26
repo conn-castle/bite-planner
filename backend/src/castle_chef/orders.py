@@ -488,3 +488,14 @@ def decide_by_date(session: Session, household_id: UUID, target: date | None) ->
         return None
     household = session.get_one(Household, household_id)
     return target - timedelta(days=household.decide_by_offset_days)
+
+
+def reminders_start_date(
+    session: Session, household_id: UUID, decide_by: date | None
+) -> date | None:
+    """The first day of the daily reminders to decide an order: its decide-by date
+    less the household's reminder lead. They go on daily until it's placed."""
+    if decide_by is None:
+        return None
+    household = session.get_one(Household, household_id)
+    return decide_by - timedelta(days=household.reminder_lead_days)

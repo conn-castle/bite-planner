@@ -58,3 +58,18 @@ runs:
           exit 1
         fi
         echo "Smoke test passed: $url" >> "$GITHUB_STEP_SUMMARY"
+    - name: Rebuild the reminder schedules
+      shell: bash
+      run: |
+        # Every member's schedule from the database (reminders.py `sync`): creates the
+        # missing, fixes the stale, deletes removed members'.
+        function=$(jq -er '.CastleChef.RemindersFunctionOutput' "$RUNNER_TEMP/cdk-outputs.json")
+        result="$RUNNER_TEMP/reminders-sync.json"
+        error=$(aws lambda invoke --function-name "$function" --cli-binary-format raw-in-base64-out \
+          --payload '{"version": 1, "sync": true}' --query FunctionError --output text "$result")
+        cat "$result"; echo
+        if [ "$error" != None ] || ! jq -e '.failed == 0 and (.upserted | type == "number")' "$result" > /dev/null; then
+          echo "::error::Rebuilding the reminder schedules failed (see above and the Reminders logs)"
+          exit 1
+        fi
+        echo "Reminder schedules: $(cat "$result")" >> "$GITHUB_STEP_SUMMARY"

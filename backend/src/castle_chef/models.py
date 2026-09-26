@@ -275,3 +275,19 @@ class AppUser(SQLModel, table=True):
     )
     # The phone's IANA zone, which the app reports; None until it first does.
     time_zone: str | None = None
+    # Whether they get the daily reminder to pick meals (a switch in Settings);
+    # "your meal ideas are ready" always goes out.
+    reminders_on: bool = Field(default=True, sa_column_kwargs={"server_default": "true"})
+    # The day (in `time_zone`) of the last reminder sent: at most one a day.
+    reminded_on: date | None = None
+
+
+class PushDevice(TimestampMixin, SQLModel, table=True):
+    """A phone that gets a user's notifications. The token is Apple's push address
+    for the app on that phone, so a phone someone else signs in on moves to them.
+    updated_at is the last time the app reported it."""
+
+    __tablename__ = "push_device"
+
+    token: str = Field(primary_key=True)
+    user_id: UUID = Field(foreign_key="app_user.user_id", ondelete="CASCADE", index=True)

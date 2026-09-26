@@ -24,6 +24,7 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
   created_at: '2026-09-24T09:00:00Z',
   target_date: null,
   decide_by_date: null,
+  reminders_start_date: null,
   earliest_delivery_date: '2026-09-25',
   delivery_date: null,
   next_delivery_date: null,
@@ -60,6 +61,7 @@ describe('cachedMealSummary', () => {
       number: 5,
       target_date: null,
       decide_by_date: null,
+      reminders_start_date: null,
       earliest_delivery_date: '2026-09-25',
       draft: draft('other', [meal('soup')]),
     })

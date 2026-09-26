@@ -21,8 +21,21 @@ function placed(number: number, delivery: string, next: string, placedAt = '2026
   }
 }
 
-function nextOrder(number: number, target: string | null, decideBy: string | null, draft: GroceryOrder | null = null): NextOrder {
-  return { number, target_date: target, decide_by_date: decideBy, earliest_delivery_date: '2026-09-25', draft }
+function nextOrder(
+  number: number,
+  target: string | null,
+  decideBy: string | null,
+  draft: GroceryOrder | null = null,
+  remindersStart: string | null = null,
+): NextOrder {
+  return {
+    number,
+    target_date: target,
+    decide_by_date: decideBy,
+    reminders_start_date: remindersStart,
+    earliest_delivery_date: '2026-09-25',
+    draft,
+  }
 }
 
 function draft(number: number, jobs: Job[]): GroceryOrder {
@@ -34,6 +47,7 @@ function draft(number: number, jobs: Job[]): GroceryOrder {
     created_at: '2026-09-23T12:00:00Z',
     target_date: '2026-09-28',
     decide_by_date: '2026-09-27',
+    reminders_start_date: null,
     earliest_delivery_date: '2026-09-25',
     delivery_date: null,
     next_delivery_date: null,
@@ -73,12 +87,24 @@ describe('phase', () => {
 })
 
 describe('urgency', () => {
+  const due = (decideBy: string | null, remindersStart: string | null = null) => ({
+    decide_by_date: decideBy,
+    reminders_start_date: remindersStart,
+  })
+
   it('is due today or tomorrow, late once the decide-by date passes, and calm before', () => {
-    expect(urgency({ decide_by_date: null }, TODAY)).toBe('first')
-    expect(urgency({ decide_by_date: '2026-09-23' }, TODAY)).toBe('late')
-    expect(urgency({ decide_by_date: TODAY }, TODAY)).toBe('soon')
-    expect(urgency({ decide_by_date: '2026-09-25' }, TODAY)).toBe('soon')
-    expect(urgency({ decide_by_date: '2026-09-26' }, TODAY)).toBe('calm')
+    expect(urgency(due(null), TODAY)).toBe('first')
+    expect(urgency(due('2026-09-23'), TODAY)).toBe('late')
+    expect(urgency(due(TODAY), TODAY)).toBe('soon')
+    expect(urgency(due('2026-09-25'), TODAY)).toBe('soon')
+    expect(urgency(due('2026-09-26', '2026-09-25'), TODAY)).toBe('calm')
+  })
+
+  it('is on reminders once they have started, before it is due', () => {
+    expect(urgency(due('2026-09-27', TODAY), TODAY)).toBe('remind')
+    expect(urgency(due('2026-09-27', '2026-09-22'), TODAY)).toBe('remind')
+    // Due tomorrow says so, reminders or not.
+    expect(urgency(due('2026-09-25', '2026-09-22'), TODAY)).toBe('soon')
   })
 })
 
@@ -120,6 +146,12 @@ describe('homeCards', () => {
     }
   })
 
+  it('puts an order on reminders before groceries on the way', () => {
+    const waiting = placed(4, '2026-09-26', '2026-10-01')
+    const next = nextOrder(5, '2026-10-01', '2026-09-28', null, '2026-09-24')
+    expect(kinds(homeCards([waiting], next, TODAY))).toEqual(['next (top)', 'order 4'])
+  })
+
   it('leaves out orders whose meals are all behind', () => {
     const finished = placed(2, '2026-09-18', '2026-09-22')
     expect(kinds(homeCards([finished], nextOrder(3, '2026-09-22', '2026-09-21'), TODAY))).toEqual(['next (top)'])
@@ -156,6 +188,18 @@ describe('homeStrip', () => {
     expect(day('2026-09-20')?.marks).toEqual([{ kind: 'decided' }])
   })
 
+  it('marks the days reminders go out: from their start, and after the decide-by date only through today', () => {
+    const reminding = (days: ReturnType<typeof homeStrip>) =>
+      days.filter((day) => day.marks?.some((mark) => mark.kind === 'reminder')).map((day) => day.date)
+
+    const ahead = homeStrip([], nextOrder(2, '2026-09-29', '2026-09-28', null, '2026-09-26'), TODAY)
+    // The decide-by day has its own mark.
+    expect(reminding(ahead)).toEqual(['2026-09-26', '2026-09-27'])
+
+    const overdue = homeStrip([], nextOrder(2, '2026-09-22', '2026-09-21', null, '2026-09-19'), TODAY)
+    expect(reminding(overdue)).toEqual(['2026-09-19', '2026-09-20', '2026-09-22', '2026-09-23', TODAY])
+  })
+
   it('marks a passed decide-by date as late', () => {
     const days = homeStrip([], nextOrder(2, '2026-09-23', '2026-09-22'), TODAY)
     expect(days.find((each) => each.date === '2026-09-22')?.marks).toEqual([{ kind: 'decide', late: true }])
@@ -167,23 +211,36 @@ describe('dayCaption', () => {
   const next = nextOrder(4, '2026-09-26', '2026-09-25')
 
   it('says which day of an order a covered day is', () => {
-    expect(dayCaption([onHand], next, TODAY)).toEqual({ order: 3, lines: ['Order 3 meals · day 3 of 4'] })
+    expect(dayCaption([onHand], next, TODAY, TODAY, '8:00 AM')).toEqual({ order: 3, lines: ['Order 3 meals · day 3 of 4'] })
   })
 
   it('names deliveries and the day to decide by', () => {
-    expect(dayCaption([onHand], next, '2026-09-25')).toEqual({
+    expect(dayCaption([onHand], next, '2026-09-25', TODAY, '8:00 AM')).toEqual({
       order: 3,
       lines: ['Order 3 meals · day 4 of 4', 'Decide Order 4'],
     })
-    expect(dayCaption([onHand], next, '2026-09-26')).toEqual({
+    expect(dayCaption([onHand], next, '2026-09-26', TODAY, '8:00 AM')).toEqual({
       order: 4,
       lines: ['Order 4 target delivery (not placed)'],
     })
   })
 
+  it("says when the member's reminder goes out", () => {
+    const reminding = nextOrder(4, '2026-09-26', '2026-09-25', null, '2026-09-23')
+    expect(dayCaption([onHand], reminding, TODAY, TODAY, '8:00 AM').lines).toEqual([
+      'Order 3 meals · day 3 of 4',
+      'Reminder 8:00 AM',
+    ])
+    expect(dayCaption([onHand], reminding, '2026-09-25', TODAY, '8:00 AM').lines).toEqual([
+      'Order 3 meals · day 4 of 4',
+      'Decide Order 4',
+      'Reminder 8:00 AM',
+    ])
+  })
+
   it('says when no meals cover a day, or nothing is planned', () => {
-    expect(dayCaption([onHand], next, '2026-10-10').lines).toEqual(['No meals covered'])
-    expect(dayCaption([], nextOrder(1, null, null), TODAY).lines).toEqual(['Nothing planned yet'])
+    expect(dayCaption([onHand], next, '2026-10-10', TODAY, '8:00 AM').lines).toEqual(['No meals covered'])
+    expect(dayCaption([], nextOrder(1, null, null), TODAY, TODAY, '8:00 AM').lines).toEqual(['Nothing planned yet'])
   })
 })
 
