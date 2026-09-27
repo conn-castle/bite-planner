@@ -22,41 +22,43 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
-from pydantic import ValidationError
+from castle_chef_agent.jobfiles import write_context
+from castle_chef_agent.meals import MealInput, MealsJob, load_meals, meal_problems
+from castle_chef_agent.server import Tools
+from pydantic import BaseModel, ValidationError
 from sqlmodel import Session, select
 
 from castle_chef import push, ratings, shopping
 from castle_chef.db import get_engine, get_session
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, finish_job
-from castle_chef.meals import MealInput, add_meals, load_meals
+from castle_chef.meals import add_meals
 from castle_chef.models import GroceryOrder, Job, JobKind, ListSource
 from castle_chef.notifications import ideas_ready, list_ready
 from castle_chef.settings import REPO_ROOT, get_settings
-from castle_chef.shopping import InvalidList, ListItemInput
+from castle_chef.shopping import InvalidList, ListEntry
 
 log = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# Grok flags that make the run bare: shell as the only tool and no subagents.
-# `al grok` supplies the model, reasoning effort, and `--no-memory` from
-# .agent-layer/config.toml. Grok's headless mode auto-approves every tool call,
-# so the sandbox profile below (or, in the worker container, the container) is
-# what limits the agent.
-SANDBOX_PROFILE = "castle-chef-agent"
+# Grok flags that make the run bare: the job's MCP tools are its only tools (no
+# shell, no files, no subagents). Grok reaches MCP tools through its search_tool
+# and use_tool, and starts the job directory's MCP server only in a trusted
+# folder. `al grok` supplies the model, reasoning effort, and `--no-memory` from
+# its project's .agent-layer/config.toml. Grok's headless mode auto-approves every
+# tool call; the worker container limits the MCP server.
 GROK_ARGS = [
     "--output-format", "json",
-    "--tools", "run_terminal_cmd",
-    "--disallowed-tools", "Agent,search_tool,use_tool",
+    "--tools", "search_tool,use_tool",
+    "--trust",
     "--max-turns", "60",
 ]  # fmt: skip
 
-# `strict`: read and write the job directory, read system paths, no network for
-# commands. The agent may also read what `castle-chef meal add` needs to run,
-# but nothing else in the repo (e.g. backend/.env) or the home directory.
-SANDBOX_TOML = Template("""[profiles.$name]
-extends = "strict"
-read_only = [$read_only]
+# The job's tools, as an MCP server Grok starts from the job directory's project
+# config: the agent's only tools (it gets no shell).
+MCP_TOML = Template("""[mcp_servers.castle-chef]
+command = "castle-chef"
+args = ["mcp", "$tools", "--job-dir", $job_dir]
 """)
 
 
@@ -86,9 +88,9 @@ class Meals:
 
 @dataclass(frozen=True)
 class ListItems:
-    """A build_list job's result: the checked items, and the picks they're for."""
+    """A build_list job's result: the checked items and staples, and the picks they're for."""
 
-    items: list[ListItemInput]
+    items: list[ListEntry]
     source: ListSource
 
 
@@ -263,21 +265,19 @@ def process_job(job: Job) -> JobResult:
         if job.list_source is None:
             raise AgentRunError(f"List job {job.id} has no picks to build from.")
         with get_session() as session:
-            prompt = shopping.build_list_prompt(session, job)
-        run_agent(job_dir, prompt)
-        items = shopping.load_items(job_dir)
-        shopping.check_items(items, job.list_source)
-        return ListItems(items=items, source=job.list_source)
+            scaled = shopping.scaled_meals(session, job.list_source)
+        lines = shopping.list_job(scaled)
+        run_agent(job_dir, shopping.build_list_prompt(scaled), Tools.SHOPPING_LIST, lines)
+        # Checked against the lines as the worker made them: the agent can write job.json.
+        return ListItems(items=shopping.finished_list(job_dir, lines), source=job.list_source)
 
     count = get_settings().meals_per_batch
     with get_session() as session:
         prompt = generate_meals_prompt(session, job, count)
-    run_agent(job_dir, prompt)
-
-    meals = load_meals(job_dir)
-    if len(meals) != count:
-        raise AgentRunError(f"Requested {count} meals, but the agent added {len(meals)}.")
-    return Meals(meals=meals)
+    run_agent(job_dir, prompt, Tools.MEALS, MealsJob(count=count))
+    if problems := meal_problems(job_dir, count):
+        raise AgentRunError(f"The agent didn't finish: {' '.join(problems)}")
+    return Meals(meals=load_meals(job_dir))
 
 
 def generate_meals_prompt(session: Session, job: Job, count: int) -> str:
@@ -302,7 +302,6 @@ def generate_meals_prompt(session: Session, job: Job, count: int) -> str:
     return Template(PROMPTS_DIR.joinpath("generate_meals.md").read_text()).substitute(
         count=count,
         avoid=avoid,
-        meal_schema=json.dumps(MealInput.model_json_schema(), indent=2),
     )
 
 
@@ -342,7 +341,7 @@ def login_agent(provider: str) -> int:
     for name in ["LANG", *settings.agent_env]:
         if name in os.environ:
             env[name] = os.environ[name]
-    command = [*shlex.split(settings.agent_command), "login", "--device-auth"]
+    command = [*shlex.split(required_agent_command()), "login", "--device-auth"]
     with agent_lock(provider=provider):
         log.info("agent.login_started", extra={"provider": provider})
         completed = subprocess.run(
@@ -360,6 +359,17 @@ def login_agent(provider: str) -> int:
         event, extra={"provider": provider, "returncode": completed.returncode}
     )
     return completed.returncode
+
+
+def required_agent_command() -> str:
+    """The agent harness's command; real agents run only in the worker image."""
+    command = get_settings().agent_command
+    if command is None:
+        raise AgentRunError(
+            "No agent command here: a real agent runs only in the worker image "
+            "(make worker-job JOB=<id> runs one locally)."
+        )
+    return command
 
 
 @contextmanager
@@ -380,22 +390,20 @@ def agent_lock(**fields: str) -> Iterator[None]:
         yield
 
 
-def run_agent(job_dir: Path, prompt: str) -> None:
+def run_agent(job_dir: Path, prompt: str, tools: Tools, context: BaseModel) -> None:
+    """Run the agent on the prompt in a new job directory, with the job's tools and
+    the context they check against."""
     settings = get_settings()
+    agent_command = required_agent_command()
     job_dir.mkdir(parents=True)
     prompt_path = job_dir / "prompt.md"
     prompt_path.write_text(prompt)
+    write_context(job_dir, context)
+    (job_dir / ".grok").mkdir()
+    (job_dir / ".grok" / "config.toml").write_text(
+        MCP_TOML.substitute(tools=tools.value, job_dir=json.dumps(str(job_dir)))
+    )
     venv_bin = Path(sys.executable).parent
-    sandbox_args: list[str] = []
-    if settings.agent_sandbox:
-        read_only = [Path(sys.prefix), Path(__file__).resolve().parents[1]]
-        (job_dir / ".grok").mkdir()
-        (job_dir / ".grok" / "sandbox.toml").write_text(
-            SANDBOX_TOML.substitute(
-                name=SANDBOX_PROFILE, read_only=", ".join(json.dumps(str(p)) for p in read_only)
-            )
-        )
-        sandbox_args = ["--sandbox", SANDBOX_PROFILE]
     project = prepare_agent_project()
     if settings.agent_uid is not None:
         # The agent writes its meals into the job directory.
@@ -403,19 +411,18 @@ def run_agent(job_dir: Path, prompt: str) -> None:
             os.chown(path, settings.agent_uid, settings.agent_uid)
 
     command = [
-        *shlex.split(settings.agent_command),
+        *shlex.split(agent_command),
         "--cwd", str(job_dir),
         "--prompt-file", str(prompt_path),
         *GROK_ARGS,
-        *sandbox_args,
     ]  # fmt: skip
     # A minimal environment: no database credentials or other secrets reach the agent.
     env = {
         "HOME": str(job_dir)
         if settings.agent_uid is not None
         else os.environ.get("HOME", str(job_dir)),
-        # Puts this environment's `castle-chef` executable first on the agent's PATH.
-        "PATH": f"{venv_bin}{os.pathsep}{os.environ.get('PATH', os.defpath)}",
+        "PATH": settings.agent_path
+        or f"{venv_bin}{os.pathsep}{os.environ.get('PATH', os.defpath)}",
         "CASTLE_CHEF_JOB_DIR": str(job_dir),
     }
     for name in ["LANG", *settings.agent_env]:

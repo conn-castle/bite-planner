@@ -97,14 +97,16 @@ export interface Job {
 }
 
 /** Where an item is in the store, in the store's order. */
-export type Aisle = 'produce' | 'meat_seafood' | 'dairy_eggs' | 'frozen' | 'pantry'
+export type Aisle = 'produce' | 'meat_seafood' | 'dairy_eggs' | 'frozen' | 'pantry' | 'other'
 
 /** An item of an order's shopping list. */
 export interface ShoppingItem {
   id: string
   name: string
-  /** What's ordered, in `unit` (a count when null); null when the recipes give no amount. */
+  /** What's ordered, in `unit` (a count when null): the member's amount, or the recipes'; null when they give none. */
   quantity: number | null
+  /** The amount worked out for the recipes, which the member can go back to. */
+  recipe_quantity: number | null
   unit: string | null
   aisle: Aisle
   /** The picked meals it's for. */

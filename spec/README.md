@@ -48,9 +48,13 @@ Notifications, as decided:
 The shopping list, as built (stages 1 and 2; the mockup has the list step but not its waiting, its on-hand items, or changing amounts):
 
 - While the list is made, its step shows the same waiting screen as "Finding meals" (the orb, how long it has taken, Notify me), titled "Making your shopping list". "Your shopping list is ready" goes to whoever left Servings, and its tap opens the flow at the list.
-- Items assumed on hand are behind a small button under the list's summary ("3 items assumed on hand", with a check); tapping it says which ones these recipes use.
-- An item's amount changes by tapping it: a stepper opens under the item (whole steps for things counted, ¼ or ½ for small amounts in units).
-- The list's summary is "to order", "removed", and the delivery day, as mocked; the Review step has a Shopping list row ("12 items", "2 items removed") that goes back to it.
+- Items assumed on hand are behind an info button under the list's summary ("ⓘ 3 items assumed on hand"); tapping it opens a small dialog in the middle of the screen (ui/InfoDialog) listing the ones these recipes use, closed with Got it.
+- The list has a sixth aisle, Other (after Pantry), for items no other aisle fits; the mockup has five.
+- Each aisle is a card with a thin border on the white page, its head a band in the aisle's own soft color with its name and count ("Produce … 4"); the mockup has a small grey heading with the count at the far right. The aisle colors are their own set (theme/tokens.css), apart from the order colors. It leaves room for a product picture at the start of each row later (stage 3).
+- In the list step, each item ends with its amount's stepper (whole steps for things counted, ¼ or ½ for small amounts in units) and a red ×, not the mockup's amount at the start and − / Restore. The × is red with no background; tapping it crosses the whole item out (its name in red) and greys out its stepper at the amount it had, and tapping it again puts the item back. Once an amount was changed, the line under the item's name says "Recipes need 2¼ lb · Reset" (in place of its meals, so nothing moves), and Reset puts it back to that amount (the server keeps both). The controls stay at the row's end, where iOS puts a row's controls (Apple's guidance leads a row with its picture or text). A placed order's list (read-only) keeps the mockup's amount at the start.
+- The list's summary is "to order", "removed", and the delivery day, as mocked.
+- The Review step (not in the mockup) starts with the order as a card in its color ("Ready to place", when it arrives, the days it covers, the counts of meals, servings, and items, and the next order's dates, which aren't decided yet: "Order 5 would need to arrive by Fri 16 · decide by Thu 15"; no meal pictures, since the meals are listed under it), then its meals, dates, and shopping list as rows that go back to change them.
+- A recipe opened from Pick meals, for a meal not picked yet, shows the recipe's own servings ("Serves 4") with no stepper: only a pick has servings to choose.
 
 The order lock, as decided:
 

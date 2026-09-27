@@ -75,3 +75,8 @@
   min-width: 20px;
   font-size: 15px;
 }
+
+/* Can't change: its value greyed out with its buttons. */
+.disabled .value {
+  color: var(--cc-ink-3);
+}

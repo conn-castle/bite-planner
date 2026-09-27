@@ -107,7 +107,8 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId, 
 /** Pushes a recipe onto the flow's nav: at a pick's servings, when it's one. */
 async function openMeal(nav: HTMLIonNavElement | null, mealId: string, servings: number | undefined) {
   if (!nav) return
-  await nav.push(() => <MealPage mealId={mealId} servings={servings} />)
+  // A meal not picked yet has no servings of its own to show or change.
+  await nav.push(() => <MealPage mealId={mealId} servings={servings} suggestion={servings === undefined} />)
   // A recipe once opened as a blank card (its page left invisible); report it if that happens again.
   const page = (await nav.getActive())?.element
   if (page && getComputedStyle(page).opacity === '0') {

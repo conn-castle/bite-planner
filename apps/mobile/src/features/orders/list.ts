@@ -50,12 +50,6 @@ export function listCounts(items: ShoppingItem[]): { ordered: number; removed: n
   return { ordered: toBuy.filter((item) => !item.removed).length, removed: toBuy.filter((item) => item.removed).length }
 }
 
-/** "salt, pepper, and olive oil". */
-export function spokenList(names: string[]): string {
-  if (names.length <= 2) return names.join(' and ')
-  return `${names.slice(0, -1).join(', ')}, and ${names.at(-1)}`
-}
-
 /** The order's list, if it's ready for its picks now. */
 export function readyList(order: Pick<GroceryOrder, 'shopping_list'>): ShoppingList | null {
   return order.shopping_list?.current ? order.shopping_list : null

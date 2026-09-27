@@ -57,8 +57,8 @@ class Settings(BaseSettings):
     apns_key: str | None = None
     apns_key_id: str | None = None
 
-    # How the API starts a job: `sqs` (the queue on AWS) or `local` (a
-    # `castle-chef job run` subprocess, for development).
+    # How the API starts a job: `sqs` (the queue on AWS) or `local` (the worker
+    # image in Docker on this machine, as Fargate runs it: scripts/worker-docker.sh).
     job_dispatch: Literal["sqs", "local"] = "local"
     jobs_queue_url: str | None = None
     # Suggestions per batch (a `generate_meals` job).
@@ -68,12 +68,14 @@ class Settings(BaseSettings):
 
     # Hard limit for one agent run.
     agent_timeout_seconds: int = 900
-    # Command that starts the agent harness; Grok flags are appended to it.
-    agent_command: str = "al -q grok"
-    # Run the agent inside Grok's own sandbox profile (see worker.py). Off in the
-    # worker container, which is the sandbox there (Grok's needs kernel
-    # privileges Fargate doesn't grant).
-    agent_sandbox: bool = True
+    # Command that starts the agent harness; Grok flags are appended to it. Set in
+    # the worker image (`al -q grok`), which is where a real agent runs; unset, a
+    # job fails rather than run an agent on this machine (tests set a fake one).
+    agent_command: str | None = None
+    # The agent's PATH, exactly (the worker image: the agent's own `castle-chef`
+    # and system commands, nothing of the backend). None: this environment's
+    # `castle-chef` first, then the worker's PATH.
+    agent_path: str | None = None
     # Run the agent as this uid/gid (the worker container runs as root and
     # starts the agent as an unprivileged user); None: as the worker's user.
     agent_uid: int | None = None

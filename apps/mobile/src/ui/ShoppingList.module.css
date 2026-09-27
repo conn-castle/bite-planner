@@ -1,46 +1,60 @@
-/* spec/mockup.html: .aisle, .li-row (.q, .nm, .rm, .rs, .out) */
+/* spec/mockup.html: .aisle, .li-row (.q, .nm, .out); editable rows as reviewed */
+/* Each aisle: a card with a thin border, its head a band in the aisle's color (a review decision). */
+.card {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 0.5px solid var(--cc-card-line);
+  border-radius: var(--cc-radius-md);
+  background: var(--cc-bg);
+  box-shadow: var(--cc-shadow-line);
+}
+
 .aisle {
   display: flex;
   justify-content: space-between;
-  margin: 22px 0 6px;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--cc-ink-3);
+  align-items: baseline;
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--aisle-soft);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--aisle-deep);
 }
 
-.item {
-  border-bottom: 0.5px solid var(--cc-hairline);
+.count {
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.7;
 }
 
 .row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  margin: 0 14px;
   padding: 10px 0;
+  border-bottom: 0.5px solid var(--cc-hairline);
 }
 
+.row:last-child {
+  border-bottom: 0;
+}
+
+/* Read-only: the amount leads the row. */
 .amount {
   flex: none;
   width: 62px;
   font-size: 14.5px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-  text-align: left;
 }
 
-/* Its amount opens the control to change it. */
-.change {
-  appearance: none;
-  border: 0;
-  padding: 0;
-  background: none;
-  font: inherit;
+/* Editable: an amount that can't change (none given, or the item is off the list). */
+.fixedAmount {
+  flex: none;
   font-size: 14.5px;
   font-weight: 650;
-  color: var(--cc-ink);
-  text-decoration: underline dotted var(--cc-ink-3);
-  text-underline-offset: 3px;
-  cursor: pointer;
+  font-variant-numeric: tabular-nums;
 }
 
 .name {
@@ -69,52 +83,62 @@
 
 .removed {
   font-weight: 600;
-  color: var(--cc-ink-2);
+  color: var(--cc-danger);
+}
+
+/* Taken off the list: crossed out, its name in red. */
+.out .amount,
+.out .fixedAmount,
+.out .name b {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--cc-danger) 45%, transparent);
+}
+
+.out .name b {
+  color: color-mix(in srgb, var(--cc-danger) 75%, var(--cc-ink));
 }
 
 .out .amount,
-.out .name b {
+.out .fixedAmount {
   color: var(--cc-ink-3);
-  text-decoration: line-through;
-  text-decoration-color: rgba(20, 19, 17, 0.3);
 }
 
+/* A changed item's line: what the recipes need (cut short if it must), then Reset, whole. */
+.name small.changed {
+  display: flex;
+  gap: 4px;
+}
+
+.changed span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Back to the recipes' amount, in the line under a changed item's name. */
+.reset {
+  flex: none;
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 650;
+  color: var(--cc-accent);
+  cursor: pointer;
+}
+
+/* The red ×: tap it to take the item off the list, and again to put it back. */
 .remove {
   flex: none;
   display: grid;
   place-items: center;
   width: 30px;
   height: 30px;
+  padding: 0;
   border: 0;
-  border-radius: 50%;
-  background: var(--cc-fill);
-  color: var(--cc-ink-2);
-  font-size: 15px;
-}
-
-.restore {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 30px;
-  padding: 0 11px;
-  border: 0;
-  border-radius: var(--cc-radius-pill);
-  background: var(--cc-fill);
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 650;
-  color: var(--cc-ink);
-}
-
-.restore svg {
-  font-size: 13px;
-}
-
-/* The control to change an item's amount, under it. */
-.control {
-  display: flex;
-  justify-content: flex-end;
-  padding: 0 0 10px;
+  background: none;
+  color: var(--cc-danger);
+  font-size: 17px;
+  cursor: pointer;
 }

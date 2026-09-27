@@ -123,8 +123,11 @@ class ShoppingItemOut(BaseModel):
 
     id: UUID
     name: str
-    # What's ordered, in `unit` (a count when null); null when the recipes give no amount.
+    # What's ordered, in `unit` (a count when null): the member's amount, or the
+    # one worked out for the recipes; null when the recipes give no amount.
     quantity: float | None
+    # The amount worked out for the recipes, which the member can go back to.
+    recipe_quantity: float | None
     unit: str | None
     aisle: Aisle
     # The picked meals it's for.
@@ -515,7 +518,17 @@ def own_lock(session: Session, order: GroceryOrder, user_id: UUID) -> OrderLockO
 
 
 def item_out(item: ShoppingListItem) -> ShoppingItemOut:
-    return ShoppingItemOut.model_validate(item, from_attributes=True)
+    return ShoppingItemOut(
+        id=item.id,
+        name=item.name,
+        quantity=item.quantity if item.changed_quantity is None else item.changed_quantity,
+        recipe_quantity=item.quantity,
+        unit=item.unit,
+        aisle=item.aisle,
+        meal_ids=item.meal_ids,
+        on_hand=item.on_hand,
+        removed=item.removed,
+    )
 
 
 def shopping_list_out(
@@ -612,6 +625,7 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     orders.NotReady: status.HTTP_409_CONFLICT,
     orders.ListNotCurrent: status.HTTP_409_CONFLICT,
     orders.ItemNotFound: status.HTTP_404_NOT_FOUND,
+    orders.NoAmount: status.HTTP_409_CONFLICT,
     NothingToList: status.HTTP_409_CONFLICT,
     orders.NotForUs: status.HTTP_409_CONFLICT,
     JobIdTaken: status.HTTP_409_CONFLICT,

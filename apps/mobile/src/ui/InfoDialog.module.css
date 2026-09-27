@@ -1,0 +1,59 @@
+/* A small dialog with more about something (not in the mockup: designed in review). */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  /* Over Ionic's overlays (the order flow's card). */
+  z-index: 30000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 19, 17, 0.32);
+  animation: fade 200ms var(--cc-ease) both;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* As wide as a phone's alert, as tall as what it says. */
+.dialog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(320px, 100%);
+  padding: 24px 20px 20px;
+  border-radius: var(--cc-radius-lg);
+  background: var(--cc-bg);
+  box-shadow: var(--cc-shadow-float);
+  text-align: center;
+  animation: pop 260ms var(--cc-ease) both;
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+.badge {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--cc-success-soft);
+  color: var(--cc-success);
+  font-size: 24px;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--cc-font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}

@@ -14,10 +14,22 @@ interface StepperProps {
   step?: number
   /** How the value reads, e.g. "1½". */
   format?: (value: number) => string
+  /** Greyed out at its value, and can't change (e.g. its item is off the list). */
+  disabled?: boolean
 }
 
 /** A − value + control. The value animates as it changes. */
-export function Stepper({ value, min, max, onChange, label, inRow, step: by = 1, format = String }: StepperProps) {
+export function Stepper({
+  value,
+  min,
+  max,
+  onChange,
+  label,
+  inRow,
+  step: by = 1,
+  format = String,
+  disabled = false,
+}: StepperProps) {
   function step(delta: number) {
     // Rounded, so steps of ¼ don't drift.
     const next = Math.min(max, Math.max(min, Math.round((value + delta * by) * 100) / 100))
@@ -27,12 +39,17 @@ export function Stepper({ value, min, max, onChange, label, inRow, step: by = 1,
   }
 
   return (
-    <div className={`${styles.stepper} ${inRow ? styles.inRow : ''}`} role="group" aria-label={label}>
+    <div
+      className={[styles.stepper, inRow && styles.inRow, disabled && styles.disabled].filter(Boolean).join(' ')}
+      role="group"
+      aria-label={label}
+      aria-disabled={disabled}
+    >
       <button
         type="button"
         className={`${styles.step} cc-hit`}
         onClick={() => step(-1)}
-        disabled={value <= min}
+        disabled={disabled || value <= min}
         aria-label={`Fewer ${label.toLowerCase()}`}
       >
         −
@@ -44,7 +61,7 @@ export function Stepper({ value, min, max, onChange, label, inRow, step: by = 1,
         type="button"
         className={`${styles.step} cc-hit`}
         onClick={() => step(1)}
-        disabled={value >= max}
+        disabled={disabled || value >= max}
         aria-label={`More ${label.toLowerCase()}`}
       >
         +

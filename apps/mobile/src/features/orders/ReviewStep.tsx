@@ -1,10 +1,15 @@
 import type { GroceryOrder, ISODate } from '../../lib/api/types'
-import { formatDate } from '../../lib/dates'
+import { addDays, formatDate } from '../../lib/dates'
 import { haptics } from '../../lib/haptics'
 import { Button } from '../../ui/Button'
+import { Chip } from '../../ui/Chip'
 import { Group, Row } from '../../ui/Group'
 import { Notice } from '../../ui/Notice'
+import { Icon } from '../../ui/Icon'
+import { OrderCard, OrderCardBody } from '../../ui/OrderCard'
+import { Stats } from '../../ui/Stats'
 import { MealRow } from '../meals/MealRow'
+import { useHousehold } from '../settings/settings'
 import { pickedMeals } from './batches'
 import { coveredDays, dayRange } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
@@ -12,7 +17,7 @@ import { plural } from './format'
 import { listCounts } from './list'
 import { useOrderSession } from './lock'
 import { useEditsPending, usePlaceOrder } from './orders'
-import styles from './Steps.module.css'
+import styles from './ReviewStep.module.css'
 import { stepIndex } from './steps'
 
 interface ReviewStepProps {
@@ -27,15 +32,21 @@ interface ReviewStepProps {
   onClose: () => void
 }
 
-/** The order as it will be placed: its meals and servings, and its dates; then Place order. */
+/**
+ * The order as it will be placed: a card in its color with when it arrives and
+ * what's in it, then its meals, dates, and shopping list, each a way back to
+ * change it; then Place order.
+ */
 export function ReviewStep({ order, delivery, next, onOpenMeal, onChange, onBack, onClose }: ReviewStepProps) {
   const session = useOrderSession()
+  const household = useHousehold().shown
   const place = usePlaceOrder()
   // Placing waits until every change is saved, so the order placed is the one shown.
   const saving = useEditsPending()
   const meals = pickedMeals(order)
   const servings = meals.reduce((total, pick) => total + pick.servings, 0)
   const counts = listCounts(order.shopping_list?.items ?? [])
+  const covered = coveredDays(delivery, next)
 
   function placeOrder() {
     place.mutate(
@@ -50,11 +61,11 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onChange, onBack
       onBack={onBack}
       onClose={onClose}
       title="Review"
-      lede={`Check Order ${order.number}, then place it.`}
+      lede="Everything look right? Place it, and the groceries are on their way."
       footer={
         <>
           <FooterSummary
-            title={`${plural(meals.length, 'meal')} · ${plural(servings, 'serving')}`}
+            title={`${plural(counts.ordered, 'item')} · ${plural(meals.length, 'meal')}`}
             detail={`Arrives ${formatDate(delivery, 'medium')}`}
           />
           <Button variant="accent" large onClick={placeOrder} disabled={saving || place.isPending}>
@@ -68,32 +79,62 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onChange, onBack
           <Notice>Couldn't place the order: {place.error.message}</Notice>
         </div>
       )}
-      <div className={styles.groups}>
-        <Group title="Dates">
-          <Row
-            label="Delivery"
-            detail={formatDate(delivery, 'medium')}
-            chevron
-            onClick={() => onChange('delivery')}
-          />
-          <Row
-            label="Next delivery"
-            sub={`Meals cover ${dayRange(coveredDays(delivery, next))}`}
-            detail={formatDate(next, 'medium')}
-            chevron
-            onClick={() => onChange('next')}
-          />
-        </Group>
+      <div className={styles.wide}>
+        <OrderCard
+          className={styles.card}
+          number={order.number}
+          look="placed"
+          chip={
+            <Chip tone="accent" icon="spark">
+              Ready to place
+            </Chip>
+          }
+          title={`Arrives ${formatDate(delivery, 'long')}`}
+          subtitle={`Covers ${dayRange(covered)} · ${plural(covered.length, 'day')}`}
+        >
+          <OrderCardBody>
+            <Stats
+              className={styles.stats}
+              stats={[
+                { value: meals.length, label: meals.length === 1 ? 'meal' : 'meals' },
+                { value: servings, label: servings === 1 ? 'serving' : 'servings' },
+                { value: counts.ordered, label: counts.ordered === 1 ? 'item' : 'items' },
+              ]}
+            />
+            {household && (
+              <p className={styles.next}>
+                <Icon name="cal" />
+                <span>
+                  Order {order.number + 1} would need to arrive by <b>{formatDate(next, 'short')}</b> · decide by{' '}
+                  {formatDate(addDays(next, -household.decide_by_offset_days), 'short')}
+                </span>
+              </p>
+            )}
+          </OrderCardBody>
+        </OrderCard>
+
         <Group title="Meals">
           {meals.map(({ meal, servings: count }) => (
             <MealRow key={meal.id} meal={meal} servings={count} onOpen={() => onOpenMeal(meal.id, count)} />
           ))}
           <Row label="Change servings" chevron onClick={() => onChange('servings')} />
         </Group>
+
+        <Group title="Dates">
+          <Row label="Delivery" detail={formatDate(delivery, 'medium')} chevron onClick={() => onChange('delivery')} />
+          <Row
+            label="Next delivery"
+            sub={`Order ${order.number + 1}`}
+            detail={formatDate(next, 'medium')}
+            chevron
+            onClick={() => onChange('next')}
+          />
+        </Group>
+
         <Group title="Shopping list">
           <Row
-            label={plural(counts.ordered, 'item')}
-            sub={counts.removed > 0 ? `${plural(counts.removed, 'item')} removed` : undefined}
+            label={`${plural(counts.ordered, 'item')} to order`}
+            sub={counts.removed > 0 ? `${plural(counts.removed, 'item')} removed` : 'Everything the recipes need'}
             chevron
             onClick={() => onChange('list')}
           />

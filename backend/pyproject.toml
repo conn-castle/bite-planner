@@ -9,6 +9,7 @@ requires-python = ">=3.14"
 # What the worker needs; the API also needs the `api` group.
 dependencies = [
     "alembic>=1.20.0",
+    "castle-chef-agent",
     "httpx2[http2]>=2.13.1",
     "psycopg[binary]>=3.3.6",
     "pydantic-settings>=2.15.0",
@@ -40,6 +41,13 @@ dev = [
 
 [tool.uv]
 default-groups = ["api", "dev"]
+
+[tool.uv.workspace]
+# The agent's commands: installed on their own for the agent (docker/Dockerfile).
+members = ["agent"]
+
+[tool.uv.sources]
+castle-chef-agent = { workspace = true }
 
 [tool.ruff]
 line-length = 100

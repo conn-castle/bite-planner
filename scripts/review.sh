@@ -33,6 +33,11 @@ fi
 output=".agent-layer/tmp/reviews/review-$(date +%Y%m%d-%H%M%S).json"
 mkdir -p "$(dirname "$output")"
 
+# Jobs run in the worker image, as on Fargate (scripts/worker-docker.sh): build it
+# from the working tree first.
+echo "Building the worker image…"
+scripts/worker-docker.sh build >/dev/null
+
 # Each server gets its own process group, so stopping it stops its children too.
 set -m
 (cd backend && exec uv run uvicorn castle_chef.api:app --reload) </dev/null &

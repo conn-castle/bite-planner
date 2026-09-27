@@ -6,7 +6,8 @@ import { plural } from './format'
 /** An order's dates: calendar days ("2026-09-28"), with the arithmetic in lib/dates.ts. */
 
 // Delivery days offered past the default, so there is a choice either way.
-const DELIVERY_CHOICES = 14
+// The delivery days run this long past the last day with meals (or today, once that has passed).
+const DAYS_PAST_COVERED = 30
 const NEXT_DELIVERY_CHOICES_PAST_DEFAULT = 7
 
 type DeliveryLimits = Pick<GroceryOrder, 'target_date' | 'earliest_delivery_date'>
@@ -69,9 +70,9 @@ type DeliveryBarOrder = Pick<GroceryOrder, 'number' | 'target_date' | 'earliest_
  * The days to choose this order's delivery from. The bar starts at the last
  * day the previous order's meals cover (the day before the target date), or
  * at today once that has passed, so the user sees where they are; today
- * itself can't be chosen. It runs two weeks past the earliest delivery date,
- * further if the target or the chosen date is later, and back to a chosen
- * date that is earlier than the start.
+ * itself can't be chosen. It runs 30 days past where it starts (the last
+ * covered day, or today), further if the chosen date is later, and
+ * back to a chosen date that is earlier than the start.
  */
 export function deliveryBar(order: DeliveryBarOrder, today: ISODate): BarDay[] {
   const { number, target_date: target, earliest_delivery_date: earliest } = order
@@ -79,7 +80,7 @@ export function deliveryBar(order: DeliveryBarOrder, today: ISODate): BarDay[] {
   const lastCovered = target === null ? null : addDays(target, -1)
   const start = lastCovered !== null && lastCovered > today ? lastCovered : today
   const first = shown !== null && shown < start ? shown : start
-  const last = latest(addDays(earliest, DELIVERY_CHOICES - 1), target, shown)
+  const last = latest(addDays(start, DAYS_PAST_COVERED), target, shown)
   const targetPassed = target !== null && target < earliest
   return dateRange(first, last).map((date) => ({
     date,
@@ -151,9 +152,11 @@ export function nextDeliveryWhy(delivery: ISODate, next: ISODate, meals: number,
   const days = coveredDays(delivery, next)
   const span = dayRange(days, locale)
   if (days.length === meals) return `${plural(meals, 'meal')}, one a day, cover ${span}.`
-  return `${plural(meals, 'meal')} cover ${plural(days.length, 'day')}, ${span}.${
-    days.length > meals ? ' Some days need leftovers or takeout.' : ' Some meals carry past the next delivery.'
-  }`
+  const extra =
+    days.length > meals
+      ? `${plural(days.length - meals, 'day')} ${days.length - meals === 1 ? 'needs' : 'need'} leftovers or takeout.`
+      : `${plural(meals - days.length, 'meal')} ${meals - days.length === 1 ? 'carries' : 'carry'} past the next delivery.`
+  return `${plural(meals, 'meal')} cover ${plural(days.length, 'day')}, ${span}. ${extra}`
 }
 
 /**

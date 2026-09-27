@@ -71,6 +71,10 @@ class ItemNotFound(Exception):
     pass
 
 
+class NoAmount(Exception):
+    """The item has no amount to change (its recipes give none)."""
+
+
 class ListNotCurrent(Exception):
     """The shopping list isn't ready for the order's picks; the message says why."""
 
@@ -475,8 +479,9 @@ def change_item(
     quantity: float | None,
 ) -> None:
     """Take an item off the draft's list (or put it back), or change how much of
-    it to buy. Only the current list's items to buy can change: a list made for
-    other picks is about to be replaced."""
+    it to buy (the amount worked out for the recipes resets it). Only the
+    current list's items to buy can change: a list made for other picks is
+    about to be replaced."""
     lock_draft(session, household_id, order_id, orderer)
     newest = shopping.newest_build(session, order_id)
     item = session.get(ShoppingListItem, item_id)
@@ -488,8 +493,12 @@ def change_item(
         raise ListNotCurrent(problem)
     if removed is not None:
         item.removed = removed
+    if quantity is not None and item.quantity is None:
+        session.rollback()
+        raise NoAmount("The recipes give no amount for this item, so there's none to change.")
     if quantity is not None:
-        item.quantity = quantity
+        # Back at the amount worked out for the recipes: no change of its own.
+        item.changed_quantity = None if quantity == item.quantity else quantity
     session.add(item)
     session.commit()
 

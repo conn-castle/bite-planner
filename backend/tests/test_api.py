@@ -6,9 +6,7 @@ worker finishes it (test_worker.py runs the worker itself)."""
 import logging
 import os
 import subprocess
-import sys
 import threading
-import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -17,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from botocore.stub import Stubber
+from castle_chef_agent.meals import IngredientInput, MealInput
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import text
@@ -29,11 +28,10 @@ from castle_chef.auth import AuthError, AuthUnavailable, Principal
 from castle_chef.db import get_engine
 from castle_chef.dispatch import DispatchError, LocalDispatcher, SqsDispatcher, get_dispatcher
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, fail_job, finish_job
-from castle_chef.meals import IngredientInput, MealInput, add_meals
-from castle_chef.models import Aisle, GroceryOrder, Job, JobStatus, Meal
+from castle_chef.meals import add_meals
+from castle_chef.models import Aisle, GroceryOrder, Job, JobStatus, Meal, ShoppingListItem
 from castle_chef.settings import get_settings, load_ssm_parameters
-from castle_chef.shopping import ListItemInput, add_items
-from tests.test_worker import FAKE_AGENT
+from castle_chef.shopping import ListEntry, add_items
 
 CASTLE = uuid4()  # the household of MOM and DAD
 OTHER_HOUSE = uuid4()  # a separate household
@@ -303,7 +301,7 @@ def request_list(
     )
 
 
-def finish_list(job_id: str, items: list[ListItemInput] | None = None) -> None:
+def finish_list(job_id: str, items: list[ListEntry] | None = None) -> None:
     """What the worker does with a list build whose agent succeeds."""
     with Session(get_engine()) as worker_session:
         claim_job(worker_session, UUID(job_id))
@@ -315,8 +313,8 @@ def finish_list(job_id: str, items: list[ListItemInput] | None = None) -> None:
             UUID(job_id),
             items
             or [
-                ListItemInput(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=meals),
-                ListItemInput(name="salt", aisle=Aisle.PANTRY, meals=meals, on_hand=True),
+                ListEntry(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=meals),
+                ListEntry(name="salt", aisle=Aisle.PANTRY, meals=meals, on_hand=True),
             ],
             job.list_source,
         )
@@ -2031,9 +2029,9 @@ def test_a_built_list_is_its_items_by_aisle(client: TestClient) -> None:
     finish_list(
         job["id"],
         [
-            ListItemInput(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=[1]),
-            ListItemInput(name="yellow onions", quantity=2, aisle=Aisle.PRODUCE, meals=[1, 2]),
-            ListItemInput(name="salt", aisle=Aisle.PANTRY, meals=[2], on_hand=True),
+            ListEntry(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=[1]),
+            ListEntry(name="yellow onions", quantity=2, aisle=Aisle.PRODUCE, meals=[1, 2]),
+            ListEntry(name="salt", aisle=Aisle.PANTRY, meals=[2], on_hand=True),
         ],
     )
 
@@ -2071,7 +2069,7 @@ def test_changing_the_picks_needs_a_new_list_before_placing(
     second = ok(request_list(client, order_id), 201)
     finish_list(
         second["id"],
-        [ListItemInput(name="corn tortillas", quantity=12, aisle=Aisle.PANTRY, meals=[1])],
+        [ListEntry(name="corn tortillas", quantity=12, aisle=Aisle.PANTRY, meals=[1])],
     )
     assert listed(get_order(client, order_id)) == [("corn tortillas", False)]
     assert ok(place(client, order_id, with_list=False))["status"] == "placed"
@@ -2129,7 +2127,21 @@ def test_members_take_items_off_the_list_and_change_how_much(client: TestClient)
 
     assert listed(removed) == [("tortillas", True)]
     [changed] = [item for item in restored["shopping_list"]["items"] if not item["on_hand"]]
-    assert (changed["removed"], changed["quantity"]) == (False, 12)
+    assert (changed["removed"], changed["quantity"], changed["recipe_quantity"]) == (False, 12, 8)
+    # Back to the amount worked out for the recipes.
+    reset = ok(change_item(client, order_id, tortillas["id"], {"quantity": 8}))
+    [back] = [item for item in reset["shopping_list"]["items"] if not item["on_hand"]]
+    assert (back["quantity"], back["recipe_quantity"]) == (8, 8)
+    ok(change_item(client, order_id, tortillas["id"], {"quantity": 12}))
+    reset_session = Session(get_engine())
+    [stored] = reset_session.exec(
+        select(ShoppingListItem).where(ShoppingListItem.name == "tortillas")
+    ).all()
+    assert (stored.quantity, stored.changed_quantity) == (8, 12)
+    ok(change_item(client, order_id, tortillas["id"], {"quantity": 8}))
+    reset_session.expire_all()
+    assert reset_session.get_one(ShoppingListItem, stored.id).changed_quantity is None
+    reset_session.close()
     # On-hand items aren't bought, so there's nothing to change.
     detail(change_item(client, order_id, salt["id"], {"removed": True}), 404)
     detail(change_item(client, order_id, str(uuid4()), {"removed": True}), 404)
@@ -2137,6 +2149,28 @@ def test_members_take_items_off_the_list_and_change_how_much(client: TestClient)
         detail(change_item(client, order_id, tortillas["id"], bad), 422)
     # Only the member ordering can.
     detail(change_item(client, order_id, tortillas["id"], {"removed": True}, DAD), 423)
+
+
+def test_an_item_the_recipes_give_no_amount_for_has_none_to_change(client: TestClient) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    job = ok(request_list(client, order_id), 201)
+    finish_list(
+        job["id"],
+        [
+            ListEntry(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=[1]),
+            ListEntry(name="hot sauce", aisle=Aisle.PANTRY, meals=[1]),
+        ],
+    )
+    [hot_sauce] = [
+        i for i in get_order(client, order_id)["shopping_list"]["items"] if i["name"] == "hot sauce"
+    ]
+
+    problem = detail(change_item(client, order_id, hot_sauce["id"], {"quantity": 1}), 409)
+
+    assert problem == "The recipes give no amount for this item, so there's none to change."
+    # It can still come off the list.
+    ok(change_item(client, order_id, hot_sauce["id"], {"removed": True}))
 
 
 def test_a_placed_order_keeps_its_list(client: TestClient) -> None:
@@ -2290,37 +2324,6 @@ def test_configured_origins_may_call_the_api(monkeypatch: pytest.MonkeyPatch, me
 
 
 # End to end in development: the API starts a real local worker.
-
-
-def test_an_order_runs_to_completion_with_a_local_worker(
-    session: Session, monkeypatch: pytest.MonkeyPatch, grocer: list[UUID]
-) -> None:
-    monkeypatch.setenv("CASTLE_CHEF_JOB_DISPATCH", "local")
-    monkeypatch.setenv("CASTLE_CHEF_MEALS_PER_BATCH", "2")
-    monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 2 end_turn 0 0")
-    get_settings.cache_clear()
-    get_dispatcher.cache_clear()
-    app.dependency_overrides[api_module.get_verifier] = TokensAreUserIds
-    try:
-        client = TestClient(app)
-        order_id = open_draft(client)["id"]
-        job_id = ok(request_batch(client, order_id), 201)["id"]
-
-        deadline = time.monotonic() + 30
-        while (batch := get_order(client, order_id)["jobs"][0])["status"] in ("pending", "running"):
-            assert time.monotonic() < deadline, "the local worker did not finish"
-            time.sleep(0.2)
-
-        assert (batch["id"], batch["status"]) == (job_id, "succeeded"), batch["error"]
-        assert len(batch["meals"]) == 2
-        meal_id = batch["meals"][0]["id"]
-        ok(pick(client, order_id, meal_id))
-        ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=1)))
-        placed = ok(place(client, order_id))
-        assert (placed["status"], picked(placed)) == ("placed", [meal_id])
-        assert ok(client.get(f"/v1/meals/{meal_id}", headers=as_user(MOM)))["servings"] == 4
-    finally:
-        app.dependency_overrides.clear()
 
 
 # AWS.

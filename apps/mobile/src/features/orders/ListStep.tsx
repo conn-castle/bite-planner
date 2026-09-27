@@ -1,5 +1,4 @@
-import { useIonAlert } from '@ionic/react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { GroceryOrder, ShoppingItem } from '../../lib/api/types'
 import { formatDate } from '../../lib/dates'
 import { haptics } from '../../lib/haptics'
@@ -8,6 +7,7 @@ import { AgentWork } from '../../ui/AgentWork'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
+import { InfoDialog } from '../../ui/InfoDialog'
 import { Notice } from '../../ui/Notice'
 import { ShoppingList } from '../../ui/ShoppingList'
 import { Stats } from '../../ui/Stats'
@@ -17,7 +17,7 @@ import { pickedMeals } from './batches'
 import { shownDeliveryDate } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { elapsed, plural } from './format'
-import { forMeals, itemAmount, listCounts, listState, quantityStep, spokenList, splitList } from './list'
+import { forMeals, itemAmount, listCounts, listState, quantityStep, splitList } from './list'
 import styles from './ListStep.module.css'
 import { useOrderSession } from './lock'
 import { useEditsPending, useSetItem, useStartList } from './orders'
@@ -147,7 +147,7 @@ function ListReview({ order, onBack, onNext, onClose }: ListReviewProps) {
   const session = useOrderSession()
   const setItem = useSetItem()
   const saving = useEditsPending()
-  const [presentAlert] = useIonAlert()
+  const [showOnHand, setShowOnHand] = useState(false)
   const meals = pickedMeals(order)
   const names = new Map(meals.map(({ meal }) => [meal.id, meal.name]))
   const { toBuy, onHand } = splitList(order.shopping_list?.items ?? [])
@@ -157,14 +157,6 @@ function ListReview({ order, onBack, onNext, onClose }: ListReviewProps) {
   function change(item: ShoppingItem, change: { removed?: boolean; quantity?: number }) {
     haptics.tap()
     setItem.mutate({ orderId: order.id, itemId: item.id, session, ...change })
-  }
-
-  function showOnHand() {
-    void presentAlert({
-      header: 'Assumed on hand',
-      message: `These recipes also use ${spokenList(onHand.map((item) => item.name))}. They aren't on the list: we assume every kitchen has them.`,
-      buttons: ['OK'],
-    })
   }
 
   return (
@@ -199,10 +191,24 @@ function ListReview({ order, onBack, onNext, onClose }: ListReviewProps) {
         ]}
       />
       {onHand.length > 0 && (
-        <button type="button" className={`${styles.onHand} cc-hit`} onClick={showOnHand}>
-          <Icon name="check" />
-          {plural(onHand.length, 'item')} assumed on hand
-        </button>
+        <>
+          <button type="button" className={`${styles.onHand} cc-hit`} onClick={() => setShowOnHand(true)}>
+            <Icon name="info" />
+            {plural(onHand.length, 'item')} assumed on hand
+          </button>
+          <InfoDialog isOpen={showOnHand} onClose={() => setShowOnHand(false)} icon="check" title="Assumed on hand">
+            <p className={styles.onHandLede}>These recipes also use</p>
+            <ul className={styles.onHandItems}>
+              {onHand.map((item) => (
+                <li key={item.id}>
+                  <Icon name="check" />
+                  {item.name}
+                </li>
+              ))}
+            </ul>
+            <p className={styles.onHandNote}>We assume every kitchen has them, so they're never on the list.</p>
+          </InfoDialog>
+        </>
       )}
       <ShoppingList
         items={toBuy}
@@ -210,7 +216,8 @@ function ListReview({ order, onBack, onNext, onClose }: ListReviewProps) {
         forMeals={(item) => forMeals(item, names)}
         edit={{
           onRemove: (item, removed) => change(item, { removed }),
-          amountControl: (item) =>
+          onReset: (item) => item.recipe_quantity !== null && change(item, { quantity: item.recipe_quantity }),
+          amountControl: (item, disabled) =>
             item.quantity !== null && (
               <Stepper
                 inRow
@@ -218,6 +225,7 @@ function ListReview({ order, onBack, onNext, onClose }: ListReviewProps) {
                 min={quantityStep(item)}
                 max={MAX_QUANTITY}
                 step={quantityStep(item)}
+                disabled={disabled}
                 format={(value) => itemAmount({ quantity: value, unit: item.unit })}
                 label={`How much ${item.name}`}
                 onChange={(quantity) => change(item, { quantity })}

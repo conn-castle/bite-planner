@@ -5,25 +5,63 @@
   text-align: left;
 }
 
-/* The items assumed on hand: shown only on request. */
+/* The items assumed on hand: an info button, and a sheet with them. */
 .onHand {
   appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   margin-top: 12px;
-  padding: 6px 12px;
+  padding: 4px 0;
   border: 0;
-  border-radius: var(--cc-radius-pill);
-  background: var(--cc-fill);
+  background: none;
   font: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--cc-ink-2);
   cursor: pointer;
 }
 
 .onHand svg {
+  font-size: 16px;
+  color: var(--cc-ink-3);
+}
+
+.onHandLede {
+  margin: 0;
+  font-size: 15px;
+  color: var(--cc-ink-2);
+}
+
+.onHandItems {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onHandItems li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-fill);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cc-ink);
+}
+
+.onHandItems svg {
   font-size: 14px;
   color: var(--cc-success);
+}
+
+.onHandNote {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  color: var(--cc-ink-3);
 }

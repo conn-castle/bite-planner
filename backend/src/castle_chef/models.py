@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
+from castle_chef_agent.shopping import Aisle
 from pydantic import BaseModel
 from sqlalchemy import CheckConstraint, DateTime, Dialect, Enum, Index, Uuid, func, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -277,16 +278,6 @@ class GroceryOrderMeal(SQLModel, table=True):
     servings: int
 
 
-class Aisle(StrEnum):
-    """Where a shopping list item is in the store (the mockup's aisles, in order)."""
-
-    PRODUCE = "produce"
-    MEAT_SEAFOOD = "meat_seafood"
-    DAIRY_EGGS = "dairy_eggs"
-    FROZEN = "frozen"
-    PANTRY = "pantry"
-
-
 class ShoppingListItem(TimestampMixin, SQLModel, table=True):
     """An item of a draft's shopping list, as a build_list job made it: the
     order's list is its newest build's items."""
@@ -294,6 +285,10 @@ class ShoppingListItem(TimestampMixin, SQLModel, table=True):
     __tablename__ = "shopping_list_item"
     __table_args__ = (
         CheckConstraint("quantity > 0", name="shopping_list_item_quantity_positive"),
+        CheckConstraint(
+            "changed_quantity IS NULL OR (changed_quantity > 0 AND quantity IS NOT NULL)",
+            name="shopping_list_item_changed_quantity_positive",
+        ),
         CheckConstraint("NOT (on_hand AND removed)", name="shopping_list_item_on_hand_kept"),
     )
 
@@ -302,9 +297,11 @@ class ShoppingListItem(TimestampMixin, SQLModel, table=True):
     # The agent's order.
     position: int
     name: str
-    # What's ordered, in `unit` (a count when null): the member's change
-    # replaces the agent's. Null when the recipes give no amount.
+    # How much the recipes need, as the agent worked it out, in `unit` (a count
+    # when null); null when the recipes give no amount.
     quantity: float | None = None
+    # How much the member chose instead; null: the agent's amount is ordered.
+    changed_quantity: float | None = None
     unit: str | None = None
     aisle: Aisle = Field(sa_type=Enum(Aisle, name="aisle", values_callable=_values))
     # The picked meals it's for.

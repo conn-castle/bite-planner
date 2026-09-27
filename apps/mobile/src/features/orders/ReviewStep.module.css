@@ -1,0 +1,44 @@
+/* The final review (not in the mockup: designed in review). */
+.notice {
+  margin-top: 14px;
+}
+
+/* The card and groups sit at the tab screens' inset, not the flow's text inset. */
+.wide {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 16px calc(var(--cc-card-x) - var(--cc-page-x)) 0;
+}
+
+.card {
+  margin-bottom: 8px;
+}
+
+/* The card's counts start at its body's top, */
+.stats {
+  margin-top: 0;
+}
+
+/* and the next order's dates close it, spaced like the counts' own gaps. */
+.next {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 2px 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--cc-ink-2);
+}
+
+.next svg {
+  flex: none;
+  margin-top: 1px;
+  font-size: 15px;
+  color: var(--cc-ink-3);
+}
+
+.next b {
+  font-weight: 700;
+  color: var(--cc-ink);
+}

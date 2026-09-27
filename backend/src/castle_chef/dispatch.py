@@ -1,10 +1,8 @@
 """Starting a job's worker: a message on the jobs queue in AWS (EventBridge Pipes
-then runs one Fargate task per message), or a local `castle-chef job run`
-subprocess in development."""
+then runs one Fargate task per message), or the worker image in Docker on this
+machine in development."""
 
 import logging
-import os
-import shutil
 import subprocess
 from functools import lru_cache
 from typing import Literal, Protocol
@@ -12,7 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from castle_chef.settings import get_settings
+from castle_chef.settings import REPO_ROOT, get_settings
 
 log = logging.getLogger(__name__)
 
@@ -59,20 +57,29 @@ class SqsDispatcher:
 
 
 class LocalDispatcher:
-    """Runs the worker as a detached subprocess of this machine (development)."""
+    """Runs the job in the worker image on this machine, as Fargate does
+    (scripts/worker-docker.sh), detached (development)."""
 
     def dispatch(self, job_id: UUID) -> None:
-        command = shutil.which("castle-chef")
-        if command is None:
-            raise DispatchError("`castle-chef` is not on PATH; run the API with `uv run`.")
+        script = REPO_ROOT / "scripts" / "worker-docker.sh"
         try:
+            # What the run needs (the image, Docker, backend/.env), first: once it's
+            # detached, a failure would leave the job pending until it goes stale.
+            check = subprocess.run(
+                [script, "check"], cwd=REPO_ROOT, capture_output=True, text=True, timeout=30
+            )
+            if check.returncode != 0:
+                raise DispatchError(
+                    f"Can't run job {job_id} locally: {check.stderr.strip() or check.stdout}"
+                )
             subprocess.Popen(
-                [command, "job", "run"],
-                env=os.environ | {JOB_ID_ENV: str(job_id)},
+                [script, "run", str(job_id)],
+                cwd=REPO_ROOT,
                 stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
                 start_new_session=True,  # outlives the request and the API's reloader
             )
-        except OSError as error:
+        except (OSError, subprocess.TimeoutExpired) as error:
             raise DispatchError(f"Could not start a local worker for {job_id}: {error}") from error
         log.info("job.dispatched_locally", extra={"job_id": str(job_id)})
 

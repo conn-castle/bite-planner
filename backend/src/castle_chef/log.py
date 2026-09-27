@@ -33,7 +33,8 @@ def configure(log_file: Path | None) -> None:
     """Log JSON lines to stderr and, when given, to a rotating file."""
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
     if log_file is not None:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
+        # Private: the agent (another user in the worker image) must not read them.
+        log_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         handlers.append(RotatingFileHandler(log_file, maxBytes=10_000_000, backupCount=5))
     for handler in handlers:
         handler.setFormatter(JsonFormatter())

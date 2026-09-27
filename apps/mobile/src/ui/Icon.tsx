@@ -54,6 +54,12 @@ const PATHS = {
   ),
   x: <path d="M6 6l12 12M18 6L6 18" />,
   minus: <path d="M6 12h12" />,
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.5M12 7.6v.1" />
+    </>
+  ),
   undo: <path d="M9 6.5L4.5 11 9 15.5M5 11h9.5a5 5 0 010 10H11" />,
   search: (
     <>

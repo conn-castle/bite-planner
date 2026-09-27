@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, ShoppingItem, ShoppingList } from '../../lib/api/types'
-import { forMeals, itemAmount, listCounts, listState, quantityStep, spokenList } from './list'
+import { forMeals, itemAmount, listCounts, listState, quantityStep } from './list'
 
 const job = (status: Job['status']): Job => ({
   id: 'build',
@@ -16,6 +16,7 @@ const item = (fields: Partial<ShoppingItem>): ShoppingItem => ({
   id: 'i',
   name: 'yellow onions',
   quantity: 2,
+  recipe_quantity: 2,
   unit: null,
   aisle: 'produce',
   meal_ids: [],
@@ -70,11 +71,5 @@ describe('the list as a whole', () => {
   it('counts what is ordered and what was taken off, never the items assumed on hand', () => {
     const items = [item({ id: '1' }), item({ id: '2', removed: true }), item({ id: '3', name: 'salt', on_hand: true })]
     expect(listCounts(items)).toEqual({ ordered: 1, removed: 1 })
-  })
-
-  it('says the items assumed on hand as a sentence', () => {
-    expect(spokenList(['salt'])).toBe('salt')
-    expect(spokenList(['salt', 'pepper'])).toBe('salt and pepper')
-    expect(spokenList(['salt', 'pepper', 'olive oil'])).toBe('salt, pepper, and olive oil')
   })
 })

@@ -1,37 +1,32 @@
 """`castle-chef` command line: the agent's meal tool, the job worker, and admin helpers."""
 
-import json
 import logging
-import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import timedelta
-from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
 import typer
-from pydantic import ValidationError
+from castle_chef_agent.cli import mcp_serve, meal_app, shopping_list_app
 from sqlmodel import Session
 
-from castle_chef import household, push, shopping, worker
+from castle_chef import household, push, worker
 from castle_chef import log as logging_config
 from castle_chef.db import get_session
 from castle_chef.dispatch import JOB_ID_ENV
-from castle_chef.meals import MealInput, save_meal
 from castle_chef.settings import get_settings, load_ssm_parameters
 
 app = typer.Typer(no_args_is_help=True)
-meal_app = typer.Typer(no_args_is_help=True, help="Manage meals.")
-list_app = typer.Typer(no_args_is_help=True, help="Build shopping lists (the agent's commands).")
 job_app = typer.Typer(no_args_is_help=True, help="Create and run jobs.")
 household_app = typer.Typer(
     no_args_is_help=True, help="Manage households and who is in them (invite-only)."
 )
 app.add_typer(meal_app, name="meal")
-app.add_typer(list_app, name="list")
+app.add_typer(shopping_list_app, name="shopping-list")
 app.add_typer(job_app, name="job")
 app.add_typer(household_app, name="household")
+app.command("mcp", hidden=True)(mcp_serve)
 log = logging.getLogger(__name__)
 
 HouseholdOption = Annotated[str, typer.Option("--household", help="The household's name.")]
@@ -54,56 +49,11 @@ def main(ctx: typer.Context) -> None:
     # Secrets named in CASTLE_CHEF_SSM_PARAMETERS, before settings are first read
     # (e.g. the APNs key for `household notify-test`).
     load_ssm_parameters()
-    # `meal add` and `list add` run inside the agent's sandbox, which can only
-    # write the job directory, so they log to stderr only (the agent sees it).
-    in_sandbox = ctx.invoked_subcommand in ("meal", "list")
+    # The agent's commands (`meal …`, `shopping-list …`, and its MCP server) run in its sandbox,
+    # which can only write the job directory, so they log to stderr only.
+    in_sandbox = ctx.invoked_subcommand in ("meal", "shopping-list", "mcp")
     log_file = None if in_sandbox else get_settings().logs_dir / "castle-chef.jsonl"
     logging_config.configure(log_file)
-
-
-@meal_app.command("add")
-def meal_add(
-    job_dir: Annotated[
-        Path,
-        typer.Option(
-            envvar="CASTLE_CHEF_JOB_DIR",
-            exists=True,
-            file_okay=False,
-            help="Job directory the worker created.",
-        ),
-    ],
-) -> None:
-    """Add one meal, read as JSON from stdin. The worker stores it after the agent finishes."""
-    try:
-        meal_input = MealInput.model_validate_json(sys.stdin.read())
-    except ValidationError as error:
-        typer.echo(f"Invalid meal JSON:\n{error}", err=True)
-        raise typer.Exit(1) from error
-    path = save_meal(job_dir, meal_input)
-    typer.echo(json.dumps({"saved": path.name, "meal": meal_input.name}))
-
-
-@list_app.command("add")
-def list_add(
-    job_dir: Annotated[
-        Path,
-        typer.Option(
-            envvar="CASTLE_CHEF_JOB_DIR",
-            exists=True,
-            file_okay=False,
-            help="Job directory the worker created.",
-        ),
-    ],
-) -> None:
-    """Add one shopping list item, read as JSON from stdin. The worker checks and
-    stores the list after the agent finishes."""
-    try:
-        item = shopping.ListItemInput.model_validate_json(sys.stdin.read())
-    except ValidationError as error:
-        typer.echo(f"Invalid item JSON:\n{error}", err=True)
-        raise typer.Exit(1) from error
-    path = shopping.save_item(job_dir, item)
-    typer.echo(json.dumps({"saved": path.name, "item": item.name}))
 
 
 @job_app.command("run")

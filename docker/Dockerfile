@@ -26,6 +26,7 @@ COPY backend/pyproject.toml backend/uv.lock backend/.python-version ./
 # job, installs only what it needs. Dependencies first, so code changes don't
 # rebuild them; editable (uv's default), so castle_chef.settings.REPO_ROOT is /app.
 FROM build AS api-build
+COPY backend/agent ./agent
 RUN uv sync --frozen --no-default-groups --group api --no-install-project
 COPY backend/alembic.ini ./
 COPY backend/migrations ./migrations
@@ -33,11 +34,20 @@ COPY backend/src ./src
 RUN uv sync --frozen --no-default-groups --group api
 
 FROM build AS worker-build
+COPY backend/agent ./agent
 RUN uv sync --frozen --no-default-groups --no-install-project
 COPY backend/alembic.ini ./
 COPY backend/migrations ./migrations
 COPY backend/src ./src
 RUN uv sync --frozen --no-default-groups
+
+# The agent's own environment: only its commands (castle_chef_agent) and their
+# dependencies, installed as a package (no source tree), with a `castle-chef` launcher.
+FROM build AS agent-build
+COPY backend/agent ./agent
+RUN UV_PROJECT_ENVIRONMENT=/opt/castle-chef-agent/.venv \
+    uv sync --frozen --no-default-groups --package castle-chef-agent --no-editable
+COPY docker/castle-chef /opt/castle-chef-agent/bin/castle-chef
 
 FROM python AS api
 COPY --from=lambda-adapter /lambda-adapter /opt/extensions/lambda-adapter
@@ -58,18 +68,23 @@ ADD --checksum=sha256:ea16cc701e4ce62eb079e1d0520a56eb05f1d406fa6a72adda1998f79f
 ADD --checksum=sha256:9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407 --chmod=0555 \
     https://x.ai/cli/grok-1.0.41-linux-x86_64 \
     /usr/local/bin/grok
-# The Agent Layer project the agent is launched from. `al` syncs its generated
-# files (and Grok's home, .grok-config) into the project on every launch, and
-# /app is read-only, so the worker copies this template to a writable
+# The Agent Layer project the agent is launched from: only the worker's Grok
+# settings (docker/agent-project). `al` syncs its generated files (and Grok's
+# home, .grok-config) into the project on every launch, and the root filesystem
+# is read-only, so the worker copies this template to a writable
 # /tmp/agent-project owned by the agent for each job.
-COPY .agent-layer /opt/castle-chef/agent-project/.agent-layer
+COPY docker/agent-project /opt/castle-chef/agent-project
+COPY --from=agent-build /opt/castle-chef-agent /opt/castle-chef-agent
 COPY --from=worker-build /app/backend /app/backend
+# The backend is the worker's (root) alone: the agent's user can't list or read it.
+RUN chmod 700 /app
 # The Grok login lives on EFS (GROK_AUTH_PATH, set by the task definition), never
 # an API key; Grok doesn't update itself.
 ENV GROK_DISABLE_API_KEY_AUTH=true \
     GROK_DISABLE_AUTOUPDATER=true \
-    CASTLE_CHEF_AGENT_SANDBOX=false \
+    CASTLE_CHEF_AGENT_COMMAND="al -q grok" \
     CASTLE_CHEF_AGENT_UID=65532 \
+    CASTLE_CHEF_AGENT_PATH=/opt/castle-chef-agent/bin:/usr/local/bin:/usr/bin:/bin \
     CASTLE_CHEF_AGENT_ENV='["GROK_AUTH_PATH","GROK_DISABLE_API_KEY_AUTH","GROK_DISABLE_AUTOUPDATER"]' \
     CASTLE_CHEF_AGENT_PROJECT_TEMPLATE=/opt/castle-chef/agent-project \
     CASTLE_CHEF_AGENT_PROJECT_DIR=/tmp/agent-project \

@@ -136,8 +136,8 @@ describe('changes to the shopping list', () => {
       },
       current: true,
       items: [
-        { id: 'onions', name: 'onions', quantity: 2, unit: null, aisle: 'produce', meal_ids: [], on_hand: false, removed: false },
-        { id: 'beef', name: 'ground beef', quantity: 1, unit: 'lb', aisle: 'meat_seafood', meal_ids: [], on_hand: false, removed: false },
+        { id: 'onions', name: 'onions', quantity: 2, recipe_quantity: 2, unit: null, aisle: 'produce', meal_ids: [], on_hand: false, removed: false },
+        { id: 'beef', name: 'ground beef', quantity: 1, recipe_quantity: 1, unit: 'lb', aisle: 'meat_seafood', meal_ids: [], on_hand: false, removed: false },
       ],
     },
   }

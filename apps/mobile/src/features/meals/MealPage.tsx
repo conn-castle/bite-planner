@@ -29,6 +29,11 @@ interface MealPageProps {
    * at the servings last chosen for this recipe.
    */
   servings?: number | null
+  /**
+   * A suggestion not picked yet: its servings are the recipe's, with no control
+   * to change them (only a pick has servings to choose).
+   */
+  suggestion?: boolean
 }
 
 /**
@@ -36,7 +41,7 @@ interface MealPageProps {
  * them, and the steps. The meal's name and facts show at once from a list
  * already loaded (Home, History, the suggestions) while the rest loads.
  */
-export function MealPage({ mealId, tab, rateable = false, servings }: MealPageProps) {
+export function MealPage({ mealId, tab, rateable = false, servings, suggestion = false }: MealPageProps) {
   const meal = useQuery(mealQuery(mealId))
   const queryClient = useQueryClient()
   const summary = meal.data ?? cachedMealSummary(queryClient, mealId)
@@ -58,7 +63,7 @@ export function MealPage({ mealId, tab, rateable = false, servings }: MealPagePr
         <article className={styles.recipe}>
           <RecipeHeader meal={summary} ingredientCount={meal.data?.ingredients.length} />
           {meal.data ? (
-            <RecipeBody meal={meal.data} startAt={servings} />
+            <RecipeBody meal={meal.data} startAt={suggestion ? null : servings} fixed={suggestion} />
           ) : (
             !meal.isError && (
               <div className={styles.loading}>
@@ -113,7 +118,14 @@ function RecipeHeader({ meal, ingredientCount }: { meal: MealSummary; ingredient
   )
 }
 
-function RecipeBody({ meal, startAt }: { meal: Meal; startAt: number | null | undefined }) {
+interface RecipeBodyProps {
+  meal: Meal
+  startAt: number | null | undefined
+  /** The recipe's own servings, with no control to change them. */
+  fixed: boolean
+}
+
+function RecipeBody({ meal, startAt, fixed }: RecipeBodyProps) {
   const [servings, setServingsState] = useState(() =>
     startAt === undefined ? (pickedServings.get(meal.id) ?? meal.servings) : (startAt ?? meal.servings),
   )
@@ -129,15 +141,15 @@ function RecipeBody({ meal, startAt }: { meal: Meal; startAt: number | null | un
         <span className={styles.servingsLabel}>
           <Icon name="users" />
           <span>
-            Servings
-            {servings !== meal.servings && (
+            {fixed ? `Serves ${meal.servings}` : 'Servings'}
+            {!fixed && servings !== meal.servings && (
               <button type="button" className={styles.reset} onClick={() => setServings(meal.servings)}>
                 Reset to {meal.servings}
               </button>
             )}
           </span>
         </span>
-        <Stepper value={servings} min={1} max={MAX_SERVINGS} onChange={setServings} label="Servings" />
+        {!fixed && <Stepper value={servings} min={1} max={MAX_SERVINGS} onChange={setServings} label="Servings" />}
       </div>
 
       <h2 className={styles.heading}>Ingredients</h2>

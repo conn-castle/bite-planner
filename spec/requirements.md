@@ -75,6 +75,9 @@ The list is made in three stages:
 - [x] Changing the picked meals or their servings after the list was built rebuilds it from scratch; the user's changes to the old list are dropped. (Generation isn't deterministic and can change the list a lot, so there is no merging.)
 - [x] The user can remove items from the shopping list and change their quantities.
 - [x] Items assumed to be on hand are never on the list. The list is the same for every household and isn't editable: salt, pepper, olive oil, vegetable oil, water. When the meals need any of them, an icon on the shopping list shows it; tapping it lists the assumed items these recipes need. They aren't shown otherwise (they'd be noise).
+- [x] Every scaled ingredient line ends up in exactly one item to buy or one staple; the agent says which lines each covers, and the list isn't saved until every line is covered.
+- [x] Things counted (lemons, onions) are rounded up to whole ones; amounts in a unit keep up to two decimals (the product is chosen in stage 3).
+- [x] Items are grouped by aisle: produce, meat & seafood, dairy & eggs, frozen, pantry, and other (for what fits none of them).
 - [ ] Before placing, the user sees the exact products that will be ordered (stage 3).
 
 ## Placing and status
@@ -131,3 +134,5 @@ Personal settings:
 - Meal icons v2 (generated combinations of icons) and v3 (AI-generated images).
 - Adding free-form items to the shopping list (done in the grocery app instead).
 - Having suggestions available immediately, such as generating them ahead of time (to discuss; the ready notification may change with it).
+- Meal preferences the household can check in settings (well after launch), which fill the suggestion agent's instructions; "low effort to cook" becomes one of them.
+- Capturing each job's full cost robustly (the agent's tokens and dollars, the Fargate task, and anything else it uses), stored with the job, so we can estimate what the service would cost to run as a product.

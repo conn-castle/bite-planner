@@ -174,11 +174,12 @@ describe('deliveryBar', () => {
     ])
   })
 
-  it('runs two weeks past the earliest delivery date, or to a later target or chosen date', () => {
-    expect(deliveryBar({ ...draft, target_date: null }, TODAY).at(-1)?.date).toBe('2026-10-09')
-    expect(deliveryBar({ ...draft, target_date: '2026-10-20' }, TODAY).at(-1)?.date).toBe('2026-10-20')
-    expect(deliveryBar({ ...draft, target_date: null, delivery_date: '2026-10-22' }, TODAY).at(-1)?.date).toBe(
-      '2026-10-22',
+  it('runs 30 days past the last day with meals, or today once that has passed, or to a later chosen date', () => {
+    expect(deliveryBar({ ...draft, target_date: null }, TODAY).at(-1)?.date).toBe('2026-10-25')
+    // The previous order covers through Oct 19.
+    expect(deliveryBar({ ...draft, target_date: '2026-10-20' }, TODAY).at(-1)?.date).toBe('2026-11-18')
+    expect(deliveryBar({ ...draft, target_date: null, delivery_date: '2026-11-22' }, TODAY).at(-1)?.date).toBe(
+      '2026-11-22',
     )
   })
 
@@ -238,10 +239,10 @@ describe('what the dates mean', () => {
   it('says how the meals fit the days until the next delivery', () => {
     expect(nextDeliveryWhy('2026-09-27', '2026-09-30', 3, EN)).toBe('3 meals, one a day, cover Sun 27 – Tue 29.')
     expect(nextDeliveryWhy('2026-09-27', '2026-10-01', 3, EN)).toBe(
-      '3 meals cover 4 days, Sun 27 – Wed 30. Some days need leftovers or takeout.',
+      '3 meals cover 4 days, Sun 27 – Wed 30. 1 day needs leftovers or takeout.',
     )
     expect(nextDeliveryWhy('2026-09-27', '2026-09-29', 3, EN)).toBe(
-      '3 meals cover 2 days, Sun 27 – Mon 28. Some meals carry past the next delivery.',
+      '3 meals cover 2 days, Sun 27 – Mon 28. 1 meal carries past the next delivery.',
     )
   })
 

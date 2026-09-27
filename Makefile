@@ -12,7 +12,7 @@ unexport DATABASE_URL
 # Like CI: fail rather than update a stale uv.lock.
 export UV_LOCKED := 1
 
-.PHONY: help setup deps env dev review dev-reset migrate migration db db-stop test lint format check build ios
+.PHONY: help setup deps env dev review dev-reset migrate migration db db-stop worker-image worker-login worker-job test lint format check build ios
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
@@ -55,6 +55,16 @@ db: ## Start the local Postgres used by tests and migrations
 
 db-stop: ## Stop the local Postgres (its data is kept)
 	cd backend && docker compose stop
+
+worker-image: ## Build the worker image (Fargate's) from the working tree
+	scripts/worker-docker.sh build
+
+worker-login: ## Sign the local worker image's agent in to Grok (device code, once)
+	scripts/worker-docker.sh login
+
+worker-job: ## Run one pending job in the worker image, as Fargate does: make worker-job JOB=<id>
+	@test -n "$(JOB)" || { echo 'Usage: make worker-job JOB=<job-id>' >&2; exit 2; }
+	scripts/worker-docker.sh run $(JOB)
 
 test: db ## Run all tests: backend, app, infra
 	cd backend && TEST_DATABASE_URL=$(LOCAL_DB) uv run pytest

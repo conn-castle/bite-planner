@@ -1,0 +1,14 @@
+[project]
+name = "castle-chef-agent"
+version = "0.1.0"
+description = "The commands a Castle Chef job's agent runs, and their checks: all it can reach."
+requires-python = ">=3.14"
+dependencies = [
+    "mcp>=2.2.0",
+    "pydantic>=2.13.0",
+    "typer>=0.27.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"

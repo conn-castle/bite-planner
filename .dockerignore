@@ -6,10 +6,7 @@
 !backend/alembic.ini
 !backend/migrations
 !backend/src
-!.agent-layer
-.agent-layer/.env
-.agent-layer/*.bak
-.agent-layer/state
-.agent-layer/sync.lock
-.agent-layer/tmp
+!backend/agent
+!docker/agent-project
+!docker/castle-chef
 **/__pycache__

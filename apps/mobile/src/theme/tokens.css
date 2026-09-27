@@ -51,6 +51,24 @@
   --cc-order-5-soft: #f8f1e3;
   --cc-order-5-deep: #94661f;
 
+  /* Each shopping list aisle's card head: -soft its band, -deep its text. Their
+     own set, apart from the order colors, so a color never means both. */
+  --cc-aisle-produce-soft: #eef4ef;
+  --cc-aisle-produce-deep: #44704f;
+  --cc-aisle-meat-soft: #f8ece8;
+  --cc-aisle-meat-deep: #94503c;
+  --cc-aisle-dairy-soft: #f8f2e1;
+  --cc-aisle-dairy-deep: #8a6420;
+  --cc-aisle-frozen-soft: #eaf1f7;
+  --cc-aisle-frozen-deep: #3f6588;
+  --cc-aisle-pantry-soft: #f3eee6;
+  --cc-aisle-pantry-deep: #6f5a3e;
+  --cc-aisle-other-soft: var(--cc-fill);
+  --cc-aisle-other-deep: var(--cc-ink-2);
+  /* A card on the white page: a thin border and the slightest lift. */
+  --cc-card-line: rgba(20, 19, 17, 0.11);
+  --cc-shadow-line: 0 1px 2px rgba(20, 19, 17, 0.04);
+
   /* Type */
   /* Text: SF Pro on Apple devices, Inter (with optical sizes) elsewhere.
      Titles: SF Pro Rounded where the system has it, else the text font. */

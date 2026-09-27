@@ -1,19 +1,25 @@
 """Stands in for `al grok` in worker tests.
 
 Usage (as CASTLE_CHEF_AGENT_COMMAND): fake_agent.py MEALS STOP_REASON EXIT_CODE SECONDS
-followed by the Grok arguments the worker appends. Adds MEALS meals through the
-real `castle-chef meal add` command (or, given a shopping list prompt, MEALS items for
-every meal in it, and salt as on hand, through `castle-chef list add`), takes SECONDS,
-and prints Grok-style JSON. Settings are arguments because the worker gives the agent
-a minimal environment.
+followed by the Grok arguments the worker appends. Like Grok, it starts the MCP
+server the job directory's `.grok/config.toml` names and uses its tools: MEALS meals
+with `add_meal` (or, given a shopping list prompt, MEALS items sharing its lines with
+`add_item`, and salt with `add_staple`), then `done`. It takes SECONDS and prints
+Grok-style JSON. Settings are arguments because the worker gives the agent a minimal
+environment.
 """
 
+import asyncio
 import json
 import os
 import re
-import subprocess
 import sys
 import time
+import tomllib
+from typing import Any
+
+from mcp.client.session import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 MEAL = {
     "name": "Sheet Pan Sausage and Peppers",
@@ -33,28 +39,46 @@ with open(os.path.join(cwd, "fake-agent-prompt.md"), "w") as file:
     file.write(prompt)
 with open(os.path.join(cwd, "fake-agent-env.json"), "w") as file:
     json.dump(sorted(os.environ), file)
+with open(os.path.join(cwd, ".grok", "config.toml"), "rb") as file:
+    server = tomllib.load(file)["mcp_servers"]["castle-chef"]
 
 
-def add(command: str, value: dict[str, object]) -> None:
-    subprocess.run(
-        ["castle-chef", command, "add"],
-        input=json.dumps(value),
-        text=True,
-        stdout=subprocess.DEVNULL,  # Grok captures tool output; keep stdout for the final JSON.
-        check=True,
-        cwd=cwd,
+async def use_tools() -> None:
+    parameters = StdioServerParameters(
+        command=server["command"], args=server["args"], env=dict(os.environ), cwd=cwd
     )
+    async with stdio_client(parameters) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+
+        async def call(tool: str, arguments: dict[str, Any], check: bool = True) -> None:
+            result = await session.call_tool(tool, arguments)
+            if check and getattr(result, "is_error", False):
+                raise SystemExit(f"{tool} failed: {result}")
+
+        if "`add_item`" in prompt:
+            lines = re.findall(r"^- (\d+[a-z]+): (.*)$", prompt, re.MULTILINE)
+            salt = [line for line, text in lines if text.split(",")[0].endswith("salt")]
+            rest = [line for line, text in lines if line not in salt]
+            for index in range(int(meal_count)):
+                if covered := rest[index :: int(meal_count)]:
+                    await call(
+                        "add_item",
+                        {
+                            "name": f"item {index}",
+                            "quantity": 2,
+                            "aisle": "pantry",
+                            "lines": covered,
+                        },
+                    )
+            if salt:
+                await call("add_staple", {"staple": "salt", "lines": salt})
+        else:
+            for index in range(int(meal_count)):
+                await call("add_meal", {"meal": MEAL | {"name": f"{MEAL['name']} {index}"}})
+        await call("done", {}, check=False)
 
 
-if "castle-chef list add" in prompt:
-    meals = [int(number) for number in re.findall(r"^(\d+)\. ", prompt, re.MULTILINE)]
-    for index in range(int(meal_count)):
-        add("list", {"name": f"item {index}", "quantity": 2, "aisle": "pantry", "meals": meals})
-    add("list", {"name": "salt", "aisle": "pantry", "meals": meals, "on_hand": True})
-else:
-    for index in range(int(meal_count)):
-        add("meal", MEAL | {"name": f"{MEAL['name']} {index}"})
-
+asyncio.run(use_tools())
 time.sleep(float(seconds))
 print(json.dumps({"text": "done", "stopReason": stop_reason}))
 sys.exit(int(exit_code))

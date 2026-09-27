@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from castle_chef_agent.meals import IngredientInput, MealInput
 from sqlmodel import Session, col, select
 from typer.testing import CliRunner
 
@@ -20,7 +21,7 @@ from castle_chef import orders, push, shopping, worker
 from castle_chef.cli import app
 from castle_chef.db import get_engine
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, fail_job, submit_build_list
-from castle_chef.meals import IngredientInput, MealInput, add_meals
+from castle_chef.meals import add_meals
 from castle_chef.models import (
     AppUser,
     GroceryOrder,
@@ -29,8 +30,6 @@ from castle_chef.models import (
     Job,
     JobKind,
     JobStatus,
-    ListPick,
-    ListSource,
     Meal,
     MealRating,
     PushDevice,
@@ -182,7 +181,7 @@ def test_a_batch_is_20_meals_by_default(
 
     prompt = (tmp_path / "jobs" / str(job.id) / "fake-agent-prompt.md").read_text()
     assert "Create 20 distinct meals" in prompt
-    assert reload(session, job).error == "Requested 20 meals, but the agent added 0."
+    assert reload(session, job).error == "The agent didn't finish: 0 of 20 meals are added."
 
 
 def test_agent_environment_has_no_database_credentials(
@@ -207,7 +206,7 @@ def test_job_fails_when_agent_adds_too_few_meals(
 
     job = reload(session, job)
     assert job.status == JobStatus.FAILED
-    assert job.error == "Requested 2 meals, but the agent added 1."
+    assert job.error == "The agent didn't finish: 1 of 2 meals are added."
     assert job_meals(session, job) == []
 
 
@@ -575,18 +574,21 @@ def test_a_list_is_built_from_the_picks_scaled_to_their_servings(
     run_job(build)
 
     prompt = (tmp_path / "jobs" / str(build.id) / "fake-agent-prompt.md").read_text()
-    # Stage 1: each recipe (for 4) scaled to its servings, meals numbered in the list's order.
+    # Stage 1: each recipe (for 4) scaled to its servings, meals numbered in the
+    # list's order, each line with its id.
     source = shopping.current_source(session, draft.id)
     numbered = {pick.meal_id: number for number, pick in enumerate(source.picks, start=1)}
+    one, two = numbered[first.id], numbered[second.id]
     assert (
-        f"{numbered[first.id]}. Meal 0 (for 2):\n"
-        "- 0.75 lb Italian sausage\n- 1.5 bell peppers, sliced\n- salt"
+        f"Meal {one}: Meal 0 (for 2)\n"
+        f"- {one}a: 0.75 lb Italian sausage\n- {one}b: 1.5 bell peppers, sliced\n- {one}c: salt"
     ) in prompt
     assert (
-        f"{numbered[second.id]}. Meal 1 (for 6):\n"
-        "- 2.25 lb Italian sausage\n- 4.5 bell peppers, sliced\n- salt"
+        f"Meal {two}: Meal 1 (for 6)\n"
+        f"- {two}a: 2.25 lb Italian sausage\n- {two}b: 4.5 bell peppers, sliced\n- {two}c: salt"
     ) in prompt
     assert "salt, pepper, olive oil, vegetable oil, water" in prompt
+    assert "- other: anything none of the others fits" in prompt
     assert reload(session, build).status == JobStatus.SUCCEEDED
     items = list_items(session, build)
     assert [(item.name, item.on_hand, sorted(item.meal_ids)) for item in items] == [
@@ -606,7 +608,7 @@ def test_whoever_started_the_list_hears_when_it_is_ready(
     phone = with_phone(session, job)
     picked(session, job, 4)
     build = start_list(session, draft)
-    use_fake_agent(monkeypatch, meals=3)
+    use_fake_agent(monkeypatch, meals=2)
 
     run_job(build)
 
@@ -615,7 +617,7 @@ def test_whoever_started_the_list_hears_when_it_is_ready(
         phone,
         NotificationKind.LIST_READY,
         "Your shopping list is ready",
-        "3 items for Order 1.",  # the on-hand salt isn't one to buy
+        "2 items for Order 1.",  # the salt, a staple, isn't one to buy
     )
 
 
@@ -668,31 +670,19 @@ def test_a_superseded_build_saves_nothing(
     assert list_items(session, build) == []
 
 
-@pytest.mark.parametrize(
-    ("items", "problem"),
-    [
-        ([{"name": "tortillas", "aisle": "pantry", "meals": [2]}], r"is for meals \[2\]"),
-        (
-            [{"name": "sea salt", "aisle": "pantry", "meals": [1], "on_hand": True}],
-            "isn't assumed on hand",
-        ),
-        ([{"name": "Olive Oil", "aisle": "pantry", "meals": [1]}], "is assumed on hand"),
-        ([{"name": "salt", "aisle": "pantry", "meals": [1], "on_hand": True}], "nothing to buy"),
-        (
-            [
-                {"name": "tortillas", "aisle": "pantry", "meals": [1]},
-                {"name": "salt", "aisle": "pantry", "meals": [1], "on_hand": True},
-                {"name": "salt", "aisle": "pantry", "meals": [1], "on_hand": True},
-            ],
-            "on hand twice",
-        ),
-    ],
-    ids=["meal", "not on hand", "on hand bought", "nothing", "twice"],
-)
-def test_a_list_that_breaks_the_rules_is_refused(items: list[dict[str, Any]], problem: str) -> None:
-    source = ListSource(picks=[ListPick(meal_id=uuid4(), servings=4)])
+def test_a_list_the_agent_did_not_finish_fails_the_job(
+    session: Session, draft: GroceryOrder, job: Job, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=0)  # adds only the salt
 
-    with pytest.raises(shopping.InvalidList, match=problem):
-        shopping.check_items(
-            [shopping.ListItemInput.model_validate(item) for item in items], source
-        )
+    run_job(build)
+
+    failed = reload(session, build)
+    assert failed.status == JobStatus.FAILED
+    assert failed.error == (
+        "Not covered yet: 1a (1.5 lb Italian sausage); 1b (3 bell peppers, sliced). "
+        "The list has nothing to buy."
+    )
+    assert list_items(session, build) == []

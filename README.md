@@ -11,7 +11,7 @@ API: FastAPI on AWS Lambda (Function URL) ──► Neon Postgres (orders, jobs,
         ▼
 SQS jobs queue ──► EventBridge Pipe ──► one Fargate task per job
                                           `castle-chef job run`
-                                          └─ `al grok` (unprivileged user) ── `castle-chef meal add`
+                                          └─ `al grok` (unprivileged user) ── MCP tools: `castle-chef mcp`
 Failures (dead-letter queue, task stopped) ──► failure-handler Lambda ──► job failed
 Error log lines, Lambda and Pipe failures ──► CloudWatch alarms ──► email
 ```
@@ -19,7 +19,7 @@ Error log lines, Lambda and Pipe failures ──► CloudWatch alarms ──► 
 1. A member opens the create-order flow: the API gets or creates the household's draft `grocery_order` (one per household) and gives that opening of the flow its order lock. Only the session holding it (one opening of the flow, on one phone, sent as the `Order-Session` header) can change the draft; the app renews it every 30 s and it lapses 2 minutes after the last renewal, so everyone else sees who is ordering and can take over once they stop.
 2. The app asks for a batch of suggestions (`POST /v1/grocery-orders/{id}/jobs` with a job id it generates, so retries are safe). The API stores a `pending` `generate_meals` job for the draft (one batch at a time per draft) and sends its id to the queue.
 3. The Pipe starts one Fargate task per message. The worker claims the job and runs Grok with a prompt asking for 20 low-effort meals (`meals_per_batch`).
-4. Grok calls `castle-chef meal add` once per meal. The CLI validates the meal and saves it as JSON in the job directory; the agent never touches the database.
+4. Grok's only tools are the job's MCP tools, from a server it starts for the job (`castle-chef mcp meals`): it calls `add_meal` once per meal, then `done`, which says whether all of them are added. The tool validates each meal (refusing a repeat, or one too many) and saves it as JSON in the job directory; the agent never touches the database.
 5. After Grok exits, the worker checks that exactly that many meals were saved, then stores them (each with its `job_id`) and marks the job `succeeded` in one transaction. Otherwise the job is `failed` with an error and nothing is stored. The task then exits.
 6. The app polls the draft and shows the suggestions. The member picks meals (more batches if they like), chooses each meal's servings, the delivery date, and the next delivery date, reviews the order, and places it, which calls the grocery-service stub (it does nothing yet) and marks the order `placed`.
 
@@ -31,6 +31,8 @@ A batch takes one to two minutes: about 30 s to start the task (mostly Fargate p
 | --- | --- |
 | `spec/` | The ordering spec: requirements checklist and the UI mockup |
 | `backend/` | Python (uv): the API, SQLModel models, Alembic migrations, `castle-chef` CLI, job worker, failure handler, tests |
+| `backend/agent/` | `castle_chef_agent`: a job's agent's tools, as an MCP server (`castle-chef mcp meals|shopping-list`) and as the same commands (`castle-chef meal …`, `castle-chef shopping-list …`, for development), with their input models and checks; the backend imports and mounts them |
+| `docker/agent-project/` | The worker's Agent Layer project: only the Grok settings `al grok` needs |
 | `backend/src/castle_chef/prompts/` | Agent prompts |
 | `apps/mobile/` | Capacitor + React + Vite app (`ios/` is the Xcode project) |
 | `docker/Dockerfile` | The `api` (Lambda) and `worker` (Fargate) images |
@@ -101,27 +103,30 @@ make migrate                      # apply to dev
 ### Worker
 
 ```sh
-CASTLE_CHEF_JOB_ID=<id> uv run castle-chef job run   # run one pending job; what each Fargate task does
+make worker-job JOB=<id>   # run one pending job in the worker image, as each Fargate task does
 ```
 
-Two kinds of job: `generate_meals` (a batch of meal ideas, saved with `castle-chef meal add`) and `build_list` (a draft's shopping list: the worker scales each picked meal's ingredients to its servings and the agent combines them with `castle-chef list add`; the worker checks the items, e.g. the ones assumed on hand, before saving them). A list build is for the picks and servings at the moment it started (`job.list_source`); starting one for other picks fails the one still running, whose result is then dropped.
+A real agent runs only in the worker image: locally, `make dev` and `make review` build it and start each job in it (`CASTLE_CHEF_JOB_DISPATCH=local`), and `castle-chef job run` outside it fails the job (`CASTLE_CHEF_AGENT_COMMAND` is set only in the image; the tests set a fake agent, an MCP client of the real server).
 
-Each job gets a directory (locally `~/.local/state/castle-chef/jobs/<job-id>/`, in the container `/tmp/jobs/`) with the prompt, Grok's JSON output, and its stderr.
+Two kinds of job: `generate_meals` (a batch of meal ideas, saved with `castle-chef meal add`) and `build_list` (a draft's shopping list: the worker scales each picked meal's ingredients to its servings and gives each line an id, e.g. `2c`; the agent combines the lines into items with the `add_item` tool and records the staples they use with `add_staple`, each naming the lines it covers, and calls `done` until every line is covered exactly once). The agent's tools check each change as it's made and say why they refuse one; they check against `job.json`, which the worker writes into the job directory (a batch's meal count, a list's lines). After the agent exits, the worker runs the same final check before saving. A list build is for the picks and servings at the moment it started (`job.list_source`); starting one for other picks fails the one still running, whose result is then dropped.
+
+Each job gets a directory (in the container `/tmp/jobs/<job-id>/`) with the prompt, `job.json`, the MCP config (`.grok/config.toml`), what the agent's tools saved, Grok's JSON output, and its stderr.
+
+To run a job the way Fargate does (the worker image, read-only root filesystem, an empty `/tmp`, the task's capabilities, CPU and memory, Grok's version, and the agent as uid 65532), use Docker: `make worker-image` builds the image from the working tree, `make worker-login` signs its agent in to Grok once (a device code; the login stays in the Docker volume `castle-chef-grok-login`, separate from this machine's), and `make worker-job JOB=<job-id>` runs one pending job against Neon dev, then copies its directory and Grok's session files to `~/.local/state/castle-chef/docker-jobs/<job-id>/`.
 
 `job run` logs `worker.started` with its release (`YYYY.M.D.N`, or `dev-<sha>` for an untagged checkout) and commit. It refuses to run (`schema.behind`, exit status 78) if the database's migrations are older than the code. A database that is *newer* than the code (after a rollback) is fine. A job someone else already claimed is left alone, and a job that no longer exists (discarded with its draft) ends quietly (both exit 0).
 
-The worker runs `al -q grok`, so Grok uses Agent Layer's model settings (`.agent-layer/config.toml`). Grok's headless mode auto-approves every tool call, so the run is contained by construction:
+The worker runs `al -q grok`, so Grok uses the worker's Agent Layer settings (`docker/agent-project/.agent-layer/config.toml`: model and reasoning effort). Grok's headless mode auto-approves every tool call, so the run is contained by construction:
 
-- The working directory is the job directory (no project instructions); the only tool is the shell; subagents are disabled.
+- The working directory is the job directory (no project instructions). The agent's only tools are the job's MCP tools: Grok gets `--tools search_tool,use_tool` (how it reaches MCP tools) and `--trust` (so it starts the job directory's MCP server); it has no shell, file tools, or subagents. An agent with a shell went looking through the application's code before doing the job, even when there was nothing to find but its own commands.
 - The agent gets a minimal environment (`HOME`, `PATH`, `CASTLE_CHEF_JOB_DIR`, and the Grok settings it needs): no database credentials.
-- The prompts contain only fixed text and what agents made earlier (a batch's prompt: the meal count and the names of meals marked "not for us"; a shopping list's: the picked meals' names and ingredients, scaled to their servings), never free text from a member, so there is no prompt-injection channel. Keep it that way: a free-text job parameter would become input to an auto-approving shell agent.
-- **Locally**, Grok's own sandbox (profile `castle-chef-agent`, extending `strict`) lets commands read only the job directory, system paths, `backend/.venv`, `backend/src`, and Grok's home; write only the job directory and `/tmp`; and blocks network access for commands.
-- **In the container**, which is the sandbox there: the worker runs as root and starts the agent as the unprivileged user `agent` (uid 65532) with no other groups and no inherited files, so it can't read the worker's environment (`DATABASE_URL`). The root filesystem is read-only; only `/tmp` and the Grok login on EFS are writable. Because `al` writes into its project on every launch, each task gets its own copy of `.agent-layer` in `/tmp/agent-project`. The agent can read Grok's login (it needs it to run), so a misbehaving agent could copy it into a meal; sign out of that session from the Grok account if that ever happens.
+- The prompts contain only fixed text and what agents made earlier (a batch's prompt: the meal count and the names of meals marked "not for us"; a shopping list's: the picked meals' names and ingredients, scaled to their servings), never free text from a member, so there is no prompt-injection channel. Keep it that way: a free-text job parameter would become input to an auto-approving agent.
+- **The container** is the sandbox: the worker runs as root and starts the agent as the unprivileged user `agent` (uid 65532) with no other groups and no inherited files, so it can't read the worker's environment (`DATABASE_URL`). The MCP server Grok starts runs as that user too, and reaches only what its job needs: its `PATH` (`CASTLE_CHEF_AGENT_PATH`) is its own `castle-chef` (`/opt/castle-chef-agent`: the `castle_chef_agent` package alone, installed with its dependencies) and system commands; `/app` (the backend) and the worker's logs are root-only. The root filesystem is read-only; only `/tmp` and the Grok login on EFS are writable. Because `al` writes into its project on every launch, each task gets its own copy of the worker's Agent Layer project (`docker/agent-project`: Grok's settings only, none of this repository's agent instructions or skills) in `/tmp/agent-project`. Grok's login is readable by the agent's user (Grok needs it to run); the agent itself has no tool that reads files, but if the login ever leaks, sign out of that session from the Grok account.
 - Parallel jobs take turns running the agent (a lock file next to the login on EFS), because two agents refreshing one login at once can invalidate it. Each Fargate task is capped at 20 minutes (the agent at 15).
 
 ### Logs
 
-Everything logs structured JSON, one object per line: `{"ts", "level", "logger", "event", ...fields}`. On AWS each part has a CloudWatch log group, kept 90 days: the API's, the worker's, and the failure handler's (`aws logs tail <group> --follow --profile conn`, or Logs Insights). Locally, the worker and CLI log to stderr and `~/.local/state/castle-chef/logs/castle-chef.jsonl` (rotated at 10 MB, 5 files).
+Everything logs structured JSON, one object per line: `{"ts", "level", "logger", "event", ...fields}`. On AWS each part has a CloudWatch log group, kept 90 days: the API's, the worker's, and the failure handler's (`aws logs tail <group> --follow --profile conn`, or Logs Insights). Locally, the API and CLI log to stderr and `~/.local/state/castle-chef/logs/castle-chef.jsonl` (rotated at 10 MB, 5 files). A job's worker runs in the worker image and logs to its container's output: `make worker-job` shows it, and saves it with the job's files as `~/.local/state/castle-chef/docker-jobs/<job-id>/worker.log`.
 
 - Worker: `worker.started` (release, commit), `job.claimed`, `agent.lock_acquired` (seconds waited), `agent.started`, `agent.finished` (seconds, turns, cost), `job.succeeded`, `job.failed`, `schema.behind`.
 - Failure handler: `job.worker_stopped` and `job.never_started` (both errors).
