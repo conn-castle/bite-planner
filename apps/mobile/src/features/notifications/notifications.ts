@@ -69,10 +69,11 @@ export function useYourReminder(): { time: string | null; off: boolean } {
 }
 
 /**
- * Whether "your meal ideas are ready" will reach this phone for a batch: the
- * signed-in member started it (it goes only to them) and has notifications on.
+ * Whether "your meal ideas are ready" (or "your shopping list is ready") will
+ * reach this phone for a job: the signed-in member started it (it goes only to
+ * them) and has notifications on.
  */
-export function useNotifiedOfIdeas(startedBy: string | null): boolean {
+export function useNotifiedOfJob(startedBy: string | null): boolean {
   const userId = useSession().data?.user.id
   const current = usePermission()
   return current === 'on' && startedBy !== null && startedBy === userId
@@ -204,6 +205,7 @@ export async function forgetThisPhone(queryClient: QueryClient): Promise<void> {
 export type Delivered =
   | { kind: 'reminder'; orderNumber: number }
   | { kind: 'ideas_ready'; orderId: string }
+  | { kind: 'list_ready'; orderId: string }
   | { kind: 'test' }
 
 export function parseDelivered(data: unknown): Delivered | null {
@@ -211,18 +213,23 @@ export function parseDelivered(data: unknown): Delivered | null {
   if (data.kind === 'reminder' && typeof data.order_number === 'number') {
     return { kind: 'reminder', orderNumber: data.order_number }
   }
-  if (data.kind === 'ideas_ready' && typeof data.order_id === 'string') return { kind: 'ideas_ready', orderId: data.order_id }
+  if ((data.kind === 'ideas_ready' || data.kind === 'list_ready') && typeof data.order_id === 'string') {
+    return { kind: data.kind, orderId: data.order_id }
+  }
   if (data.kind === 'test') return { kind: 'test' }
   return null
 }
 
 /**
- * What tapping a notification leads to: the order flow, when the household's
- * draft is still the one it's about; otherwise Home, with a note saying why, so
- * the tap doesn't seem to do nothing. `tappedOrder` is the order an "ideas
- * ready" was about, when it's no longer the draft ('discarded' once it's gone).
+ * What tapping a notification leads to: the order flow (at the shopping list,
+ * for "list ready"), when the household's draft is still the one it's about;
+ * otherwise Home, with a note saying why, so the tap doesn't seem to do
+ * nothing. `tappedOrder` is the order an "ideas ready" or "list ready" was
+ * about, when it's no longer the draft ('discarded' once it's gone).
  */
-export type TapResult = { open: true; orderId: string } | { open: false; header: string; message: string }
+export type TapResult =
+  | { open: true; orderId: string; step?: 'list' }
+  | { open: false; header: string; message: string }
 
 export function tapResult(
   tapped: Exclude<Delivered, { kind: 'test' }>,
@@ -248,19 +255,24 @@ export function tapResult(
         }
       : { open: false, header: `Order ${number} isn't open`, message: "Home shows what's next." }
   }
-  if (next.draft?.id === tapped.orderId) return { open: true, orderId: tapped.orderId }
+  const what = tapped.kind === 'list_ready' ? 'shopping list' : 'meal ideas'
+  if (next.draft?.id === tapped.orderId) {
+    return tapped.kind === 'list_ready'
+      ? { open: true, orderId: tapped.orderId, step: 'list' }
+      : { open: true, orderId: tapped.orderId }
+  }
   if (tappedOrder === 'discarded') {
     return {
       open: false,
       header: 'That draft was discarded',
-      message: "Its meal ideas went with it. Start a new order from Home when you're ready.",
+      message: `Its ${what} went with it. Start a new order from Home when you're ready.`,
     }
   }
   if (tappedOrder?.status === 'placed') {
     return {
       open: false,
       header: `Order ${tappedOrder.number} is already placed`,
-      message: "It was placed before you opened its meal ideas. Home shows what's next.",
+      message: `It was placed before you opened its ${what}. Home shows what's next.`,
     }
   }
   return { open: false, header: "That order isn't open", message: "Home shows what's next." }
@@ -274,7 +286,7 @@ export function tapResult(
 export async function resolveTap(about: Exclude<Delivered, { kind: 'test' }>): Promise<TapResult> {
   const next = await apiRequest<NextOrder>('GET', '/v1/grocery-orders/next')
   const tappedOrder =
-    about.kind === 'ideas_ready' && next.draft?.id !== about.orderId
+    about.kind !== 'reminder' && next.draft?.id !== about.orderId
       ? await apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${about.orderId}`).catch((error: unknown) => {
           if (error instanceof ApiError && error.status === 404) return 'discarded' as const
           throw error
@@ -373,7 +385,7 @@ export function tapToast(shown: Toast) {
   tapped.set({ about: shown.delivered, at: Date.now() })
 }
 
-// Whether the order flow is open: "ideas ready" needs no toast then (the ideas are showing).
+// Whether the order flow is open: "ideas ready" and "list ready" need no toast then (they're showing).
 let orderFlowOpen = false
 
 export function setOrderFlowOpen(open: boolean) {
@@ -385,10 +397,10 @@ function received(notification: PushNotificationSchema, queryClient: QueryClient
   logger.info('push.received', { kind: delivered?.kind ?? null })
   // Whatever it's about, Home may be showing something older.
   void queryClient.invalidateQueries({ queryKey: queryKeys.nextOrder })
-  if (delivered?.kind === 'ideas_ready' && !orderFlowOpen) {
+  if ((delivered?.kind === 'ideas_ready' || delivered?.kind === 'list_ready') && !orderFlowOpen) {
     toast.set({
       id: ++toastCount,
-      title: notification.title ?? 'Your meal ideas are ready',
+      title: notification.title ?? '',
       body: notification.body ?? '',
       delivered,
     })

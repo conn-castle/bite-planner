@@ -17,6 +17,7 @@ const order: GroceryOrder = {
   jobs: [],
   picks: [{ meal_id: 'tacos', servings: 4 }],
   lock: null,
+  shopping_list: null,
 }
 
 const picked = (shown: GroceryOrder) => shown.picks.map((pick) => pick.meal_id)
@@ -117,6 +118,44 @@ describe('applyEdits', () => {
     const undone = applyEdits(marked, [{ session: 'phone', orderId: 'order-2', mealId: 'tacos', notForUs: false }])
     expect(picked(undone)).toEqual([])
     expect(undone.jobs[0]?.meals.map((meal) => meal.rating)).toEqual([null, null])
+  })
+})
+
+describe('changes to the shopping list', () => {
+  const listed: GroceryOrder = {
+    ...order,
+    shopping_list: {
+      job: {
+        id: 'build',
+        kind: 'build_list',
+        status: 'succeeded',
+        error: null,
+        requested_by: { user_id: 'sam', name: 'Sam' },
+        created_at: '2026-09-25T12:00:00Z',
+        meals: [],
+      },
+      current: true,
+      items: [
+        { id: 'onions', name: 'onions', quantity: 2, unit: null, aisle: 'produce', meal_ids: [], on_hand: false, removed: false },
+        { id: 'beef', name: 'ground beef', quantity: 1, unit: 'lb', aisle: 'meat_seafood', meal_ids: [], on_hand: false, removed: false },
+      ],
+    },
+  }
+
+  it('shows items taken off and amounts changed while they are saved', () => {
+    const shown = applyEdits(listed, [
+      { session: 'phone', orderId: 'order-2', itemId: 'onions', removed: true },
+      { session: 'phone', orderId: 'order-2', itemId: 'beef', quantity: 1.5 },
+    ])
+    expect(shown.shopping_list?.items.map((item) => [item.id, item.removed, item.quantity])).toEqual([
+      ['onions', true, 2],
+      ['beef', false, 1.5],
+    ])
+  })
+
+  it('is recognized as a change to the order', () => {
+    expect(isOrderEdit({ session: 's', orderId: 'o', itemId: 'i', removed: true })).toBe(true)
+    expect(isOrderEdit({ session: 's', orderId: 'o', itemId: 'i', quantity: 'lots' })).toBe(false)
   })
 })
 

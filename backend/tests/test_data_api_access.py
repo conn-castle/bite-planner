@@ -42,6 +42,10 @@ INSERTS = {
         "INSERT INTO meal_ingredient (id, meal_id, position, name) "
         f"VALUES ('{uuid4()}', '{uuid4()}', 0, 'beef')"
     ),
+    "shopping_list_item": (
+        "INSERT INTO shopping_list_item (id, job_id, position, name, aisle, meal_ids, on_hand) "
+        f"VALUES ('{uuid4()}', '{uuid4()}', 0, 'tortillas', 'pantry', '{{}}', false)"
+    ),
     "push_device": (
         f"INSERT INTO push_device (token, user_id) VALUES ('{'ab' * 32}', '{uuid4()}')"
     ),

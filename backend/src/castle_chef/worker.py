@@ -1,4 +1,5 @@
-"""Runs one job: the agent harness in a job directory, then its meals saved."""
+"""Runs one job: the agent harness in a job directory, then its result (meals, or
+a shopping list) saved."""
 
 import fcntl
 import json
@@ -12,6 +13,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 from uuid import UUID
@@ -23,13 +25,14 @@ from alembic.util.exc import CommandError
 from pydantic import ValidationError
 from sqlmodel import Session, select
 
-from castle_chef import push, ratings
+from castle_chef import push, ratings, shopping
 from castle_chef.db import get_engine, get_session
-from castle_chef.jobs import claim_job, finish_job
+from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, finish_job
 from castle_chef.meals import MealInput, add_meals, load_meals
-from castle_chef.models import GroceryOrder, Job, JobKind
-from castle_chef.notifications import ideas_ready
+from castle_chef.models import GroceryOrder, Job, JobKind, ListSource
+from castle_chef.notifications import ideas_ready, list_ready
 from castle_chef.settings import REPO_ROOT, get_settings
+from castle_chef.shopping import InvalidList, ListItemInput
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +77,24 @@ class JobDiscarded(Exception):
     """The job's draft was discarded (with the job) after it was claimed."""
 
 
+@dataclass(frozen=True)
+class Meals:
+    """A generate_meals job's result."""
+
+    meals: list[MealInput]
+
+
+@dataclass(frozen=True)
+class ListItems:
+    """A build_list job's result: the checked items, and the picks they're for."""
+
+    items: list[ListItemInput]
+    source: ListSource
+
+
+type JobResult = Meals | ListItems
+
+
 def run_job(job_id: UUID) -> None:
     """Run one job: claim it, run the agent, and save its meals (or its failure).
 
@@ -95,11 +116,11 @@ def run_job(job_id: UUID) -> None:
         return
     log.info("job.claimed", extra=fields | {"kind": job.kind})
     try:
-        meals = process_job(job)
+        result = process_job(job)
     except JobDiscarded:
         log.info("job.discarded", extra=fields)
         return
-    except (AgentRunError, ValidationError) as error:
+    except (AgentRunError, ValidationError, InvalidList) as error:
         log.error("job.failed", extra=fields | {"error": str(error)})
         _finish(job_id, error=str(error))
         return
@@ -107,38 +128,63 @@ def run_job(job_id: UUID) -> None:
         log.exception("job.crashed", extra=fields)
         _finish(job_id, error=f"Unexpected worker error: {error!r}")
         return
+    counts = (
+        {"meal_count": len(result.meals)}
+        if isinstance(result, Meals)
+        else {"item_count": len(result.items)}
+    )
     try:
         with get_session() as session:
             # Locking the job keeps its draft from being discarded mid-save; a job
             # already gone was discarded with its draft, which is not an error.
             if session.exec(select(Job).where(Job.id == job_id).with_for_update()).first() is None:
-                log.info("job.discarded", extra=fields | {"meal_count": len(meals)})
+                log.info("job.discarded", extra=fields | counts)
                 return
-            # The meals and the job's success are committed together, and only if
-            # the job is still running (not failed as stale meanwhile).
-            add_meals(session, job_id, meals)
+            # The result and the job's success are committed together, and only
+            # if the job is still running (not failed as stale, or as superseded
+            # by a newer list, meanwhile).
+            if isinstance(result, Meals):
+                add_meals(session, job_id, result.meals)
+            else:
+                shopping.add_items(session, job_id, result.items, result.source)
             if not finish_job(session, job_id):
-                log.error("job.no_longer_running", extra=fields | {"meal_count": len(meals)})
+                job = session.get(Job, job_id)
+                if job is not None and job.error == SUPERSEDED_ERROR:
+                    # A newer list for other picks replaced it: expected.
+                    log.info("job.superseded", extra=fields | counts)
+                else:
+                    log.error("job.no_longer_running", extra=fields | counts)
                 return
     except Exception as error:
         # If the commit went through despite the error (a lost acknowledgement),
         # the job is no longer running and this changes nothing.
         log.exception("job.save_failed", extra=fields)
-        _finish(job_id, error=f"Could not save the meals: {error!r}")
+        _finish(job_id, error=f"Could not save the result: {error!r}")
         return
-    log.info("job.succeeded", extra=fields | {"meal_count": len(meals)})
+    log.info("job.succeeded", extra=fields | counts)
     _notify_requester(job_id)
 
 
 def _notify_requester(job_id: UUID) -> None:
-    """ "Your meal ideas are ready", to whoever started the batch. The job's success
-    stands whatever happens here; a failure is logged as an error."""
+    """ "Your meal ideas are ready", or "Your shopping list is ready" while it's
+    still the list for the order's picks, to whoever started the job. The job's
+    success stands whatever happens here; a failure is logged as an error."""
     try:
         with get_session() as session:
             job = session.get(Job, job_id)
             if job is None:  # discarded with its draft meanwhile
                 return
-            notification = ideas_ready(session, job)
+            if job.kind == JobKind.GENERATE_MEALS:
+                notification = ideas_ready(session, job)
+            else:
+                newest = shopping.newest_build(session, job.grocery_order_id)
+                if newest is None or newest.id != job.id:
+                    log.info("job.notify_skipped", extra={"job_id": str(job_id)})
+                    return
+                if not shopping.is_current(session, job.grocery_order_id, newest):
+                    log.info("job.notify_skipped", extra={"job_id": str(job_id)})
+                    return
+                notification = list_ready(session, job)
             requester = job.requested_by
         push.notify(requester, notification)
     except Exception:
@@ -211,20 +257,27 @@ def current_release() -> dict[str, str]:
     return {"release": release, "commit": commit}
 
 
-def process_job(job: Job) -> list[MealInput]:
-    if job.kind != JobKind.GENERATE_MEALS:
-        raise AgentRunError(f"Unknown job kind {job.kind!r}.")
+def process_job(job: Job) -> JobResult:
+    job_dir = get_settings().jobs_dir / str(job.id)
+    if job.kind == JobKind.BUILD_LIST:
+        if job.list_source is None:
+            raise AgentRunError(f"List job {job.id} has no picks to build from.")
+        with get_session() as session:
+            prompt = shopping.build_list_prompt(session, job)
+        run_agent(job_dir, prompt)
+        items = shopping.load_items(job_dir)
+        shopping.check_items(items, job.list_source)
+        return ListItems(items=items, source=job.list_source)
 
     count = get_settings().meals_per_batch
     with get_session() as session:
         prompt = generate_meals_prompt(session, job, count)
-    job_dir = get_settings().jobs_dir / str(job.id)
     run_agent(job_dir, prompt)
 
     meals = load_meals(job_dir)
     if len(meals) != count:
         raise AgentRunError(f"Requested {count} meals, but the agent added {len(meals)}.")
-    return meals
+    return Meals(meals=meals)
 
 
 def generate_meals_prompt(session: Session, job: Job, count: int) -> str:

@@ -41,6 +41,7 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
   ],
   picks: [],
   lock: null,
+  shopping_list: null,
 })
 
 const placed: PlacedOrder = {
@@ -50,6 +51,7 @@ const placed: PlacedOrder = {
   placed_by: { user_id: 'sam', name: 'Sam' },
   delivery_date: '2026-09-20',
   next_delivery_date: '2026-09-25',
+  shopping_list: [],
   meals: [{ ...meal('fajitas'), servings: 4 }],
 }
 

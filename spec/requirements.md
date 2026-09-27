@@ -71,10 +71,10 @@ The list is made in three stages:
 2. An AI agent combines those ingredients into one list of things to buy (e.g. "1 onion" and "1 cup diced onion" become onions), grouped by aisle.
 3. An agent shops that list at the grocery store(s) (Instacart and/or Walmart, whichever is easier to set up; both is ideal) and chooses the exact products to order, using the household's store accounts and preferences.
 
-- [ ] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings (stages 1 and 2), asynchronously (it takes minutes), starting as soon as the servings are chosen; the user sees it when it's done.
-- [ ] Changing the picked meals or their servings after the list was built rebuilds it from scratch; the user's changes to the old list are dropped. (Generation isn't deterministic and can change the list a lot, so there is no merging.)
-- [ ] The user can remove items from the shopping list and change their quantities.
-- [ ] Items assumed to be on hand are never on the list. The list is the same for every household and isn't editable: salt, pepper, olive oil, vegetable oil, water. When the meals need any of them, an icon on the shopping list shows it; tapping it lists the assumed items these recipes need. They aren't shown otherwise (they'd be noise).
+- [x] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings (stages 1 and 2), asynchronously (it takes minutes), starting as soon as the servings are chosen; the user sees it when it's done.
+- [x] Changing the picked meals or their servings after the list was built rebuilds it from scratch; the user's changes to the old list are dropped. (Generation isn't deterministic and can change the list a lot, so there is no merging.)
+- [x] The user can remove items from the shopping list and change their quantities.
+- [x] Items assumed to be on hand are never on the list. The list is the same for every household and isn't editable: salt, pepper, olive oil, vegetable oil, water. When the meals need any of them, an icon on the shopping list shows it; tapping it lists the assumed items these recipes need. They aren't shown otherwise (they'd be noise).
 - [ ] Before placing, the user sees the exact products that will be ordered (stage 3).
 
 ## Placing and status
@@ -117,7 +117,7 @@ Personal settings:
 
 - [x] History shows every past order and all of its meals, grouped by order.
 - [x] History's meals can be searched by name and filtered, including by rating.
-- [ ] Order view: an order's dates, status, meals, and shopping list.
+- [x] Order view: an order's dates, status, meals, and shopping list.
 - [x] Meal view: a meal's recipe (servings, ingredients, facts).
 - [ ] Instructions view: a meal's cooking steps.
 

@@ -44,7 +44,15 @@ export interface SetNotForUs extends InSession {
   notForUs: boolean
 }
 
-export type OrderEdit = SetMeal | SetServings | SetDates | SetNotForUs
+/** A shopping list item taken off the list (or put back), or how much of it to buy. */
+export interface SetItem extends InSession {
+  orderId: string
+  itemId: string
+  removed?: boolean
+  quantity?: number
+}
+
+export type OrderEdit = SetMeal | SetServings | SetDates | SetNotForUs | SetItem
 
 const isDate = (value: unknown): value is string | null => value === null || typeof value === 'string'
 
@@ -53,6 +61,10 @@ const isCount = (value: unknown): value is number => typeof value === 'number' &
 /** Whether a pending mutation's variables are a change to an order (they are stored untyped). */
 export function isOrderEdit(value: unknown): value is OrderEdit {
   if (!isRecord(value) || typeof value.orderId !== 'string' || typeof value.session !== 'string') return false
+  if (typeof value.itemId === 'string') {
+    const removed = value.removed === undefined || typeof value.removed === 'boolean'
+    return removed && (value.quantity === undefined || typeof value.quantity === 'number')
+  }
   if (typeof value.mealId === 'string') {
     if (typeof value.picked === 'boolean') return value.picked === false || isCount(value.servings)
     if (typeof value.notForUs === 'boolean') return true
@@ -68,6 +80,16 @@ export function applyEdits(order: GroceryOrder, edits: readonly OrderEdit[]): Gr
     .filter((edit) => edit.orderId === order.id)
     .reduce((shown, edit) => {
       if ('dates' in edit) return { ...shown, ...edit.dates }
+      if ('itemId' in edit) {
+        const list = shown.shopping_list
+        if (list === null) return shown
+        const items = list.items.map((item) =>
+          item.id === edit.itemId
+            ? { ...item, removed: edit.removed ?? item.removed, quantity: edit.quantity ?? item.quantity }
+            : item,
+        )
+        return { ...shown, shopping_list: { ...list, items } }
+      }
       const others = shown.picks.filter((pick) => pick.meal_id !== edit.mealId)
       if ('picked' in edit) {
         // A meal marked "not for us" can't be picked (the server refuses it), so a

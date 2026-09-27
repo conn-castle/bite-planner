@@ -1,12 +1,12 @@
 import type { GroceryOrder } from '../../lib/api/types'
 import { useNow } from '../../lib/useNow'
+import { AgentWork } from '../../ui/AgentWork'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
-import { ProgressBar } from '../../ui/ProgressBar'
 import { RatePrompt } from '../meals/RatePrompt'
-import { useNotifiedOfIdeas } from '../notifications/notifications'
+import { useNotifiedOfJob } from '../notifications/notifications'
 import { useSession } from '../session/session'
 import { newestBatchState } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
@@ -35,7 +35,7 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
   const userId = useSession().data?.user.id ?? null
   // Who started the batch being made (this member, when it was just asked for here).
   const startedBy = batch.status === 'running' ? batch.job.requested_by.user_id : generate.isPending ? userId : null
-  const notified = useNotifiedOfIdeas(running ? startedBy : null)
+  const notified = useNotifiedOfJob(running ? startedBy : null)
 
   return (
     <FlowFrame
@@ -66,22 +66,16 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
         </>
       }
     >
-      <div className={styles.wait}>
-        <div className={`${styles.orb} ${running ? styles.spinning : ''}`} aria-hidden="true">
-          <MealArt />
-        </div>
-        <h2 className={styles.title}>Finding meals for Order {order.number}</h2>
+      <AgentWork
+        art={<MealArt />}
+        title={`Finding meals for Order ${order.number}`}
+        took={running ? (batch.status === 'running' ? elapsed(new Date(batch.job.created_at), now) : 'Starting') : null}
+        lede="This usually takes a minute or two."
+      >
         {running && (
-          <>
-            <p className={styles.lede}>This usually takes a minute or two.</p>
-            <ProgressBar className={styles.progress} />
-            <p className={styles.elapsed} role="timer">
-              {batch.status === 'running' ? elapsed(new Date(batch.job.created_at), now) : 'Starting'}
-            </p>
-            <div className={styles.rate}>
-              <RatePrompt />
-            </div>
-          </>
+          <div className={styles.rate}>
+            <RatePrompt />
+          </div>
         )}
         {!running && batch.status === 'failed' && (
           <div className={styles.problem}>
@@ -100,7 +94,7 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
             <Notice>Couldn't start: {generate.error.message}</Notice>
           </div>
         )}
-      </div>
+      </AgentWork>
     </FlowFrame>
   )
 }

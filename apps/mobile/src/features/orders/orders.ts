@@ -30,6 +30,7 @@ import {
   type InSession,
   isOrderEdit,
   type SetDates,
+  type SetItem,
   type SetMeal,
   type SetNotForUs,
   type SetServings,
@@ -164,6 +165,8 @@ const SET_DATES = ['orders', 'set-dates']
 const SET_NOT_FOR_US = ['orders', 'set-not-for-us']
 const PLACE = ['orders', 'place']
 const DISCARD = ['orders', 'discard']
+const START_LIST = ['orders', 'start-list']
+const SET_ITEM = ['orders', 'set-item']
 const TAKE = ['orders', 'take']
 const RELEASE = ['orders', 'release']
 
@@ -194,6 +197,11 @@ export interface OpenOrder extends InSession {
 export interface GenerateMeals extends InSession {
   orderId: string
   /** Chosen here, so a resent request (e.g. after going offline) can't start a second batch. */
+  jobId: string
+}
+export interface StartList extends InSession {
+  orderId: string
+  /** Chosen here, so a resent request can't start a second build. */
   jobId: string
 }
 export interface OrderAction {
@@ -319,6 +327,36 @@ export function registerOrderMutations(queryClient: QueryClient) {
     // Refused, or the rating was saved but the order couldn't be fetched: show
     // everything as the server has it now.
     onError: (_error: Error, { orderId }: SetNotForUs) => refetchAfterPlaced(queryClient, orderId),
+  })
+
+  queryClient.setMutationDefaults(START_LIST, {
+    // Builds the list from the picks and servings now (after the changes to them
+    // before it); a build for the same picks already made or being made is kept.
+    mutationFn: async ({ orderId, jobId, session }: StartList): Promise<Job> => {
+      const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/list`, { job_id: jobId }, session)
+      logger.info('orders.list_started', { orderId, jobId: job.id, status: job.status })
+      return job
+    },
+    retry,
+    scope: EDITS,
+    // The order's list is its newest build: fetch the order to show it.
+    onSettled: (_job: Job | undefined, _error: Error | null, { orderId }: StartList) =>
+      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+  })
+
+  queryClient.setMutationDefaults(SET_ITEM, {
+    mutationFn: ({ orderId, itemId, removed, quantity, session }: SetItem) =>
+      apiRequest<GroceryOrder>(
+        'PATCH',
+        `/v1/grocery-orders/${orderId}/list/items/${itemId}`,
+        { ...(removed === undefined ? {} : { removed }), ...(quantity === undefined ? {} : { quantity }) },
+        session,
+      ),
+    retry,
+    scope: EDITS,
+    onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
+    // Refused (e.g. the list was replaced by a new one): show the order as it is now.
+    onError: (_error: Error, { orderId }: SetItem) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
   })
 
   queryClient.setMutationDefaults(SET_DATES, {
@@ -463,6 +501,16 @@ export function useSetNotForUs() {
 /** Saves both dates; they show at once (see edits.ts). */
 export function useSetDates() {
   return useMutation<GroceryOrder, Error, SetDates>({ mutationKey: SET_DATES })
+}
+
+/** Starts building the shopping list from the picks and servings now. */
+export function useStartList() {
+  return useMutation<Job, Error, StartList>({ mutationKey: START_LIST })
+}
+
+/** Takes an item off the list or puts it back, or changes how much of it to buy; it shows at once. */
+export function useSetItem() {
+  return useMutation<GroceryOrder, Error, SetItem>({ mutationKey: SET_ITEM })
 }
 
 export function usePlaceOrder() {

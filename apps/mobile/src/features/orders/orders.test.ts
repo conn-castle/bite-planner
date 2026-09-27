@@ -2,9 +2,9 @@ import { MutationObserver, QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiRequest } from '../../lib/api/client'
 import { ApiError } from '../../lib/api/errors'
-import type { GroceryOrder, Meal, NextOrder, OrderDates } from '../../lib/api/types'
+import type { GroceryOrder, Job, Meal, NextOrder, OrderDates } from '../../lib/api/types'
 import { queryKeys } from '../../lib/query/keys'
-import type { SetMeal, SetNotForUs } from './edits'
+import type { SetMeal, SetNotForUs, SetServings } from './edits'
 import {
   closeFlowSession,
   FlowClosed,
@@ -12,6 +12,7 @@ import {
   type OpenOrder,
   type PlaceOrder,
   registerOrderMutations,
+  type StartList,
   takeLock,
 } from './orders'
 
@@ -35,6 +36,7 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   jobs: [],
   picks: mealIds.map((meal_id) => ({ meal_id, servings: 4 })),
   lock: null,
+  shopping_list: null,
 })
 
 // The ordering session of the flow making the changes.
@@ -307,5 +309,28 @@ describe('the order lock', () => {
     )
 
     expect(calls).toEqual(['POST /v1/grocery-orders/draft/lock', 'DELETE /v1/grocery-orders/draft/lock'])
+  })
+})
+
+describe('the shopping list', () => {
+  it('starts after the changes before it, with the session, and shows the order as it is then', async () => {
+    const calls: string[] = []
+    request.mockImplementation(async (method, path) => {
+      calls.push(`${method} ${path}`)
+      if (method === 'PUT') await new Promise((resolve) => setTimeout(resolve, 20))
+      return method === 'PUT' ? draft(['soup']) : { id: 'build', kind: 'build_list', status: 'pending' }
+    })
+    queryClient.setQueryData(queryKeys.order('draft'), draft([]))
+    const servings = new MutationObserver<GroceryOrder, Error, SetServings>(queryClient, {
+      mutationKey: ['orders', 'set-servings'],
+    }).mutate({ orderId: 'draft', mealId: 'soup', servings: 6, session })
+    const start = new MutationObserver<Job, Error, StartList>(queryClient, {
+      mutationKey: ['orders', 'start-list'],
+    }).mutate({ orderId: 'draft', jobId: 'build', session })
+    await Promise.all([servings, start])
+
+    expect(calls).toEqual(['PUT /v1/grocery-orders/draft/meals/soup/servings', 'POST /v1/grocery-orders/draft/list'])
+    expect(request.mock.calls[1]).toEqual(['POST', '/v1/grocery-orders/draft/list', { job_id: 'build' }, session])
+    expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(true)
   })
 })

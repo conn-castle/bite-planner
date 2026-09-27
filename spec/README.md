@@ -45,6 +45,13 @@ Notifications, as decided:
 - The Next delivery step's card has no mini strip of days (the mockup's `.mini-strip`): the day row under it already marks the days the meals cover.
 - The Next delivery step says what it sets for the following order in one line ("Order 5: decide by …, reminders start …"), not the mockup's "What this sets" group.
 
+The shopping list, as built (stages 1 and 2; the mockup has the list step but not its waiting, its on-hand items, or changing amounts):
+
+- While the list is made, its step shows the same waiting screen as "Finding meals" (the orb, how long it has taken, Notify me), titled "Making your shopping list". "Your shopping list is ready" goes to whoever left Servings, and its tap opens the flow at the list.
+- Items assumed on hand are behind a small button under the list's summary ("3 items assumed on hand", with a check); tapping it says which ones these recipes use.
+- An item's amount changes by tapping it: a stepper opens under the item (whole steps for things counted, ¼ or ½ for small amounts in units).
+- The list's summary is "to order", "removed", and the delivery day, as mocked; the Review step has a Shopping list row ("12 items", "2 items removed") that goes back to it.
+
 The order lock, as decided:
 
 - The lock belongs to one opening of the order flow on one phone, not just to the member. Opening the flow on another phone (or on the same phone after the app was closed) takes over the member's own lock at once; the phone that lost it shows "You're placing this order on another phone" with "Order here" (not in the mockup).

@@ -3,15 +3,16 @@
 
 from datetime import date, timedelta
 
-from sqlmodel import Session, func, select
+from sqlmodel import Session, col, func, select
 
 from castle_chef import orders
-from castle_chef.models import AppUser, GroceryOrder, Job, Meal
+from castle_chef.models import AppUser, GroceryOrder, Job, Meal, ShoppingListItem
 from castle_chef.push import Notification, NotificationKind
 
 # How long APNs keeps one for a phone that's off or offline.
 REMINDER_EXPIRY = timedelta(hours=12)
 IDEAS_READY_EXPIRY = timedelta(hours=6)
+LIST_READY_EXPIRY = timedelta(hours=6)
 
 
 def _weekday(day: date) -> str:
@@ -71,5 +72,23 @@ def ideas_ready(session: Session, job: Job) -> Notification:
         title="Your meal ideas are ready",
         body=body,
         expires_in=IDEAS_READY_EXPIRY,
+        order_id=order.id,
+    )
+
+
+def list_ready(session: Session, job: Job) -> Notification:
+    """For the member whose leaving Servings started a shopping list, once it's built."""
+    order = session.get_one(GroceryOrder, job.grocery_order_id)
+    number = orders.number(session, order)
+    count = session.exec(
+        select(func.count())
+        .select_from(ShoppingListItem)
+        .where(ShoppingListItem.job_id == job.id, col(ShoppingListItem.on_hand).is_(False))
+    ).one()
+    return Notification(
+        kind=NotificationKind.LIST_READY,
+        title="Your shopping list is ready",
+        body=f"{count} item{'' if count == 1 else 's'} for Order {number}.",
+        expires_in=LIST_READY_EXPIRY,
         order_id=order.id,
     )

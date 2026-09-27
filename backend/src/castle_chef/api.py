@@ -28,7 +28,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
-from castle_chef import failures, orders, push, ratings, reminders
+from castle_chef import failures, orders, push, ratings, reminders, shopping
 from castle_chef import household as households
 from castle_chef import log as logging_config
 from castle_chef.auth import AuthError, AuthUnavailable, AuthVerifier, NeonAuthVerifier, Principal
@@ -38,14 +38,17 @@ from castle_chef.jobs import (
     STALE_ERROR,
     BatchRunning,
     JobIdTaken,
+    NothingToList,
     fail_job,
     is_stale,
+    submit_build_list,
     submit_generate_meals,
 )
 from castle_chef.models import (
     DECIDE_BY_OFFSET_DAYS,
     REMINDER_LEAD_DAYS,
     SERVINGS,
+    Aisle,
     AppUser,
     GroceryOrder,
     GroceryOrderStatus,
@@ -56,6 +59,7 @@ from castle_chef.models import (
     Meal,
     MealRating,
     OrderStep,
+    ShoppingListItem,
 )
 from castle_chef.settings import get_settings, load_ssm_parameters
 
@@ -114,6 +118,33 @@ class PlacedMealOut(MealSummaryOut):
     servings: int
 
 
+class ShoppingItemOut(BaseModel):
+    """An item of an order's shopping list."""
+
+    id: UUID
+    name: str
+    # What's ordered, in `unit` (a count when null); null when the recipes give no amount.
+    quantity: float | None
+    unit: str | None
+    aisle: Aisle
+    # The picked meals it's for.
+    meal_ids: list[UUID]
+    # Assumed on hand (salt, pepper, ...): never ordered; the app shows them only on request.
+    on_hand: bool
+    removed: bool
+
+
+class ShoppingListOut(BaseModel):
+    """A draft's shopping list: its newest build, and the newest one's items that succeeded."""
+
+    # The newest build: its status, error, who started it, and when.
+    job: JobOut
+    # Ready for the order's picks and servings now: the newest build succeeded, from them.
+    current: bool
+    # The newest succeeded build's items, by aisle; [] until one succeeds.
+    items: list[ShoppingItemOut]
+
+
 class OrderLockOut(BaseModel):
     """Who is placing the order: one ordering session (an opening of the flow on
     one phone) has its lock, until it's closed, placed, or 2 minutes pass
@@ -150,6 +181,8 @@ class GroceryOrderOut(BaseModel):
     picks: list[PickOut]
     # Its live lock (a draft's), or null when no one is placing it.
     lock: OrderLockOut | None
+    # Its shopping list; null until one is started.
+    shopping_list: ShoppingListOut | None
 
 
 class PlacedOrderOut(BaseModel):
@@ -163,6 +196,8 @@ class PlacedOrderOut(BaseModel):
     next_delivery_date: date
     # The picked meals, in the order they were suggested.
     meals: list[PlacedMealOut]
+    # What was ordered for them, by aisle.
+    shopping_list: list[ShoppingItemOut]
 
 
 class NextOrderOut(BaseModel):
@@ -332,6 +367,13 @@ class LockIn(BaseModel):
     step: OrderStep
 
 
+class ItemIn(PartialUpdate):
+    """A change to a shopping list item: taken off (or put back), or how much to buy."""
+
+    removed: bool | None = None
+    quantity: float | None = Field(default=None, gt=0)
+
+
 class ServingsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -472,6 +514,30 @@ def own_lock(session: Session, order: GroceryOrder, user_id: UUID) -> OrderLockO
     return lock
 
 
+def item_out(item: ShoppingListItem) -> ShoppingItemOut:
+    return ShoppingItemOut.model_validate(item, from_attributes=True)
+
+
+def shopping_list_out(
+    session: Session,
+    order: GroceryOrder,
+    people: dict[UUID, str | None],
+    rated: dict[UUID, MealRating],
+) -> ShoppingListOut | None:
+    """The order's shopping list: its newest build and the newest succeeded one's items."""
+    newest = shopping.newest_build(session, order.id)
+    if newest is None:
+        return None
+    built = shopping.newest_built(session, order.id)
+    return ShoppingListOut(
+        job=job_out(newest, [], people, rated),
+        current=shopping.is_current(session, order.id, newest),
+        items=[]
+        if built is None
+        else [item_out(item) for item in shopping.items_of(session, built.id)],
+    )
+
+
 def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) -> GroceryOrderOut:
     """An order as `viewer`, a member of its household, sees it."""
     jobs = orders.jobs(session, order.id)
@@ -502,6 +568,7 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
             for pick in orders.picks(session, order.id)
         ],
         lock=lock_out(order, viewer, people),
+        shopping_list=shopping_list_out(session, order, people, rated),
     )
 
 
@@ -509,6 +576,7 @@ def placed_order_out(
     order: GroceryOrder,
     number: int,
     picks: list[orders.Pick],
+    items: list[ShoppingListItem],
     people: dict[UUID, str | None],
     rated: dict[UUID, MealRating],
 ) -> PlacedOrderOut:
@@ -529,6 +597,7 @@ def placed_order_out(
             PlacedMealOut(**meal_summary(pick.meal, rated).model_dump(), servings=pick.servings)
             for pick in picks
         ],
+        shopping_list=[item_out(item) for item in items],
     )
 
 
@@ -541,6 +610,9 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     orders.OrderPlaced: status.HTTP_409_CONFLICT,
     orders.OrderLocked: status.HTTP_423_LOCKED,
     orders.NotReady: status.HTTP_409_CONFLICT,
+    orders.ListNotCurrent: status.HTTP_409_CONFLICT,
+    orders.ItemNotFound: status.HTTP_404_NOT_FOUND,
+    NothingToList: status.HTTP_409_CONFLICT,
     orders.NotForUs: status.HTTP_409_CONFLICT,
     JobIdTaken: status.HTTP_409_CONFLICT,
     orders.InvalidDates: status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -852,6 +924,7 @@ def create_app() -> FastAPI:
         placed = orders.placed_orders(session, caller.household_id, covering_from)
         numbers = orders.numbers(session, caller.household_id)
         picks = orders.picks_of(session, [order.id for order in placed])
+        lists = shopping.placed_lists(session, [order.id for order in placed])
         people = names(session, {order.placed_by for order in placed if order.placed_by})
         rated = ratings.of_meals(
             session,
@@ -859,7 +932,9 @@ def create_app() -> FastAPI:
             [pick.meal.id for order_picks in picks.values() for pick in order_picks],
         )
         return [
-            placed_order_out(order, numbers[order.id], picks[order.id], people, rated)
+            placed_order_out(
+                order, numbers[order.id], picks[order.id], lists[order.id], people, rated
+            )
             for order in placed
         ]
 
@@ -991,6 +1066,60 @@ def create_app() -> FastAPI:
             names(session, {job.requested_by}),
             ratings.of_meals(session, caller.household_id, [meal.id for meal in meals]),
         )
+
+    @api.post("/v1/grocery-orders/{order_id}/list", status_code=status.HTTP_201_CREATED)
+    def build_list(
+        order_id: UUID,
+        body: JobIn,
+        response: Response,
+        caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        session: Annotated[Session, Depends(db)],
+        dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
+    ) -> JobOut:
+        """Start building the draft's shopping list from its picks and servings now;
+        a build already made, or being made, for them is returned instead (200)."""
+        draft = orders.lock_draft(session, caller.household_id, order_id, by)
+        source = shopping.current_source(session, draft.id)
+        job, created = submit_build_list(
+            session, draft, caller.user_id, body.job_id, source, stale_after()
+        )
+        if not created:
+            response.status_code = status.HTTP_200_OK
+        else:
+            try:
+                dispatcher.dispatch(job.id)
+            except DispatchError as error:
+                log.error("job.dispatch_failed", extra={"job_id": str(job.id), "error": str(error)})
+                fail_job(session, job.id, "The shopping list could not be started. Try again.")
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "The shopping list could not be started. Try again.",
+                ) from error
+        return job_out(job, [], names(session, {job.requested_by}), {})
+
+    @api.patch("/v1/grocery-orders/{order_id}/list/items/{item_id}")
+    def change_list_item(
+        order_id: UUID,
+        item_id: UUID,
+        body: ItemIn,
+        caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        session: Annotated[Session, Depends(db)],
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        """Take an item off the current list (or put it back), or change how much to buy."""
+        orders.change_item(
+            session,
+            caller.household_id,
+            order_id,
+            item_id,
+            by,
+            removed=body.removed,
+            quantity=body.quantity,
+        )
+        order = orders.get_order(session, caller.household_id, order_id)
+        return order_out(session, order, day, caller.user_id)
 
     @api.put("/v1/grocery-orders/{order_id}/meals/{meal_id}")
     def pick_meal(

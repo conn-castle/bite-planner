@@ -81,16 +81,46 @@ export interface MealSummary {
   rating: MealRating | null
 }
 
-/** One batch of suggestions: the agent generating 20 meals for an order. */
+/**
+ * One run of the agent for an order: a batch of suggestions (20 meals), or
+ * building its shopping list.
+ */
 export interface Job {
   id: string
-  kind: 'generate_meals'
+  kind: 'generate_meals' | 'build_list'
   status: JobStatus
   error: string | null
   requested_by: Member
   created_at: ISODateTime
-  /** Empty until it succeeds; in a fixed order. */
+  /** A batch's meals: empty until it succeeds (and for a list); in a fixed order. */
   meals: MealSummary[]
+}
+
+/** Where an item is in the store, in the store's order. */
+export type Aisle = 'produce' | 'meat_seafood' | 'dairy_eggs' | 'frozen' | 'pantry'
+
+/** An item of an order's shopping list. */
+export interface ShoppingItem {
+  id: string
+  name: string
+  /** What's ordered, in `unit` (a count when null); null when the recipes give no amount. */
+  quantity: number | null
+  unit: string | null
+  aisle: Aisle
+  /** The picked meals it's for. */
+  meal_ids: string[]
+  /** Assumed on hand (salt, pepper, ...): never ordered, shown only on request. */
+  on_hand: boolean
+  removed: boolean
+}
+
+/** A draft's shopping list: its newest build, and the newest succeeded build's items. */
+export interface ShoppingList {
+  job: Job
+  /** Ready for the order's picks and servings now: the newest build succeeded, from them. */
+  current: boolean
+  /** By aisle; empty until a build succeeds. */
+  items: ShoppingItem[]
 }
 
 export interface GroceryOrder {
@@ -115,10 +145,12 @@ export interface GroceryOrder {
   picks: MealPick[]
   /** Who is placing it (a draft's live lock), or null when no one is. */
   lock: OrderLock | null
+  /** Its shopping list; null until one is started. */
+  shopping_list: ShoppingList | null
 }
 
 /** The create-order flow's steps, as a lock reports where its holder is. */
-export type OrderStep = 'pick' | 'servings' | 'delivery' | 'next' | 'review'
+export type OrderStep = 'pick' | 'servings' | 'delivery' | 'next' | 'list' | 'review'
 
 /**
  * The order lock: one ordering session (an opening of the flow, on one phone)
@@ -152,6 +184,8 @@ export interface PlacedOrder {
   next_delivery_date: ISODate
   /** The picked meals, in the order they were suggested. */
   meals: PlacedMeal[]
+  /** What was ordered for them, by aisle. */
+  shopping_list: ShoppingItem[]
 }
 
 /** A meal of a placed order, and how many were ordered of it. */

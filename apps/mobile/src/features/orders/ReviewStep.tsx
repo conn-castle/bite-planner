@@ -9,6 +9,7 @@ import { pickedMeals } from './batches'
 import { coveredDays, dayRange } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { plural } from './format'
+import { listCounts } from './list'
 import { useOrderSession } from './lock'
 import { useEditsPending, usePlaceOrder } from './orders'
 import styles from './Steps.module.css'
@@ -21,7 +22,7 @@ interface ReviewStepProps {
   next: ISODate
   onOpenMeal: (mealId: string, servings: number) => void
   /** Goes back to a step to change what it chose. */
-  onChange: (step: 'servings' | 'delivery' | 'next') => void
+  onChange: (step: 'servings' | 'delivery' | 'next' | 'list') => void
   onBack: () => void
   onClose: () => void
 }
@@ -34,6 +35,7 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onChange, onBack
   const saving = useEditsPending()
   const meals = pickedMeals(order)
   const servings = meals.reduce((total, pick) => total + pick.servings, 0)
+  const counts = listCounts(order.shopping_list?.items ?? [])
 
   function placeOrder() {
     place.mutate(
@@ -87,6 +89,14 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onChange, onBack
             <MealRow key={meal.id} meal={meal} servings={count} onOpen={() => onOpenMeal(meal.id, count)} />
           ))}
           <Row label="Change servings" chevron onClick={() => onChange('servings')} />
+        </Group>
+        <Group title="Shopping list">
+          <Row
+            label={plural(counts.ordered, 'item')}
+            sub={counts.removed > 0 ? `${plural(counts.removed, 'item')} removed` : undefined}
+            chevron
+            onClick={() => onChange('list')}
+          />
         </Group>
       </div>
     </FlowFrame>

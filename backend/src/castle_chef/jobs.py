@@ -6,7 +6,7 @@ from uuid import UUID
 
 from sqlmodel import Session, col, func, select, update
 
-from castle_chef.models import GroceryOrder, Job, JobKind, JobStatus
+from castle_chef.models import GroceryOrder, Job, JobKind, JobStatus, ListSource
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +20,32 @@ class BatchRunning(Exception):
 class JobIdTaken(Exception):
     """The client's job id already belongs to another job (another order's, or
     someone else's request)."""
+
+
+class NothingToList(Exception):
+    """A shopping list needs picks."""
+
+
+# A build for other picks, failed as a new one starts.
+SUPERSEDED_ERROR = "The picks changed, so a new list is being made."
+
+
+def _retried(
+    session: Session, job_id: UUID, order: GroceryOrder, member_id: UUID, kind: JobKind
+) -> Job | None:
+    """The job a retried request already made (the client picks the id), or
+    None; JobIdTaken if the id is someone else's or another order's."""
+    existing = session.get(Job, job_id)
+    if existing is None:
+        return None
+    session.rollback()
+    if (existing.grocery_order_id, existing.requested_by, existing.kind) != (
+        order.id,
+        member_id,
+        kind,
+    ):
+        raise JobIdTaken(f"Job id {job_id} is taken.")
+    return existing
 
 
 def submit_generate_meals(
@@ -37,17 +63,19 @@ def submit_generate_meals(
     id, so a retried request returns the same job instead of starting another.
     Overdue jobs are failed first, so a lost worker can't block the order.
     """
-    existing = session.get(Job, job_id)
-    if existing is not None:
-        session.rollback()
-        if (existing.grocery_order_id, existing.requested_by) != (order.id, member_id):
-            raise JobIdTaken(f"Job id {job_id} is taken.")
+    if (
+        existing := _retried(session, job_id, order, member_id, JobKind.GENERATE_MEALS)
+    ) is not None:
         return existing, False
     fail_stale_jobs(session, order.id, *stale_after)
     active = session.exec(
         select(func.count())
         .select_from(Job)
-        .where(Job.grocery_order_id == order.id, col(Job.status).in_(ACTIVE))
+        .where(
+            Job.grocery_order_id == order.id,
+            Job.kind == JobKind.GENERATE_MEALS,
+            col(Job.status).in_(ACTIVE),
+        )
     ).one()
     if active:
         session.rollback()
@@ -64,6 +92,74 @@ def submit_generate_meals(
     log.info(
         "job.created",
         extra={"job_id": str(job.id), "kind": job.kind, "grocery_order_id": str(order.id)},
+    )
+    return job, True
+
+
+def submit_build_list(
+    session: Session,
+    order: GroceryOrder,
+    member_id: UUID,
+    job_id: UUID,
+    source: ListSource,
+    stale_after: tuple[timedelta, timedelta],
+) -> tuple[Job, bool]:
+    """Start building the draft's shopping list from `source` (its picks now),
+    and commit. Returns (job, created): a build already made, being made, or
+    waiting for the same picks is returned rather than started again, and a
+    retried request (the client picks the id) gets the job it made. Builds for
+    other picks still waiting or running are failed as superseded in the same
+    transaction, so their results are dropped. The caller holds the order's
+    row lock."""
+    if (existing := _retried(session, job_id, order, member_id, JobKind.BUILD_LIST)) is not None:
+        return existing, False
+    if not source.picks:
+        session.rollback()
+        raise NothingToList("Pick at least one meal.")
+    fail_stale_jobs(session, order.id, *stale_after)
+    builds = session.exec(
+        select(Job)
+        .where(Job.grocery_order_id == order.id, Job.kind == JobKind.BUILD_LIST)
+        .order_by(col(Job.created_at).desc(), col(Job.id).desc())
+    ).all()
+    newest = builds[0] if builds else None
+    if (
+        newest is not None
+        and newest.list_source == source
+        and newest.status in (*ACTIVE, JobStatus.SUCCEEDED)
+    ):
+        session.rollback()
+        return newest, False
+    superseded = [build.id for build in builds if build.status in ACTIVE]
+    if superseded:
+        session.execute(
+            update(Job)
+            .where(col(Job.id).in_(superseded), col(Job.status).in_(ACTIVE))
+            .values(
+                status=JobStatus.FAILED,
+                error=SUPERSEDED_ERROR,
+                finished_at=func.now(),
+                updated_at=func.now(),
+            )
+        )
+    job = Job(
+        id=job_id,
+        grocery_order_id=order.id,
+        kind=JobKind.BUILD_LIST,
+        requested_by=member_id,
+        list_source=source,
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    log.info(
+        "job.created",
+        extra={
+            "job_id": str(job.id),
+            "kind": job.kind,
+            "grocery_order_id": str(order.id),
+            "superseded": len(superseded),
+        },
     )
     return job, True
 

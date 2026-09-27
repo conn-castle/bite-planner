@@ -1,0 +1,29 @@
+/* The shopping list step (spec/mockup.html: the flow's list step). */
+.problem {
+  width: 100%;
+  margin-top: 16px;
+  text-align: left;
+}
+
+/* The items assumed on hand: shown only on request. */
+.onHand {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-fill);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cc-ink-2);
+  cursor: pointer;
+}
+
+.onHand svg {
+  font-size: 14px;
+  color: var(--cc-success);
+}

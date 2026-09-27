@@ -18,7 +18,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, func, select
 
-from castle_chef import ratings
+from castle_chef import ratings, shopping
 from castle_chef.models import (
     GroceryOrder,
     GroceryOrderMeal,
@@ -28,6 +28,7 @@ from castle_chef.models import (
     Meal,
     MealRating,
     OrderStep,
+    ShoppingListItem,
     utc_now,
 )
 
@@ -64,6 +65,14 @@ class InvalidDates(Exception):
 
 class NotReady(Exception):
     """The draft can't be placed yet; the message says why, for the member."""
+
+
+class ItemNotFound(Exception):
+    pass
+
+
+class ListNotCurrent(Exception):
+    """The shopping list isn't ready for the order's picks; the message says why."""
 
 
 class OrderLocked(Exception):
@@ -436,11 +445,53 @@ def _not_ready(
 ) -> str | None:
     if not picks(session, order.id):
         return "Pick at least one meal."
+    if (problem := list_problem(session, order.id)) is not None:
+        return problem
     try:
         check_dates(delivery, next_delivery, today)
     except InvalidDates as error:
         return str(error)
     return None
+
+
+def list_problem(session: Session, order_id: UUID) -> str | None:
+    """Why the draft's shopping list isn't ready for its picks, or None if it is."""
+    newest = shopping.newest_build(session, order_id)
+    if newest is None or not shopping.is_current(session, order_id, newest):
+        if shopping.newest_built(session, order_id) is None:
+            return "The shopping list isn't ready yet."
+        return "The shopping list was made for other meals or servings; wait for the new one."
+    return None
+
+
+def change_item(
+    session: Session,
+    household_id: UUID,
+    order_id: UUID,
+    item_id: UUID,
+    orderer: Orderer,
+    *,
+    removed: bool | None,
+    quantity: float | None,
+) -> None:
+    """Take an item off the draft's list (or put it back), or change how much of
+    it to buy. Only the current list's items to buy can change: a list made for
+    other picks is about to be replaced."""
+    lock_draft(session, household_id, order_id, orderer)
+    newest = shopping.newest_build(session, order_id)
+    item = session.get(ShoppingListItem, item_id)
+    if item is None or newest is None or item.job_id != newest.id or item.on_hand:
+        session.rollback()
+        raise ItemNotFound("No such item on the shopping list.")
+    if (problem := list_problem(session, order_id)) is not None:
+        session.rollback()
+        raise ListNotCurrent(problem)
+    if removed is not None:
+        item.removed = removed
+    if quantity is not None:
+        item.quantity = quantity
+    session.add(item)
+    session.commit()
 
 
 # Computed, not stored.

@@ -1,0 +1,120 @@
+/* spec/mockup.html: .aisle, .li-row (.q, .nm, .rm, .rs, .out) */
+.aisle {
+  display: flex;
+  justify-content: space-between;
+  margin: 22px 0 6px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--cc-ink-3);
+}
+
+.item {
+  border-bottom: 0.5px solid var(--cc-hairline);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.amount {
+  flex: none;
+  width: 62px;
+  font-size: 14.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+/* Its amount opens the control to change it. */
+.change {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 650;
+  color: var(--cc-ink);
+  text-decoration: underline dotted var(--cc-ink-3);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+}
+
+.name b {
+  display: block;
+  font-size: 15px;
+  font-weight: 550;
+}
+
+.name b::first-letter {
+  text-transform: uppercase;
+}
+
+.name small {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--cc-ink-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.removed {
+  font-weight: 600;
+  color: var(--cc-ink-2);
+}
+
+.out .amount,
+.out .name b {
+  color: var(--cc-ink-3);
+  text-decoration: line-through;
+  text-decoration-color: rgba(20, 19, 17, 0.3);
+}
+
+.remove {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--cc-fill);
+  color: var(--cc-ink-2);
+  font-size: 15px;
+}
+
+.restore {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-fill);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--cc-ink);
+}
+
+.restore svg {
+  font-size: 13px;
+}
+
+/* The control to change an item's amount, under it. */
+.control {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0 10px;
+}

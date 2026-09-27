@@ -5,6 +5,7 @@ import { MealPage } from '../features/meals/MealPage'
 import { PushHost } from '../features/notifications/PushHost'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { SERVINGS } from '../lib/api/limits'
+import { ListPage } from '../features/week/ListPage'
 import { OrderPage } from '../features/week/OrderPage'
 import { WeekPage } from '../features/week/WeekPage'
 import { Icon, type IconName } from '../ui/Icon'
@@ -35,6 +36,14 @@ export function Tabs() {
             }
           />
           <Route
+            path="/week/orders/:orderId/list"
+            element={
+              <IonPage>
+                <ListPage tab={{ href: '/week', backLabel: 'Orders' }} />
+              </IonPage>
+            }
+          />
+          <Route
             path="/week/meals/:mealId"
             element={
               <IonPage>
@@ -48,6 +57,14 @@ export function Tabs() {
             element={
               <IonPage>
                 <OrderPage tab={{ href: '/history', backLabel: 'History' }} />
+              </IonPage>
+            }
+          />
+          <Route
+            path="/history/orders/:orderId/list"
+            element={
+              <IonPage>
+                <ListPage tab={{ href: '/history', backLabel: 'History' }} />
               </IonPage>
             }
           />

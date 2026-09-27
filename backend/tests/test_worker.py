@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -15,21 +16,25 @@ import pytest
 from sqlmodel import Session, col, select
 from typer.testing import CliRunner
 
-from castle_chef import orders, push, worker
+from castle_chef import orders, push, shopping, worker
 from castle_chef.cli import app
 from castle_chef.db import get_engine
-from castle_chef.jobs import claim_job, fail_job
+from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, fail_job, submit_build_list
 from castle_chef.meals import IngredientInput, MealInput, add_meals
 from castle_chef.models import (
     AppUser,
     GroceryOrder,
+    GroceryOrderMeal,
     Household,
     Job,
     JobKind,
     JobStatus,
+    ListPick,
+    ListSource,
     Meal,
     MealRating,
     PushDevice,
+    ShoppingListItem,
 )
 from castle_chef.push import Notification, NotificationKind, Outcome, Sent
 
@@ -244,7 +249,7 @@ def test_job_fails_when_its_meals_cannot_be_saved(
 
     job = reload(session, job)
     assert job.status == JobStatus.FAILED
-    assert job.error is not None and "Could not save the meals" in job.error
+    assert job.error is not None and "Could not save the result" in job.error
     assert job_meals(session, job) == []
 
 
@@ -498,3 +503,196 @@ def test_the_prompt_has_no_meals_to_avoid_when_none_are_marked(
         "Add each meal"
     )
     assert "Meatloaf" not in prompt
+
+
+# Shopping lists.
+
+STALE_AFTER = (timedelta(minutes=5), timedelta(hours=1))
+
+
+def picked(session: Session, job: Job, *servings: int) -> list[Meal]:
+    """The batch's meals, each picked for the draft at these servings (their
+    recipes serve 4: 1.5 lb sausage, 3 bell peppers, sliced)."""
+    add_meals(
+        session,
+        job.id,
+        [
+            MealInput(
+                name=f"Meal {index}",
+                servings=4,
+                ingredients=[
+                    IngredientInput(name="Italian sausage", quantity=1.5, unit="lb"),
+                    IngredientInput(name="bell peppers", quantity=3, preparation="sliced"),
+                    IngredientInput(name="salt"),
+                ],
+                steps=["Cook."],
+            )
+            for index in range(len(servings))
+        ],
+    )
+    meals = list(
+        session.exec(select(Meal).where(Meal.job_id == job.id).order_by(col(Meal.name))).all()
+    )
+    for meal, count in zip(meals, servings, strict=True):
+        session.add(
+            GroceryOrderMeal(grocery_order_id=job.grocery_order_id, meal_id=meal.id, servings=count)
+        )
+    session.commit()
+    return meals
+
+
+def start_list(session: Session, draft: GroceryOrder) -> Job:
+    """Start building the draft's list, as the API does."""
+    order = session.get_one(GroceryOrder, draft.id)
+    build, created = submit_build_list(
+        session,
+        order,
+        draft.created_by,
+        uuid4(),
+        shopping.current_source(session, draft.id),
+        STALE_AFTER,
+    )
+    assert created
+    return build
+
+
+def list_items(session: Session, build: Job) -> list[ShoppingListItem]:
+    session.expire_all()
+    return shopping.items_of(session, build.id)
+
+
+def test_a_list_is_built_from_the_picks_scaled_to_their_servings(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    first, second = picked(session, job, 2, 6)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=2)
+
+    run_job(build)
+
+    prompt = (tmp_path / "jobs" / str(build.id) / "fake-agent-prompt.md").read_text()
+    # Stage 1: each recipe (for 4) scaled to its servings, meals numbered in the list's order.
+    source = shopping.current_source(session, draft.id)
+    numbered = {pick.meal_id: number for number, pick in enumerate(source.picks, start=1)}
+    assert (
+        f"{numbered[first.id]}. Meal 0 (for 2):\n"
+        "- 0.75 lb Italian sausage\n- 1.5 bell peppers, sliced\n- salt"
+    ) in prompt
+    assert (
+        f"{numbered[second.id]}. Meal 1 (for 6):\n"
+        "- 2.25 lb Italian sausage\n- 4.5 bell peppers, sliced\n- salt"
+    ) in prompt
+    assert "salt, pepper, olive oil, vegetable oil, water" in prompt
+    assert reload(session, build).status == JobStatus.SUCCEEDED
+    items = list_items(session, build)
+    assert [(item.name, item.on_hand, sorted(item.meal_ids)) for item in items] == [
+        ("item 0", False, sorted([first.id, second.id])),
+        ("item 1", False, sorted([first.id, second.id])),
+        ("salt", True, sorted([first.id, second.id])),
+    ]
+
+
+def test_whoever_started_the_list_hears_when_it_is_ready(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    sender: RecordingSender,
+) -> None:
+    phone = with_phone(session, job)
+    picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=3)
+
+    run_job(build)
+
+    [(token, notification)] = sender.sent
+    assert (token, notification.kind, notification.title, notification.body) == (
+        phone,
+        NotificationKind.LIST_READY,
+        "Your shopping list is ready",
+        "3 items for Order 1.",  # the on-hand salt isn't one to buy
+    )
+
+
+def test_a_list_for_picks_that_changed_meanwhile_sends_nothing(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    sender: RecordingSender,
+) -> None:
+    with_phone(session, job)
+    [meal] = picked(session, job, 4)
+    build = start_list(session, draft)
+    pick = session.get_one(GroceryOrderMeal, (draft.id, meal.id))
+    pick.servings = 6
+    session.add(pick)
+    session.commit()
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(build)
+
+    assert reload(session, build).status == JobStatus.SUCCEEDED
+    assert sender.sent == []
+
+
+def test_a_superseded_build_saves_nothing(
+    session: Session, draft: GroceryOrder, job: Job, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    [meal] = picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=1)
+    real_process_job = worker.process_job
+
+    def process_then_change_picks(claimed: Job) -> worker.JobResult:
+        result = real_process_job(claimed)
+        with Session(get_engine()) as member:  # the member changes servings and leaves again
+            pick = member.get_one(GroceryOrderMeal, (draft.id, meal.id))
+            pick.servings = 2
+            member.add(pick)
+            member.commit()
+            start_list(member, draft)
+        return result
+
+    monkeypatch.setattr(worker, "process_job", process_then_change_picks)
+
+    run_job(build)
+
+    superseded = reload(session, build)
+    assert (superseded.status, superseded.error) == (JobStatus.FAILED, SUPERSEDED_ERROR)
+    assert list_items(session, build) == []
+
+
+@pytest.mark.parametrize(
+    ("items", "problem"),
+    [
+        ([{"name": "tortillas", "aisle": "pantry", "meals": [2]}], r"is for meals \[2\]"),
+        (
+            [{"name": "sea salt", "aisle": "pantry", "meals": [1], "on_hand": True}],
+            "isn't assumed on hand",
+        ),
+        ([{"name": "Olive Oil", "aisle": "pantry", "meals": [1]}], "is assumed on hand"),
+        ([{"name": "salt", "aisle": "pantry", "meals": [1], "on_hand": True}], "nothing to buy"),
+        (
+            [
+                {"name": "tortillas", "aisle": "pantry", "meals": [1]},
+                {"name": "salt", "aisle": "pantry", "meals": [1], "on_hand": True},
+                {"name": "salt", "aisle": "pantry", "meals": [1], "on_hand": True},
+            ],
+            "on hand twice",
+        ),
+    ],
+    ids=["meal", "not on hand", "on hand bought", "nothing", "twice"],
+)
+def test_a_list_that_breaks_the_rules_is_refused(items: list[dict[str, Any]], problem: str) -> None:
+    source = ListSource(picks=[ListPick(meal_id=uuid4(), servings=4)])
+
+    with pytest.raises(shopping.InvalidList, match=problem):
+        shopping.check_items(
+            [shopping.ListItemInput.model_validate(item) for item in items], source
+        )

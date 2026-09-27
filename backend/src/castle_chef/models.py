@@ -5,8 +5,10 @@ from enum import StrEnum
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, Index, func, text
-from sqlalchemy.dialects.postgresql import JSONB
+from pydantic import BaseModel
+from sqlalchemy import CheckConstraint, DateTime, Dialect, Enum, Index, Uuid, func, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -107,8 +109,41 @@ def _values(enum: type[StrEnum]) -> list[str]:
     return [member.value for member in enum]
 
 
+class ModelJSONB[M: BaseModel](TypeDecorator[M]):
+    """A JSONB column holding one typed model: validated as it's read."""
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, model: type[M]) -> None:
+        # None is SQL NULL, not a JSON null.
+        super().__init__(none_as_null=True)
+        self.model = model
+
+    def process_bind_param(self, value: M | None, dialect: Dialect) -> object:
+        return None if value is None else value.model_dump(mode="json")
+
+    def process_result_value(self, value: object, dialect: Dialect) -> M | None:
+        return None if value is None else self.model.model_validate(value)
+
+
+class ListPick(BaseModel):
+    """A pick as a shopping list was built from it."""
+
+    meal_id: UUID
+    servings: int
+
+
+class ListSource(BaseModel):
+    """The picks (and servings) a shopping list was built from, sorted by meal id,
+    so two builds from the same picks have equal sources."""
+
+    picks: list[ListPick]
+
+
 class JobKind(StrEnum):
-    GENERATE_MEALS = "generate_meals"
+    GENERATE_MEALS = "generate_meals"  # a batch of meal ideas
+    BUILD_LIST = "build_list"  # the draft's shopping list
 
 
 class JobStatus(StrEnum):
@@ -123,6 +158,12 @@ class Job(TimestampMixin, SQLModel, table=True):
     the id, so a retried request can't start a second run."""
 
     __tablename__ = "job"
+    __table_args__ = (
+        CheckConstraint(
+            "(kind::text = 'build_list') = (list_source IS NOT NULL)",
+            name="job_list_source_for_lists",
+        ),
+    )
 
     id: UUID = Field(primary_key=True)
     grocery_order_id: UUID = Field(foreign_key="grocery_order.id", ondelete="CASCADE", index=True)
@@ -135,6 +176,8 @@ class Job(TimestampMixin, SQLModel, table=True):
     )
     # The Neon Auth user who asked for it.
     requested_by: UUID
+    # A build_list job's picks, as they were when it started; null for other kinds.
+    list_source: ListSource | None = Field(default=None, sa_type=ModelJSONB(ListSource))
     error: str | None = None
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
@@ -152,6 +195,7 @@ class OrderStep(StrEnum):
     SERVINGS = "servings"
     DELIVERY = "delivery"  # the delivery date
     NEXT = "next"  # the next delivery date
+    LIST = "list"  # the shopping list: waiting for it, then reviewing it
     REVIEW = "review"  # the final review, which places it
 
 
@@ -231,6 +275,44 @@ class GroceryOrderMeal(SQLModel, table=True):
     # How many to make of it in this order (the meal's recipe is for meal.servings).
     # Starts at the household's default servings when picked.
     servings: int
+
+
+class Aisle(StrEnum):
+    """Where a shopping list item is in the store (the mockup's aisles, in order)."""
+
+    PRODUCE = "produce"
+    MEAT_SEAFOOD = "meat_seafood"
+    DAIRY_EGGS = "dairy_eggs"
+    FROZEN = "frozen"
+    PANTRY = "pantry"
+
+
+class ShoppingListItem(TimestampMixin, SQLModel, table=True):
+    """An item of a draft's shopping list, as a build_list job made it: the
+    order's list is its newest build's items."""
+
+    __tablename__ = "shopping_list_item"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="shopping_list_item_quantity_positive"),
+        CheckConstraint("NOT (on_hand AND removed)", name="shopping_list_item_on_hand_kept"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    job_id: UUID = Field(foreign_key="job.id", ondelete="CASCADE", index=True)
+    # The agent's order.
+    position: int
+    name: str
+    # What's ordered, in `unit` (a count when null): the member's change
+    # replaces the agent's. Null when the recipes give no amount.
+    quantity: float | None = None
+    unit: str | None = None
+    aisle: Aisle = Field(sa_type=Enum(Aisle, name="aisle", values_callable=_values))
+    # The picked meals it's for.
+    meal_ids: list[UUID] = Field(sa_type=ARRAY(Uuid))
+    # Assumed on hand (salt, pepper, ...): never ordered, shown only on request.
+    on_hand: bool = False
+    # The member took it off the list.
+    removed: bool = Field(default=False, sa_column_kwargs={"server_default": "false"})
 
 
 class MealRating(StrEnum):

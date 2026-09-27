@@ -28,10 +28,11 @@ from castle_chef.api import app, create_app
 from castle_chef.auth import AuthError, AuthUnavailable, Principal
 from castle_chef.db import get_engine
 from castle_chef.dispatch import DispatchError, LocalDispatcher, SqsDispatcher, get_dispatcher
-from castle_chef.jobs import claim_job, fail_job, finish_job
+from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, fail_job, finish_job
 from castle_chef.meals import IngredientInput, MealInput, add_meals
-from castle_chef.models import GroceryOrder, Job, JobStatus, Meal
+from castle_chef.models import Aisle, GroceryOrder, Job, JobStatus, Meal
 from castle_chef.settings import get_settings, load_ssm_parameters
+from castle_chef.shopping import ListItemInput, add_items
 from tests.test_worker import FAKE_AGENT
 
 CASTLE = uuid4()  # the household of MOM and DAD
@@ -292,16 +293,61 @@ def get_meal(client: TestClient, meal_id: str, user: UUID = MOM) -> dict[str, An
     return ok(client.get(f"/v1/meals/{meal_id}", headers=as_user(user)))
 
 
+def request_list(
+    client: TestClient, order_id: str, user: UUID = MOM, job_id: UUID | None = None
+) -> Response:
+    return client.post(
+        f"/v1/grocery-orders/{order_id}/list",
+        headers=as_user(user),
+        json={"job_id": str(job_id or uuid4())},
+    )
+
+
+def finish_list(job_id: str, items: list[ListItemInput] | None = None) -> None:
+    """What the worker does with a list build whose agent succeeds."""
+    with Session(get_engine()) as worker_session:
+        claim_job(worker_session, UUID(job_id))
+        job = worker_session.get_one(Job, UUID(job_id))
+        assert job.list_source is not None
+        meals = list(range(1, len(job.list_source.picks) + 1))
+        add_items(
+            worker_session,
+            UUID(job_id),
+            items
+            or [
+                ListItemInput(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=meals),
+                ListItemInput(name="salt", aisle=Aisle.PANTRY, meals=meals, on_hand=True),
+            ],
+            job.list_source,
+        )
+        assert finish_job(worker_session, UUID(job_id))
+
+
+def ready_list(client: TestClient, order_id: str, user: UUID = MOM) -> dict[str, Any]:
+    """The draft's shopping list, built for its picks now (as the list step waits for)."""
+    job = ok(request_list(client, order_id, user), 201)
+    finish_list(job["id"])
+    return get_order(client, order_id, user)["shopping_list"]
+
+
 def place(
     client: TestClient,
     order_id: str,
     user: UUID = MOM,
     zone: str = ZONE,
     dates: tuple[date, date] | None = None,
+    with_list: bool = True,
 ) -> Response:
     """Place the order with these dates, or the ones it has (as the app sends
-    the dates it shows; any valid ones for an order the user can't see)."""
+    the dates it shows; any valid ones for an order the user can't see), after
+    its list is built for its picks (as the flow does), unless `with_list` is
+    False or it has no picks to list."""
     shown = client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(user, zone))
+    if with_list and shown.status_code == 200:
+        order = shown.json()
+        listed = order["shopping_list"]
+        if order["status"] == "draft" and order["picks"] and not (listed and listed["current"]):
+            ready_list(client, order_id, user)
     if dates is None and shown.status_code == 200:
         body = {key: shown.json()[key] for key in ("delivery_date", "next_delivery_date")}
     else:
@@ -497,6 +543,7 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "jobs": [],
         "picks": [],
         "lock": draft["lock"],
+        "shopping_list": None,
     }
     # Opening it takes its lock for Mom's phone.
     assert draft["lock"] | {"since": None, "expires_at": None} == {
@@ -561,7 +608,8 @@ def test_households_see_and_change_only_their_own_orders(
     assert discard.status_code == gone.status_code
 
     assert get_order(client, order_id) == moms
-    assert len(dispatcher.dispatched) == 2  # the placed order's batch, and this draft's
+    # The placed order's batch and list, and this draft's batch.
+    assert len(dispatcher.dispatched) == 3
     # The neighbor's household gets its own draft: its first order.
     neighbors = open_draft(client, NEIGHBOR)
     assert (neighbors["id"] != order_id, neighbors["number"]) == (True, 1)
@@ -810,13 +858,13 @@ def test_another_households_job_id_is_rejected(
 
 def test_a_job_id_from_a_previous_order_is_rejected(client: TestClient) -> None:
     first = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
-    [old_batch] = first["jobs"]
+    [old_batch, old_list] = first["jobs"]
     draft = open_draft(client)["id"]
 
     detail(request_batch(client, draft, MOM, UUID(old_batch["id"])), 409)
 
     assert get_order(client, draft)["jobs"] == []
-    assert get_order(client, first["id"])["jobs"] == [old_batch]
+    assert get_order(client, first["id"])["jobs"] == [old_batch, old_list]
 
 
 def test_one_batch_at_a_time(client: TestClient) -> None:
@@ -1112,7 +1160,7 @@ def test_a_placed_order_cannot_be_changed(
     detail(client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(DAD)), 409)
 
     assert get_order(client, order_id) == placed
-    assert len(dispatcher.dispatched) == 1
+    assert len(dispatcher.dispatched) == 2  # its batch and its list
 
 
 # Servings.
@@ -1454,6 +1502,7 @@ def test_placed_orders_are_listed_from_the_day_they_cover(client: TestClient) ->
         "delivery_date": second["delivery_date"],
         "next_delivery_date": second["next_delivery_date"],
         "meals": [meal | {"servings": 4}],
+        "shopping_list": second["shopping_list"]["items"],
     }
     # An order covers up to the day before its next delivery.
     last_of_first = start + timedelta(days=2)
@@ -1683,7 +1732,13 @@ def dads_changes(client: TestClient, order_id: str, meal_id: str) -> dict[str, R
         "dates": put_dates(client, order_id, tomorrow(), None, DAD),
         "batch": request_batch(client, order_id, DAD),
         "not for us": rate(client, meal_id, "not_for_us", DAD),
-        "place": place(client, order_id, DAD, dates=(tomorrow(), tomorrow() + timedelta(days=2))),
+        "place": place(
+            client,
+            order_id,
+            DAD,
+            dates=(tomorrow(), tomorrow() + timedelta(days=2)),
+            with_list=False,
+        ),
         "discard": client.delete(f"/v1/grocery-orders/{order_id}", headers=dad),
     }
 
@@ -1897,6 +1952,8 @@ def test_members_opening_the_flow_at_once_get_one_lock(client: TestClient) -> No
             {"delivery_date": None, "next_delivery_date": None},
         ),
         ("post", "/v1/grocery-orders/{order}/jobs", {"job_id": JOB_ID}),
+        ("post", "/v1/grocery-orders/{order}/list", {"job_id": JOB_ID}),
+        ("patch", f"/v1/grocery-orders/{{order}}/list/items/{uuid4()}", {"removed": True}),
         (
             "post",
             "/v1/grocery-orders/{order}/place",
@@ -1918,6 +1975,197 @@ def test_changes_from_the_flow_need_its_ordering_session(
 
     assert detail(response, 400) == "Send the ordering session in the Order-Session header."
     assert get_order(client, order_id) == before
+
+
+# The shopping list.
+
+
+def change_item(
+    client: TestClient, order_id: str, item_id: str, change: dict[str, Any], user: UUID = MOM
+) -> Response:
+    return client.patch(
+        f"/v1/grocery-orders/{order_id}/list/items/{item_id}", headers=as_user(user), json=change
+    )
+
+
+def listed(order: dict[str, Any]) -> list[tuple[str, bool]]:
+    """The list's items to buy, and whether each was taken off it."""
+    return [(i["name"], i["removed"]) for i in order["shopping_list"]["items"] if not i["on_hand"]]
+
+
+def test_leaving_servings_starts_one_list_for_the_picks(
+    client: TestClient, dispatcher: RecordingDispatcher
+) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    job_id = uuid4()
+
+    started = ok(request_list(client, order_id, job_id=job_id), 201)
+    retried = ok(request_list(client, order_id, job_id=job_id))
+    again = ok(request_list(client, order_id))  # the same picks: that build, not another
+
+    assert (started["id"], started["kind"], started["status"]) == (
+        str(job_id),
+        "build_list",
+        "pending",
+    )
+    assert retried == again == started
+    assert dispatcher.dispatched[1:] == [job_id]  # after the meal batch
+    assert get_order(client, order_id)["shopping_list"] | {"job": None} == {
+        "job": None,
+        "current": False,
+        "items": [],
+    }
+    # Its job isn't a batch of meal ideas.
+    assert [job["kind"] for job in get_order(client, order_id)["jobs"]] == [
+        "generate_meals",
+        "build_list",
+    ]
+
+
+def test_a_built_list_is_its_items_by_aisle(client: TestClient) -> None:
+    order_id, [tacos, soup] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    ok(pick(client, order_id, soup))
+    job = ok(request_list(client, order_id), 201)
+    finish_list(
+        job["id"],
+        [
+            ListItemInput(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=[1]),
+            ListItemInput(name="yellow onions", quantity=2, aisle=Aisle.PRODUCE, meals=[1, 2]),
+            ListItemInput(name="salt", aisle=Aisle.PANTRY, meals=[2], on_hand=True),
+        ],
+    )
+
+    shown = get_order(client, order_id)["shopping_list"]
+
+    assert (shown["current"], shown["job"]["status"]) == (True, "succeeded")
+    source = sorted([tacos, soup])  # meals are numbered in the list's order
+    assert [
+        (item["name"], item["quantity"], item["aisle"], item["meal_ids"], item["on_hand"])
+        for item in shown["items"]
+    ] == [
+        ("yellow onions", 2, "produce", source, False),
+        ("tortillas", 8, "pantry", [source[0]], False),
+        ("salt", None, "pantry", [source[1]], True),
+    ]
+
+
+def test_changing_the_picks_needs_a_new_list_before_placing(
+    client: TestClient, grocer: list[UUID]
+) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=2)))
+    first = ready_list(client, order_id)
+    [tortillas] = [item for item in first["items"] if not item["on_hand"]]
+
+    ok(set_servings(client, order_id, tacos, 6))
+    stale = get_order(client, order_id)
+
+    # The old list still shows, but it isn't the one to place, or to change.
+    assert (stale["shopping_list"]["current"], listed(stale)) == (False, [("tortillas", False)])
+    assert "other meals or servings" in detail(place(client, order_id, with_list=False), 409)
+    detail(change_item(client, order_id, tortillas["id"], {"removed": True}), 409)
+    # A new list for the new servings replaces it.
+    second = ok(request_list(client, order_id), 201)
+    finish_list(
+        second["id"],
+        [ListItemInput(name="corn tortillas", quantity=12, aisle=Aisle.PANTRY, meals=[1])],
+    )
+    assert listed(get_order(client, order_id)) == [("corn tortillas", False)]
+    assert ok(place(client, order_id, with_list=False))["status"] == "placed"
+    assert grocer == [UUID(order_id)]
+
+
+def test_a_list_still_being_made_for_older_picks_gives_way(client: TestClient) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    first = ok(request_list(client, order_id), 201)
+
+    ok(set_servings(client, order_id, tacos, 2))
+    second = ok(request_list(client, order_id), 201)
+
+    jobs = {job["id"]: job for job in get_order(client, order_id)["jobs"]}
+    assert (jobs[first["id"]]["status"], jobs[first["id"]]["error"]) == ("failed", SUPERSEDED_ERROR)
+    assert jobs[second["id"]]["status"] == "pending"
+    assert get_order(client, order_id)["shopping_list"]["job"]["id"] == second["id"]
+
+
+def test_placing_needs_a_list(client: TestClient, grocer: list[UUID]) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=2)))
+
+    assert (
+        detail(place(client, order_id, with_list=False), 409)
+        == "The shopping list isn't ready yet."
+    )
+    ok(request_list(client, order_id), 201)  # still being made
+    assert (
+        detail(place(client, order_id, with_list=False), 409)
+        == "The shopping list isn't ready yet."
+    )
+    assert grocer == []
+
+
+def test_a_list_needs_picks(client: TestClient) -> None:
+    order_id, _ = with_suggestions(client)
+
+    assert detail(request_list(client, order_id), 409) == "Pick at least one meal."
+
+
+def test_members_take_items_off_the_list_and_change_how_much(client: TestClient) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    items = ready_list(client, order_id)["items"]
+    [tortillas] = [item for item in items if not item["on_hand"]]
+    [salt] = [item for item in items if item["on_hand"]]
+
+    removed = ok(change_item(client, order_id, tortillas["id"], {"removed": True}))
+    restored = ok(
+        change_item(client, order_id, tortillas["id"], {"removed": False, "quantity": 12})
+    )
+
+    assert listed(removed) == [("tortillas", True)]
+    [changed] = [item for item in restored["shopping_list"]["items"] if not item["on_hand"]]
+    assert (changed["removed"], changed["quantity"]) == (False, 12)
+    # On-hand items aren't bought, so there's nothing to change.
+    detail(change_item(client, order_id, salt["id"], {"removed": True}), 404)
+    detail(change_item(client, order_id, str(uuid4()), {"removed": True}), 404)
+    for bad in ({}, {"quantity": 0}, {"quantity": None}, {"removed": None}):
+        detail(change_item(client, order_id, tortillas["id"], bad), 422)
+    # Only the member ordering can.
+    detail(change_item(client, order_id, tortillas["id"], {"removed": True}, DAD), 423)
+
+
+def test_a_placed_order_keeps_its_list(client: TestClient) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=2)))
+    items = ready_list(client, order_id)["items"]
+    [tortillas] = [item for item in items if not item["on_hand"]]
+    ok(change_item(client, order_id, tortillas["id"], {"removed": True}))
+    ok(place(client, order_id))
+
+    [placed] = placed_orders(client)
+
+    assert [(item["name"], item["removed"]) for item in placed["shopping_list"]] == [
+        ("tortillas", True),
+        ("salt", False),
+    ]
+    detail(change_item(client, order_id, tortillas["id"], {"removed": False}), 409)
+    detail(request_list(client, order_id), 409)
+
+
+def test_meal_ideas_and_the_list_are_made_side_by_side(client: TestClient) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+
+    ok(request_list(client, order_id), 201)
+    ok(request_batch(client, order_id), 201)  # "generate more" while the list is made
+    ok(set_servings(client, order_id, tacos, 2))
+    ok(request_list(client, order_id), 201)  # and a new list while more ideas are made
 
 
 # Error bodies.

@@ -2,12 +2,15 @@
 
 Usage (as CASTLE_CHEF_AGENT_COMMAND): fake_agent.py MEALS STOP_REASON EXIT_CODE SECONDS
 followed by the Grok arguments the worker appends. Adds MEALS meals through the
-real `castle-chef meal add` command, takes SECONDS, and prints Grok-style JSON. Settings are
-arguments because the worker gives the agent a minimal environment.
+real `castle-chef meal add` command (or, given a shopping list prompt, MEALS items for
+every meal in it, and salt as on hand, through `castle-chef list add`), takes SECONDS,
+and prints Grok-style JSON. Settings are arguments because the worker gives the agent
+a minimal environment.
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -31,16 +34,26 @@ with open(os.path.join(cwd, "fake-agent-prompt.md"), "w") as file:
 with open(os.path.join(cwd, "fake-agent-env.json"), "w") as file:
     json.dump(sorted(os.environ), file)
 
-for index in range(int(meal_count)):
-    meal = MEAL | {"name": f"{MEAL['name']} {index}"}
+
+def add(command: str, value: dict[str, object]) -> None:
     subprocess.run(
-        ["castle-chef", "meal", "add"],
-        input=json.dumps(meal),
+        ["castle-chef", command, "add"],
+        input=json.dumps(value),
         text=True,
         stdout=subprocess.DEVNULL,  # Grok captures tool output; keep stdout for the final JSON.
         check=True,
         cwd=cwd,
     )
+
+
+if "castle-chef list add" in prompt:
+    meals = [int(number) for number in re.findall(r"^(\d+)\. ", prompt, re.MULTILINE)]
+    for index in range(int(meal_count)):
+        add("list", {"name": f"item {index}", "quantity": 2, "aisle": "pantry", "meals": meals})
+    add("list", {"name": "salt", "aisle": "pantry", "meals": meals, "on_hand": True})
+else:
+    for index in range(int(meal_count)):
+        add("meal", MEAL | {"name": f"{MEAL['name']} {index}"})
 
 time.sleep(float(seconds))
 print(json.dumps({"text": "done", "stopReason": stop_reason}))

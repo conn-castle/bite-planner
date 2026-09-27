@@ -57,8 +57,9 @@ def clean_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[No
     with get_engine().begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE push_device, meal_preference, grocery_order_meal, meal_ingredient, meal, "
-                'job, grocery_order, app_user, household, neon_auth."user" CASCADE'
+                "TRUNCATE push_device, shopping_list_item, meal_preference, grocery_order_meal, "
+                'meal_ingredient, meal, job, grocery_order, app_user, household, neon_auth."user" '
+                "CASCADE"
             )
         )
 

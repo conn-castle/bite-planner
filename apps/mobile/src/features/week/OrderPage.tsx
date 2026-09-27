@@ -13,6 +13,7 @@ import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { MealRow } from '../meals/MealRow'
 import { plural } from '../orders/format'
+import { listCounts } from '../orders/list'
 import { OrderFlowModal } from '../orders/OrderFlow'
 import { lockedByOther } from '../orders/lock'
 import { useNextOrder, usePlacedOrders } from '../orders/orders'
@@ -115,6 +116,14 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
       <Group title="Delivery" footerIcon="lock" footer="Placed orders are read-only.">
         <Row label="Delivery date" detail={formatDate(order.delivery_date, 'medium')} />
         <Row label="Next delivery" detail={formatDate(order.next_delivery_date, 'medium')} />
+        {order.shopping_list.length > 0 && (
+          <Row
+            label="Shopping list"
+            detail={listDetail(order)}
+            chevron
+            onClick={() => router.push(`${base}/orders/${order.id}/list`)}
+          />
+        )}
         <Row label="Placed" detail={`${formatDate(placedOn(order), 'medium')} · ${byWhom(order.placed_by, userId)}`} />
       </Group>
 
@@ -148,4 +157,10 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
       <OrderFlowModal isOpen={flowOpen} onDismiss={() => setFlowOpen(false)} presentingElement={presentingElement} />
     </div>
   )
+}
+
+/** "12 items · 2 removed": what an order's list ordered. */
+function listDetail(order: PlacedOrder): string {
+  const { ordered, removed } = listCounts(order.shopping_list)
+  return removed > 0 ? `${plural(ordered, 'item')} · ${removed} removed` : plural(ordered, 'item')
 }

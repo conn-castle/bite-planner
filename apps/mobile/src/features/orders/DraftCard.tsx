@@ -6,7 +6,7 @@ import { Chip } from '../../ui/Chip'
 import { MealStack } from '../../ui/MealStack'
 import { OrderCard, OrderCardActions, OrderCardBody, OrderCardLine } from '../../ui/OrderCard'
 import { ProgressBar } from '../../ui/ProgressBar'
-import { useNotifiedOfIdeas, useYourReminder } from '../notifications/notifications'
+import { useNotifiedOfJob, useYourReminder } from '../notifications/notifications'
 import { newestBatchState, suggestions } from './batches'
 import { defaultDeliveryDate } from './dates'
 import styles from './DraftCard.module.css'
@@ -31,7 +31,7 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
   const ideas = suggestions(order).length
   const picks = order.picks.length
   const batch = newestBatchState(order)
-  const notified = useNotifiedOfIdeas(batch.status === 'running' ? batch.job.requested_by.user_id : null)
+  const notified = useNotifiedOfJob(batch.status === 'running' ? batch.job.requested_by.user_id : null)
   const working = batch.status === 'running'
   // Ticks each second while a batch is being made, for the time it has taken.
   const now = useNow(working ? 1000 : 60_000)

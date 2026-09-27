@@ -1,0 +1,25 @@
+/* spec/mockup.html: .lsum */
+.stats {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.stats div {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 14px;
+  background: var(--cc-fill);
+}
+
+.stats b {
+  display: block;
+  font: 700 18px/1.15 var(--cc-font-display);
+}
+
+.stats small {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--cc-ink-2);
+}

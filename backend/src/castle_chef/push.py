@@ -36,6 +36,7 @@ TOKEN_REUSE_SECONDS = 50 * 60
 class NotificationKind(StrEnum):
     REMINDER = "reminder"
     IDEAS_READY = "ideas_ready"
+    LIST_READY = "list_ready"
     TEST = "test"  # `castle-chef household notify-test`
 
 

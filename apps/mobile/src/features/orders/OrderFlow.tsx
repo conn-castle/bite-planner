@@ -17,11 +17,13 @@ import { shownDeliveryDate, shownNextDeliveryDate } from './dates'
 import { DeliveryStep } from './DeliveryStep'
 import { FlowFrame } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
-import { OrderSession } from './lock'
+import { OrderSession, useOrderSession } from './lock'
+import { stepShown } from './steps'
 import { useOrderLock } from './useOrderLock'
 import { LockedStep } from './LockedStep'
 import styles from './OrderFlow.module.css'
-import { closeFlowSession, nextQuery, useNextOrder, useOpenOrder, useOrder } from './orders'
+import { ListStep } from './ListStep'
+import { closeFlowSession, nextQuery, useNextOrder, useOpenOrder, useOrder, useStartList } from './orders'
 import { NextDeliveryStep } from './NextDeliveryStep'
 import { PickStep } from './PickStep'
 import { PlacedStep } from './PlacedStep'
@@ -42,6 +44,8 @@ interface OrderFlowModalProps {
    * none): a notification's, which must never start a new one.
    */
   orderId?: string
+  /** The step it opens at (a notification's: the shopping list); picking meals otherwise. */
+  startAt?: Step
 }
 
 /**
@@ -50,7 +54,7 @@ interface OrderFlowModalProps {
  * rest of the household order. A recipe opens inside the card, on its own
  * navigation stack. Each opening is an ordering session of its own (lock.ts).
  */
-export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId }: OrderFlowModalProps) {
+export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId, startAt }: OrderFlowModalProps) {
   const queryClient = useQueryClient()
   const modal = useRef<HTMLIonModalElement>(null)
   const nav = useRef<HTMLIonNavElement>(null)
@@ -71,6 +75,7 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId }
       <OrderSession.Provider value={session}>
         <OrderFlow
           orderId={orderId}
+          startAt={startAt}
           session={session}
           onShown={(id) => (shownOrder.current = id)}
           onClose={() => void modal.current?.dismiss()}
@@ -78,7 +83,7 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId }
         />
       </OrderSession.Provider>
     ),
-    [orderId, session],
+    [orderId, startAt, session],
   )
 
   function dismissed() {
@@ -116,6 +121,7 @@ type OpenMeal = (mealId: string, servings?: number) => void
 interface OrderFlowProps {
   /** This order, as it is; otherwise the household's draft, made if there's none. */
   orderId: string | undefined
+  startAt: Step | undefined
   /** This opening's ordering session: it takes the order's lock, and makes its changes. */
   session: string
   /** Called with the order shown, once known. */
@@ -125,7 +131,7 @@ interface OrderFlowProps {
 }
 
 /** Opens the household's draft (creating it if needed), or the order given, and shows the step it is at. */
-function OrderFlow({ orderId, session, onShown, onClose, onOpenMeal }: OrderFlowProps) {
+function OrderFlow({ orderId, startAt, session, onShown, onClose, onOpenMeal }: OrderFlowProps) {
   const open = useOpenOrder()
   const { mutate: openOrder } = open
   const reopen = () => openOrder({ jobId: crypto.randomUUID(), session })
@@ -134,7 +140,7 @@ function OrderFlow({ orderId, session, onShown, onClose, onOpenMeal }: OrderFlow
   const cachedDraftId = useNextOrder().data?.draft?.id
   const order = useOrder(orderId ?? open.data?.id ?? cachedDraftId, session)
   const { refetch } = order
-  const [step, setStep] = useState<Step>('pick')
+  const [step, setStep] = useState<Step>(startAt ?? 'pick')
   // Where the flow is, as the lock tells the others.
   const shownStep: Step = order.shown === undefined ? 'pick' : stepShown(order.shown, step)
   // The copy cached before opening (the next order's) may be out of date; the lock goes by the order itself.
@@ -274,19 +280,11 @@ interface OrderStepProps {
   onOpenMeal: OpenMeal
 }
 
-/**
- * The step to show: the one the user is at, unless the order can't support it
- * (e.g. another change removed every pick: picking meals; no delivery date yet:
- * that step).
- */
-function stepShown(order: GroceryOrder, step: Step): Step {
-  if (suggestions(order).length === 0 || order.picks.length === 0) return 'pick'
-  if ((step === 'next' || step === 'review') && shownDeliveryDate(order) === null) return 'delivery'
-  return step
-}
 
 /** The screen for where the order is, each step going on to the next. */
 function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps) {
+  const session = useOrderSession()
+  const { mutate: startList } = useStartList()
   if (order.status === 'placed') return <PlacedStep order={order} onClose={onClose} />
   if (suggestions(order).length === 0) return <WaitStep order={order} onClose={onClose} />
 
@@ -301,7 +299,11 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps
         order={order}
         onOpenMeal={onOpenMeal}
         onBack={() => setStep('pick')}
-        onNext={() => setStep('delivery')}
+        onNext={() => {
+          // The list starts as the member leaves Servings, after the servings are saved.
+          startList({ orderId: order.id, jobId: crypto.randomUUID(), session })
+          setStep('delivery')
+        }}
         onClose={onClose}
       />
     )
@@ -316,10 +318,13 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps
         order={order}
         delivery={delivery}
         onBack={() => setStep('delivery')}
-        onNext={() => setStep('review')}
+        onNext={() => setStep('list')}
         onClose={onClose}
       />
     )
+  }
+  if (shown === 'list') {
+    return <ListStep order={order} onBack={() => setStep('next')} onNext={() => setStep('review')} onClose={onClose} />
   }
   return (
     <ReviewStep
@@ -328,7 +333,7 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps
       next={next}
       onOpenMeal={onOpenMeal}
       onChange={setStep}
-      onBack={() => setStep('next')}
+      onBack={() => setStep('list')}
       onClose={onClose}
     />
   )

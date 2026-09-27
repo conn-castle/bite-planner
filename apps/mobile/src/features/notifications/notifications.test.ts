@@ -167,7 +167,7 @@ describe('permission', () => {
 
 describe('"ideas ready" reaching this phone', () => {
   const notified = (startedBy: string | null) =>
-    read(() => push.useNotifiedOfIdeas(startedBy), (children) => createElement(QueryClientProvider, { client: queryClient }, children))
+    read(() => push.useNotifiedOfJob(startedBy), (children) => createElement(QueryClientProvider, { client: queryClient }, children))
 
   it('is only for the member who started the batch, with notifications on', async () => {
     await push.refreshPermission()
@@ -294,6 +294,7 @@ describe('what a tap leads to', () => {
     jobs: [],
     picks: [],
     lock: null,
+    shopping_list: null,
   })
   const next = (number: number, current: GroceryOrder | null): NextOrder => ({
     number,
@@ -313,6 +314,27 @@ describe('what a tap leads to', () => {
       open: true,
       orderId: 'd',
     })
+  })
+
+  it('opens a "list ready" at the shopping list, and says why not when its draft is gone or placed', () => {
+    expect(push.tapResult({ kind: 'list_ready', orderId: 'd' }, next(4, draft('d', 4)), null)).toEqual({
+      open: true,
+      orderId: 'd',
+      step: 'list',
+    })
+    expect(push.tapResult({ kind: 'list_ready', orderId: 'd' }, next(4, null), 'discarded')).toMatchObject({
+      open: false,
+      message: "Its shopping list went with it. Start a new order from Home when you're ready.",
+    })
+    expect(push.tapResult({ kind: 'list_ready', orderId: 'd' }, next(5, null), draft('d', 4, 'placed'))).toMatchObject({
+      open: false,
+      header: 'Order 4 is already placed',
+    })
+  })
+
+  it('reads "list ready" from a notification', () => {
+    expect(push.parseDelivered({ kind: 'list_ready', order_id: 'd' })).toEqual({ kind: 'list_ready', orderId: 'd' })
+    expect(push.parseDelivered({ kind: 'list_ready' })).toBeNull()
   })
 
   it('says why not when the reminder is for an order placed since, or not started', () => {

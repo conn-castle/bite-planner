@@ -104,6 +104,8 @@ make migrate                      # apply to dev
 CASTLE_CHEF_JOB_ID=<id> uv run castle-chef job run   # run one pending job; what each Fargate task does
 ```
 
+Two kinds of job: `generate_meals` (a batch of meal ideas, saved with `castle-chef meal add`) and `build_list` (a draft's shopping list: the worker scales each picked meal's ingredients to its servings and the agent combines them with `castle-chef list add`; the worker checks the items, e.g. the ones assumed on hand, before saving them). A list build is for the picks and servings at the moment it started (`job.list_source`); starting one for other picks fails the one still running, whose result is then dropped.
+
 Each job gets a directory (locally `~/.local/state/castle-chef/jobs/<job-id>/`, in the container `/tmp/jobs/`) with the prompt, Grok's JSON output, and its stderr.
 
 `job run` logs `worker.started` with its release (`YYYY.M.D.N`, or `dev-<sha>` for an untagged checkout) and commit. It refuses to run (`schema.behind`, exit status 78) if the database's migrations are older than the code. A database that is *newer* than the code (after a rollback) is fine. A job someone else already claimed is left alone, and a job that no longer exists (discarded with its draft) ends quietly (both exit 0).
@@ -112,7 +114,7 @@ The worker runs `al -q grok`, so Grok uses Agent Layer's model settings (`.agent
 
 - The working directory is the job directory (no project instructions); the only tool is the shell; subagents are disabled.
 - The agent gets a minimal environment (`HOME`, `PATH`, `CASTLE_CHEF_JOB_DIR`, and the Grok settings it needs): no database credentials.
-- The prompt contains only the configured meal count, so there is no prompt-injection channel. Keep it that way: a free-text job parameter would become input to an auto-approving shell agent.
+- The prompts contain only fixed text and what agents made earlier (a batch's prompt: the meal count and the names of meals marked "not for us"; a shopping list's: the picked meals' names and ingredients, scaled to their servings), never free text from a member, so there is no prompt-injection channel. Keep it that way: a free-text job parameter would become input to an auto-approving shell agent.
 - **Locally**, Grok's own sandbox (profile `castle-chef-agent`, extending `strict`) lets commands read only the job directory, system paths, `backend/.venv`, `backend/src`, and Grok's home; write only the job directory and `/tmp`; and blocks network access for commands.
 - **In the container**, which is the sandbox there: the worker runs as root and starts the agent as the unprivileged user `agent` (uid 65532) with no other groups and no inherited files, so it can't read the worker's environment (`DATABASE_URL`). The root filesystem is read-only; only `/tmp` and the Grok login on EFS are writable. Because `al` writes into its project on every launch, each task gets its own copy of `.agent-layer` in `/tmp/agent-project`. The agent can read Grok's login (it needs it to run), so a misbehaving agent could copy it into a meal; sign out of that session from the Grok account if that ever happens.
 - Parallel jobs take turns running the agent (a lock file next to the login on EFS), because two agents refreshing one login at once can invalidate it. Each Fargate task is capped at 20 minutes (the agent at 15).

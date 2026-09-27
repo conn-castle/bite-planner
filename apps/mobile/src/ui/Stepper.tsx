@@ -10,12 +10,17 @@ interface StepperProps {
   label: string
   /** In a row of a group: on the fill, a little smaller. */
   inRow?: boolean
+  /** How much − and + change the value (1 by default). */
+  step?: number
+  /** How the value reads, e.g. "1½". */
+  format?: (value: number) => string
 }
 
 /** A − value + control. The value animates as it changes. */
-export function Stepper({ value, min, max, onChange, label, inRow }: StepperProps) {
+export function Stepper({ value, min, max, onChange, label, inRow, step: by = 1, format = String }: StepperProps) {
   function step(delta: number) {
-    const next = Math.min(max, Math.max(min, value + delta))
+    // Rounded, so steps of ¼ don't drift.
+    const next = Math.min(max, Math.max(min, Math.round((value + delta * by) * 100) / 100))
     if (next === value) return
     haptics.tap()
     onChange(next)
@@ -33,7 +38,7 @@ export function Stepper({ value, min, max, onChange, label, inRow }: StepperProp
         −
       </button>
       <output className={styles.value} aria-live="polite" key={value}>
-        {value}
+        {format(value)}
       </output>
       <button
         type="button"
