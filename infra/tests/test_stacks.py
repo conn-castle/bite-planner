@@ -80,16 +80,25 @@ def test_worker_is_locked_down_and_pinned(runtime: Template) -> None:
     assert not environment & set(secrets)
 
 
-def test_worker_login_storage_belongs_to_the_agent_user(runtime: Template) -> None:
-    [login_dir] = [
-        m["ContainerPath"]
-        for m in worker_container(runtime)["MountPoints"]
-        if m["SourceVolume"] == "grok-login"
-    ]
+@pytest.mark.parametrize(
+    ("volume", "path", "variables"),
+    [
+        ("grok-login", "/grok", ["GROK_AUTH_PATH", "CASTLE_CHEF_AGENT_LOCK_FILE"]),
+        ("codex-login", "/codex", ["CASTLE_CHEF_CODEX_HOME", "CASTLE_CHEF_CODEX_LOCK_FILE"]),
+    ],
+)
+def test_worker_login_storage_belongs_to_the_agent_user(
+    runtime: Template, volume: str, path: str, variables: list[str]
+) -> None:
+    [mount] = [m for m in worker_container(runtime)["MountPoints"] if m["SourceVolume"] == volume]
+    assert mount["ReadOnly"] is False
+    login_dir = mount["ContainerPath"]
     environment = {e["Name"]: e["Value"] for e in worker_container(runtime)["Environment"]}
     # The login and the lock that serializes its users both live on EFS.
-    assert environment["GROK_AUTH_PATH"].startswith(f"{login_dir}/")
-    assert environment["CASTLE_CHEF_AGENT_LOCK_FILE"].startswith(f"{login_dir}/")
+    for variable in variables:
+        assert environment[variable] == login_dir or environment[variable].startswith(
+            f"{login_dir}/"
+        )
     runtime.has_resource_properties("AWS::EFS::FileSystem", {"Encrypted": True})
     runtime.has_resource("AWS::EFS::FileSystem", {"DeletionPolicy": "Retain"})
     runtime.has_resource_properties(
@@ -97,11 +106,26 @@ def test_worker_login_storage_belongs_to_the_agent_user(runtime: Template) -> No
         {
             "PosixUser": {"Uid": "65532", "Gid": "65532"},
             "RootDirectory": {
-                "Path": "/grok",
+                "Path": path,
                 "CreationInfo": Match.object_like({"Permissions": "700"}),
             },
         },
     )
+
+
+def test_the_worker_can_mount_only_the_login_access_points(runtime: Template) -> None:
+    access_points = runtime.find_resources("AWS::EFS::AccessPoint")
+    [statement] = [
+        statement
+        for policy in runtime.find_resources("AWS::IAM::Policy").values()
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]
+        if statement["Action"] == ["elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite"]
+    ]
+    allowed = statement["Condition"]["StringEquals"]["elasticfilesystem:AccessPointArn"]
+    # Each ARN is built from its access point's reference.
+    named = {part["Ref"] for arn in allowed for part in arn["Fn::Join"][1] if "Ref" in part}
+    assert named & set(access_points) == set(access_points)
+    assert len(allowed) == len(access_points)
 
 
 def test_each_queued_job_starts_one_worker_with_its_id(runtime: Template) -> None:

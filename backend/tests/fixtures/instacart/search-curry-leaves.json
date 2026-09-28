@@ -1,0 +1,493 @@
+{
+ "content": [
+  {
+   "type": "text",
+   "text": "Found 10 products for 'curry leaves'"
+  }
+ ],
+ "structuredContent": {
+  "tool": "search_products",
+  "summary": "Found 10 products for 'curry leaves'",
+  "artifacts": {
+   "query": "curry leaves",
+   "items": [
+    {
+     "product_id": "3142084",
+     "name": "Melissa's Melissa's Thai Chiles"
+    },
+    {
+     "product_id": "3268888",
+     "name": "Wegmans Fresh Cilantro (Corriander)"
+    },
+    {
+     "product_id": "17859310",
+     "name": "Okra"
+    },
+    {
+     "product_id": "3254797",
+     "name": "Fresh Ginger"
+    },
+    {
+     "product_id": "16960310",
+     "name": "Laxmi Bay Leaves"
+    },
+    {
+     "product_id": "16621862",
+     "name": "Wegmans Mint Bunch"
+    },
+    {
+     "product_id": "17327629",
+     "name": "Cilantro"
+    },
+    {
+     "product_id": "2677342",
+     "name": "Large Fresh Limes"
+    },
+    {
+     "product_id": "16614368",
+     "name": "Wegmans Purple Eggplant"
+    },
+    {
+     "product_id": "3253298",
+     "name": "Bulk Garlic"
+    }
+   ],
+   "retailer": {
+    "name": "Wegmans",
+    "available_service_types": [
+     "DELIVERY",
+     "PICKUP"
+    ]
+   }
+  },
+  "guidelines": {}
+ },
+ "isError": false,
+ "_meta": {
+  "instacart/widgetData": {
+   "type": "search_products",
+   "data": {
+    "query": "curry leaves",
+    "replacement_item": null,
+    "items": [],
+    "related_items": [
+     {
+      "product_id": "3142084",
+      "item_id": "1162215423174",
+      "name": "Melissa's Melissa's Thai Chiles",
+      "size": "4 oz",
+      "name_with_size": "Melissa's Melissa's Thai Chiles (4 oz)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_8528e79a-97bd-4320-8e9a-174d3f0d2035.jpg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_8528e79a-97bd-4320-8e9a-174d3f0d2035.jpg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$6.89",
+      "full_items_price": "$6.89",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/3142084?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": false,
+       "cost_unit": "each",
+       "estimated_weight": null,
+       "estimated_total_price": null
+      },
+      "replacements": null,
+      "badges": [
+       {
+        "type": "BADGE_TYPE_BEST_SELLER",
+        "label": "Best seller"
+       }
+      ],
+      "dietary_labels": [],
+      "offer_label": null
+     },
+     {
+      "product_id": "3268888",
+      "item_id": "636898865154",
+      "name": "Wegmans Fresh Cilantro (Corriander)",
+      "size": "1 each",
+      "name_with_size": "Wegmans Fresh Cilantro (Corriander) (1 each)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_60a79077-dd74-434e-bc75-30b54c4b683f.jpeg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_60a79077-dd74-434e-bc75-30b54c4b683f.jpeg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$1.19",
+      "full_items_price": "$1.19",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/3268888?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": false,
+       "cost_unit": "each",
+       "estimated_weight": null,
+       "estimated_total_price": null
+      },
+      "replacements": null,
+      "badges": [
+       {
+        "type": "BADGE_TYPE_BUY_IT_AGAIN",
+        "label": "Buy it again"
+       }
+      ],
+      "dietary_labels": [],
+      "offer_label": null
+     },
+     {
+      "product_id": "17859310",
+      "item_id": "644747425816",
+      "name": "Okra",
+      "size": "12 oz",
+      "name_with_size": "Okra (12 oz)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_63c1b5bf-7e30-4eb2-9f0a-c55c0a5f7c39.jpeg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_63c1b5bf-7e30-4eb2-9f0a-c55c0a5f7c39.jpeg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$4.09",
+      "full_items_price": "$4.09",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/17859310?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": false,
+       "cost_unit": "each",
+       "estimated_weight": null,
+       "estimated_total_price": null
+      },
+      "replacements": null,
+      "badges": [
+       {
+        "type": "BADGE_TYPE_BEST_SELLER",
+        "label": "Best seller"
+       }
+      ],
+      "dietary_labels": [],
+      "offer_label": null
+     },
+     {
+      "product_id": "3254797",
+      "item_id": "107282012",
+      "name": "Fresh Ginger",
+      "size": "per lb",
+      "name_with_size": "Fresh Ginger (per lb)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_b1390321-3d31-4afd-91d2-baa8b219836e.jpeg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_b1390321-3d31-4afd-91d2-baa8b219836e.jpeg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$4.09",
+      "full_items_price": "$4.09",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/3254797?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": true,
+       "cost_unit": "lb",
+       "estimated_weight": 0.35,
+       "estimated_total_price": "$1.43"
+      },
+      "replacements": null,
+      "badges": [],
+      "dietary_labels": [],
+      "offer_label": null
+     },
+     {
+      "product_id": "16960310",
+      "item_id": "3106194251",
+      "name": "Laxmi Bay Leaves",
+      "size": "0.5 oz",
+      "name_with_size": "Laxmi Bay Leaves (0.5 oz)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_d6d8b398-dcf6-4a27-8095-43cb5bd0466c.jpeg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_d6d8b398-dcf6-4a27-8095-43cb5bd0466c.jpeg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$1.79",
+      "full_items_price": "$1.79",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/16960310?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": false,
+       "cost_unit": "each",
+       "estimated_weight": null,
+       "estimated_total_price": null
+      },
+      "replacements": null,
+      "badges": [],
+      "dietary_labels": [],
+      "offer_label": null
+     },
+     {
+      "product_id": "16621862",
+      "item_id": "642772544197",
+      "name": "Wegmans Mint Bunch",
+      "size": "1 each",
+      "name_with_size": "Wegmans Mint Bunch (1 each)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_847a641b-3218-42c2-b170-4c5bad9f65a3.jpeg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_847a641b-3218-42c2-b170-4c5bad9f65a3.jpeg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$2.89",
+      "full_items_price": "$2.89",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/16621862?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": false,
+       "cost_unit": "each",
+       "estimated_weight": null,
+       "estimated_total_price": null
+      },
+      "replacements": null,
+      "badges": [],
+      "dietary_labels": [],
+      "offer_label": null
+     },
+     {
+      "product_id": "17327629",
+      "item_id": "107371821",
+      "name": "Cilantro",
+      "size": "1 each",
+      "name_with_size": "Cilantro (1 each)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_ee452108-00fa-4ad5-9b49-19e84de5d5bc.jpeg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_ee452108-00fa-4ad5-9b49-19e84de5d5bc.jpeg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$2.29",
+      "full_items_price": "$2.29",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/17327629?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": false,
+       "cost_unit": "each",
+       "estimated_weight": null,
+       "estimated_total_price": null
+      },
+      "replacements": null,
+      "badges": [],
+      "dietary_labels": [],
+      "offer_label": null
+     },
+     {
+      "product_id": "2677342",
+      "item_id": "295636674",
+      "name": "Large Fresh Limes",
+      "size": "1 each",
+      "name_with_size": "Large Fresh Limes (1 each)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_5ff3e7ce-1f78-49f1-9b8e-9aaf91a5a714.jpeg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_5ff3e7ce-1f78-49f1-9b8e-9aaf91a5a714.jpeg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$0.39",
+      "full_items_price": "$0.39",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/2677342?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": false,
+       "cost_unit": "each",
+       "estimated_weight": null,
+       "estimated_total_price": null
+      },
+      "replacements": null,
+      "badges": [
+       {
+        "type": "BADGE_TYPE_BUY_IT_AGAIN",
+        "label": "Buy it again"
+       }
+      ],
+      "dietary_labels": [],
+      "offer_label": null
+     },
+     {
+      "product_id": "16614368",
+      "item_id": "107281281",
+      "name": "Wegmans Purple Eggplant",
+      "size": "per lb",
+      "name_with_size": "Wegmans Purple Eggplant (per lb)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_4d1abe87-446d-4bbd-8f34-66edec05cb39.jpeg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_4d1abe87-446d-4bbd-8f34-66edec05cb39.jpeg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$2.29",
+      "full_items_price": "$2.29",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/16614368?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": true,
+       "cost_unit": "lb",
+       "estimated_weight": 0.75,
+       "estimated_total_price": "$1.72"
+      },
+      "replacements": null,
+      "badges": [],
+      "dietary_labels": [],
+      "offer_label": null
+     },
+     {
+      "product_id": "3253298",
+      "item_id": "107363731",
+      "name": "Bulk Garlic",
+      "size": "per lb",
+      "name_with_size": "Bulk Garlic (per lb)",
+      "image_url": "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_50ed68e1-31a8-48ef-9550-b7902b96ca46.jpeg",
+      "image_url_list": [
+       "https://d2lnr5mha7bycj.cloudfront.net/product-image/file/large_50ed68e1-31a8-48ef-9550-b7902b96ca46.jpeg"
+      ],
+      "quantity": 0.0,
+      "quantity_type": "each",
+      "items_price": "$5.19",
+      "full_items_price": "$5.19",
+      "prop65_warning": null,
+      "warnings": null,
+      "item_page_url": "https://www.instacart.com/products/3253298?retailerSlug=wegmans&utm_source=chatgpt",
+      "quantity_attributes": {
+       "increment_amount": 1.0,
+       "minimum_quantity": 1.0,
+       "maximum_quantity": 500.0,
+       "quantity_type": "each",
+       "request_unit": "ct",
+       "request_unit_plural": "ct",
+       "variable_weight": true,
+       "cost_unit": "lb",
+       "estimated_weight": 0.2,
+       "estimated_total_price": "$1.04"
+      },
+      "replacements": null,
+      "badges": [
+       {
+        "type": "BADGE_TYPE_BUY_IT_AGAIN",
+        "label": "Buy it again"
+       }
+      ],
+      "dietary_labels": [],
+      "offer_label": null
+     }
+    ],
+    "retailer": {
+     "retailer_id": 231,
+     "retailer_location_id": 11766,
+     "basic_info": {
+      "name": "Wegmans",
+      "logo_image_url": "https://www.instacart.com/assets/domains/warehouse/logo/231/30647104-9adb-4346-babc-3757295650b8.png",
+      "logo_background_color": "#ec912d",
+      "description": "Helping you live a healthier, better life through food.  Our commitment to you is simple: Every Day You Get our Best.  Our customers tell us they choose Wegmans for the helpful people in our stores, help with delicious meals from our chefs, and the freshest ingredients possible.  Offering choice, quality and value in every aisle is how we hope to make your shopping experience a genuine pleasure.",
+      "price_transparency_description": "We keep our prices consistently low, every day, so you can save on the items your family uses most. Our online prices remain about 15% above in-store prices. This includes our costs of shopping your order. There is also a $10 order minimum.\r\n\r\nInstacart adds an alcohol service charge to cover the expenses of handling and transporting alcoholic products, as well as a delivery fee and optional driver tip. Product availability and prices are based on data feeds and are subject to delays and errors.",
+      "price_parity": false
+     },
+     "fee_disclosure": {
+      "delivery": {
+       "above_minimum": null,
+       "below_minimum": "7.99",
+       "threshold": "10"
+      },
+      "priority": "4.00",
+      "long_distance": null,
+      "service": {
+       "rate": "6%",
+       "minimum_per_order": "2.50",
+       "maximum_per_order": "20"
+      },
+      "bag": "0.05",
+      "regulatory": null,
+      "disclosure_package": "STANDARD"
+     },
+     "loyalty": "<removed>",
+     "store_hours": {
+      "starts_at": "6am",
+      "ends_at": "12am"
+     },
+     "eta_formatted": "Delivery by 11:15pm",
+     "shop_tags": null,
+     "delivery_eta_formatted": "Delivery by 11:15pm",
+     "pickup_eta_formatted": "Pickup ready by 10:00am tomorrow",
+     "delivery_distance_formatted": null,
+     "pickup_distance_formatted": null,
+     "service_types": [
+      "DELIVERY",
+      "PICKUP"
+     ],
+     "shop_id": 3425,
+     "cart_item_count": null,
+     "is_household": null
+    },
+    "delivery_street_address": "<removed>",
+    "pickup_street_address": "<removed>",
+    "selected_service_type": "DELIVERY"
+   }
+  }
+ }
+}

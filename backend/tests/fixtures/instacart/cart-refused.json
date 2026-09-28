@@ -1,0 +1,13 @@
+{
+ "content": [
+  {
+   "type": "text",
+   "text": "Parameters failed connector schema validation: item_updates[0].product_id [type]: Expected type ['string'], got int (does not match constraints configured by your ChatGPT workspace admin. If the issue persists, instruct the user to contact their workspace admin.)"
+  }
+ ],
+ "structuredContent": {
+  "error": "Parameters failed connector schema validation: item_updates[0].product_id [type]: Expected type ['string'], got int (does not match constraints configured by your ChatGPT workspace admin. If the issue persists, instruct the user to contact their workspace admin.)",
+  "error_code": "INVALID_ARGUMENT"
+ },
+ "isError": true
+}

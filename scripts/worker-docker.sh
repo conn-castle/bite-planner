@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Runs the worker image locally the way Fargate runs it (infra/castle_chef_infra/runtime.py):
 # linux/amd64, read-only root filesystem, an empty /tmp volume, the same dropped
-# capabilities, 1 vCPU and 2 GB, and the Grok login on its own volume (EFS in AWS),
-# against Neon dev (backend/.env). Run through make:
+# capabilities, 1 vCPU and 2 GB, and the Grok and Codex logins on their own volumes
+# (EFS in AWS), against Neon dev (backend/.env). Run through make:
 #   make worker-image              build the image from the working tree
 #   make worker-login              sign the local worker's agent in (device code, once)
+#   make worker-login AGENT=codex  connect Instacart (ChatGPT device code and link, once)
 #   make worker-job JOB=<job-id>   run one pending job, then copy out its files
+#   scripts/worker-docker.sh instacart search|cart …   check the Instacart store
 # A job's directory, Grok's session files, and the worker's log (worker.log) are
 # copied to ~/.local/state/castle-chef/docker-jobs/<job-id>/ after it runs.
 set -euo pipefail
@@ -14,6 +16,8 @@ cd "$(dirname "$0")/.."
 readonly IMAGE=castle-chef-worker:local
 readonly LOGIN_VOLUME=castle-chef-grok-login
 readonly LOGIN_DIR=/mnt/agent-auth/grok  # GROK_AUTH_DIR in infra
+readonly CODEX_VOLUME=castle-chef-codex-login
+readonly CODEX_DIR=/mnt/agent-auth/codex  # CODEX_HOME_DIR in infra
 readonly AGENT_UID=65532
 
 fargate_args=(
@@ -22,6 +26,9 @@ fargate_args=(
   --volume "$LOGIN_VOLUME:$LOGIN_DIR"
   --env "GROK_AUTH_PATH=$LOGIN_DIR/auth.json"
   --env "CASTLE_CHEF_AGENT_LOCK_FILE=$LOGIN_DIR/agent.lock"
+  --volume "$CODEX_VOLUME:$CODEX_DIR"
+  --env "CASTLE_CHEF_CODEX_HOME=$CODEX_DIR"
+  --env "CASTLE_CHEF_CODEX_LOCK_FILE=$CODEX_DIR/codex.lock"
   --env CASTLE_CHEF_RELEASE=local
 )
 for capability in AUDIT_WRITE FSETID MKNOD NET_BIND_SERVICE NET_RAW SETFCAP SETPCAP SYS_CHROOT; do
@@ -41,10 +48,11 @@ database_url() {
   export DATABASE_URL
 }
 
-# EFS's access point makes the login directory the agent user's, mode 700.
+# EFS's access points make each login directory the agent user's, mode 700.
 prepare_login_volume() {
-  docker run --rm --platform linux/amd64 --volume "$LOGIN_VOLUME:$LOGIN_DIR" --entrypoint sh "$IMAGE" \
-    -c "chown $AGENT_UID:$AGENT_UID $LOGIN_DIR && chmod 700 $LOGIN_DIR"
+  docker run --rm --platform linux/amd64 --volume "$LOGIN_VOLUME:$LOGIN_DIR" \
+    --volume "$CODEX_VOLUME:$CODEX_DIR" --entrypoint sh "$IMAGE" \
+    -c "chown $AGENT_UID:$AGENT_UID $LOGIN_DIR $CODEX_DIR && chmod 700 $LOGIN_DIR $CODEX_DIR"
 }
 
 case "${1:-}" in
@@ -56,7 +64,13 @@ case "${1:-}" in
     need_image
     database_url
     prepare_login_volume
-    docker run --rm "${fargate_args[@]}" --env DATABASE_URL "$IMAGE" agent-login grok
+    docker run --rm "${fargate_args[@]}" --env DATABASE_URL "$IMAGE" agent-login "${2:-grok}"
+    ;;
+  instacart)
+    need_image
+    database_url
+    prepare_login_volume
+    docker run --rm "${fargate_args[@]}" --env DATABASE_URL "$IMAGE" instacart "${@:2}"
     ;;
   check)
     # What `run` needs, checked before a job is handed to it (the API's local dispatch).
@@ -82,7 +96,7 @@ case "${1:-}" in
     exit "$status"
     ;;
   *)
-    echo "usage: $0 build | login | check | run JOB_ID" >&2
+    echo "usage: $0 build | login [grok|codex] | instacart search|cart … | check | run JOB_ID" >&2
     exit 2
     ;;
 esac

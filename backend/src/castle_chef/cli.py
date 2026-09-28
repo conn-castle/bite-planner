@@ -9,9 +9,10 @@ from uuid import UUID
 
 import typer
 from castle_chef_agent.cli import mcp_serve, meal_app, shopping_list_app
+from castle_chef_agent.instacart import InstacartError, Product
 from sqlmodel import Session
 
-from castle_chef import household, push, worker
+from castle_chef import household, instacart, push, worker
 from castle_chef import log as logging_config
 from castle_chef.db import get_session
 from castle_chef.dispatch import JOB_ID_ENV
@@ -22,10 +23,14 @@ job_app = typer.Typer(no_args_is_help=True, help="Create and run jobs.")
 household_app = typer.Typer(
     no_args_is_help=True, help="Manage households and who is in them (invite-only)."
 )
+instacart_app = typer.Typer(
+    no_args_is_help=True, help="Check the household's Instacart store (read-only)."
+)
 app.add_typer(meal_app, name="meal")
 app.add_typer(shopping_list_app, name="shopping-list")
 app.add_typer(job_app, name="job")
 app.add_typer(household_app, name="household")
+app.add_typer(instacart_app, name="instacart")
 app.command("mcp", hidden=True)(mcp_serve)
 log = logging.getLogger(__name__)
 
@@ -72,10 +77,18 @@ def job_run(
 
 
 @app.command("agent-login")
-def agent_login(provider: Annotated[str, typer.Argument(help="Agent provider.")] = "grok") -> None:
-    """Sign the worker's agent in to its subscription (device code). In AWS this
-    runs as a one-off worker task with the command `agent-login grok`."""
-    raise typer.Exit(worker.login_agent(provider))
+def agent_login(
+    provider: Annotated[str, typer.Argument(help="grok, or codex (Instacart).")] = "grok",
+) -> None:
+    """Sign the worker's agent in to its subscription (device code), or with `codex`,
+    Codex in to the household's ChatGPT account with Instacart connected. In AWS this
+    runs as a one-off worker task with the command `agent-login grok` (or codex)."""
+    try:
+        status = worker.login_agent(provider)
+    except ValueError as error:  # an unknown provider
+        typer.echo(str(error), err=True)
+        raise typer.Exit(2) from error
+    raise typer.Exit(status)
 
 
 @household_app.command("create")
@@ -141,3 +154,53 @@ def household_notify_test(email: str) -> None:
         ),
     )
     typer.echo(f"Sent to {email}'s phones; see the log for each one.")
+
+
+def _product_line(product: Product, quantity: float | None = None) -> str:
+    price = f"${product.price_cents / 100:.2f}" if product.price_cents is not None else "no price"
+    parts = [
+        f"{quantity:g} x" if quantity is not None else None,
+        product.name,
+        product.size,
+        price,
+        f"${product.price_per_lb_cents / 100:.2f}/lb, about {product.estimated_lb:g} lb"
+        if product.price_per_lb_cents is not None and product.estimated_lb is not None
+        else None,
+        "bought before" if product.bought_before else None,
+    ]
+    return f"  {product.product_id}: " + " · ".join(filter(None, parts))
+
+
+@instacart_app.command("search")
+def instacart_search(query: str) -> None:
+    """Search the store, as the agent's search tool does."""
+    try:
+        with instacart.store() as store:
+            results = store.search(query)
+    except InstacartError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    typer.echo(f"Matches ({len(results.matches)}):")
+    for product in results.matches:
+        typer.echo(_product_line(product))
+    typer.echo(f"Related ({len(results.related)}):")
+    for product in results.related:
+        typer.echo(_product_line(product))
+
+
+@instacart_app.command("cart")
+def instacart_cart() -> None:
+    """Show the store's cart."""
+    try:
+        with instacart.store() as store:
+            cart = store.cart()
+    except InstacartError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    subtotal = f"${cart.subtotal_cents / 100:.2f}" if cart.subtotal_cents is not None else "unknown"
+    typer.echo(f"{len(cart.items)} items, subtotal {subtotal}.")
+    for item in cart.items:
+        typer.echo(_product_line(item.product, item.quantity))
+    typer.echo(
+        "Checkout allowed." if cart.can_check_out else f"Checkout blocked: {cart.blocked_because}"
+    )

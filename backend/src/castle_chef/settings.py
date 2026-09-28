@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     # run: the worker container's /app is read-only, so the agent gets a writable
     # copy of the project's .agent-layer.
     agent_project_template: Path | None = None
+    # Instacart, through its tools in the ChatGPT apps (castle_chef_agent.instacart):
+    # the Codex login (CODEX_HOME: the household's ChatGPT sign-in with Instacart
+    # connected; EFS in AWS), its lock (next to it, like the agent's), how to start
+    # Codex, and the store. No login: nothing reaches Instacart.
+    codex_home: Path | None = None
+    codex_lock_file: Path | None = None
+    codex_command: str = "codex"
+    instacart_store: str = "Wegmans"
     # Neon project and branch for managing Neon Auth accounts (`castle-chef household`).
     neon_project_id: str | None = None
     neon_branch_id: str | None = None

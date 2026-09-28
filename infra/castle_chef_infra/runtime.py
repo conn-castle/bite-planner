@@ -36,6 +36,8 @@ from constructs import Construct
 WORKER_CONTAINER = "worker"  # castle_chef.failures.WORKER_CONTAINER
 AGENT_UID = 65532  # the image's agent user (CASTLE_CHEF_AGENT_UID)
 GROK_AUTH_DIR = "/mnt/agent-auth/grok"
+# Codex's login (the household's ChatGPT account, with Instacart connected).
+CODEX_HOME_DIR = "/mnt/agent-auth/codex"
 LOG_RETENTION = logs.RetentionDays.THREE_MONTHS
 # The APNs auth key (Production, topic com.conncastle.castlechef) and its id.
 APNS_KEY_PARAMETER = "/castle-chef/shared/apns-key-base64"
@@ -119,6 +121,14 @@ class RuntimeStack(Stack):
             ),
             posix_user=efs.PosixUser(uid=str(AGENT_UID), gid=str(AGENT_UID)),
         )
+        codex_logins = logins.add_access_point(
+            "CodexLogin",
+            path="/codex",
+            create_acl=efs.Acl(
+                owner_uid=str(AGENT_UID), owner_gid=str(AGENT_UID), permissions="700"
+            ),
+            posix_user=efs.PosixUser(uid=str(AGENT_UID), gid=str(AGENT_UID)),
+        )
 
         # Jobs queue. The Pipe removes a message once RunTask accepts it; messages
         # it can't start a task for are retried, then dead-lettered.
@@ -153,6 +163,16 @@ class RuntimeStack(Stack):
                 transit_encryption="ENABLED",
                 authorization_config=ecs.AuthorizationConfig(
                     access_point_id=grok_logins.access_point_id, iam="ENABLED"
+                ),
+            ),
+        )
+        worker.add_volume(
+            name="codex-login",
+            efs_volume_configuration=ecs.EfsVolumeConfiguration(
+                file_system_id=logins.file_system_id,
+                transit_encryption="ENABLED",
+                authorization_config=ecs.AuthorizationConfig(
+                    access_point_id=codex_logins.access_point_id, iam="ENABLED"
                 ),
             ),
         )
@@ -192,11 +212,16 @@ class RuntimeStack(Stack):
                 "CASTLE_CHEF_PUSH": "apns",
                 "GROK_AUTH_PATH": f"{GROK_AUTH_DIR}/auth.json",
                 "CASTLE_CHEF_AGENT_LOCK_FILE": f"{GROK_AUTH_DIR}/agent.lock",
+                "CASTLE_CHEF_CODEX_HOME": CODEX_HOME_DIR,
+                "CASTLE_CHEF_CODEX_LOCK_FILE": f"{CODEX_HOME_DIR}/codex.lock",
             },
         )
         container.add_mount_points(
             ecs.MountPoint(
                 source_volume="grok-login", container_path=GROK_AUTH_DIR, read_only=False
+            ),
+            ecs.MountPoint(
+                source_volume="codex-login", container_path=CODEX_HOME_DIR, read_only=False
             ),
             ecs.MountPoint(source_volume="tmp", container_path="/tmp", read_only=False),
         )
@@ -207,7 +232,10 @@ class RuntimeStack(Stack):
                 resources=[logins.file_system_arn],
                 conditions={
                     "StringEquals": {
-                        "elasticfilesystem:AccessPointArn": grok_logins.access_point_arn
+                        "elasticfilesystem:AccessPointArn": [
+                            grok_logins.access_point_arn,
+                            codex_logins.access_point_arn,
+                        ]
                     }
                 },
             )

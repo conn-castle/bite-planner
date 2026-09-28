@@ -49,6 +49,16 @@ RUN UV_PROJECT_ENVIRONMENT=/opt/castle-chef-agent/.venv \
     uv sync --frozen --no-default-groups --package castle-chef-agent --no-editable
 COPY docker/castle-chef /opt/castle-chef-agent/bin/castle-chef
 
+# Codex (OpenAI's release package, pinned): its app-server calls Instacart's tools
+# in the ChatGPT apps (castle_chef_agent.instacart). The whole package: tool calls
+# need its code-mode host, not just the codex binary.
+FROM python AS codex
+ADD --checksum=sha256:0e211868c9fd73cb49ad35ac675b5eafdf6b9f453df8a493df980c59a590fe5f \
+    https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-package-x86_64-unknown-linux-musl.tar.gz \
+    /tmp/codex.tar.gz
+RUN mkdir /opt/codex && tar -xzf /tmp/codex.tar.gz -C /opt/codex \
+ && chmod -R a+rX /opt/codex && /opt/codex/bin/codex --version
+
 FROM python AS api
 COPY --from=lambda-adapter /lambda-adapter /opt/extensions/lambda-adapter
 COPY --from=api-build /app/backend /app/backend
@@ -75,6 +85,7 @@ ADD --checksum=sha256:9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82
 # /tmp/agent-project owned by the agent for each job.
 COPY docker/agent-project /opt/castle-chef/agent-project
 COPY --from=agent-build /opt/castle-chef-agent /opt/castle-chef-agent
+COPY --from=codex /opt/codex /opt/codex
 COPY --from=worker-build /app/backend /app/backend
 # The backend is the worker's (root) alone: the agent's user can't list or read it.
 RUN chmod 700 /app
@@ -88,6 +99,7 @@ ENV GROK_DISABLE_API_KEY_AUTH=true \
     CASTLE_CHEF_AGENT_ENV='["GROK_AUTH_PATH","GROK_DISABLE_API_KEY_AUTH","GROK_DISABLE_AUTOUPDATER"]' \
     CASTLE_CHEF_AGENT_PROJECT_TEMPLATE=/opt/castle-chef/agent-project \
     CASTLE_CHEF_AGENT_PROJECT_DIR=/tmp/agent-project \
+    CASTLE_CHEF_CODEX_COMMAND=/opt/codex/bin/codex \
     CASTLE_CHEF_JOBS_DIR=/tmp/jobs \
     CASTLE_CHEF_LOGS_DIR=/tmp/logs
 # The commit is the image's; the release version is set by the deploy (infra/).
@@ -96,5 +108,6 @@ ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
 # A hard cap above the agent timeout (15 min) plus saving: a hung process can't
 # keep the task (and its bill) running.
 ENTRYPOINT ["timeout", "--kill-after=30s", "1200s", "castle-chef"]
-# One job (the task gets CASTLE_CHEF_JOB_ID); `agent-login grok` signs the agent in.
+# One job (the task gets CASTLE_CHEF_JOB_ID); `agent-login grok` signs the agent in,
+# and `agent-login codex` connects Instacart (CODEX_HOME on EFS, set by the task).
 CMD ["job", "run"]

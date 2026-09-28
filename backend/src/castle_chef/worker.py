@@ -28,7 +28,7 @@ from castle_chef_agent.server import Tools
 from pydantic import BaseModel, ValidationError
 from sqlmodel import Session, select
 
-from castle_chef import push, ratings, shopping
+from castle_chef import instacart, push, ratings, shopping
 from castle_chef.db import get_engine, get_session
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, finish_job
 from castle_chef.meals import add_meals
@@ -328,8 +328,12 @@ def login_agent(provider: str) -> int:
     code are printed; the owner approves in a browser). Runs as the agent user,
     so the login (on EFS in AWS, via GROK_AUTH_PATH) is owned by it. Returns
     the login command's exit status."""
+    if provider == "codex":
+        # Codex reaches Instacart for the worker and the agent's tools; it isn't
+        # the job's agent.
+        return instacart.login()
     if provider != "grok":
-        raise ValueError(f"Unsupported agent provider {provider!r}; only grok is set up.")
+        raise ValueError(f"Unsupported agent provider {provider!r}: grok or codex.")
     settings = get_settings()
     project = prepare_agent_project()
     env = {
