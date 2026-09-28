@@ -9,6 +9,7 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 - [x] Creating an order walks the user through picking the meals, the delivery date, and the next delivery date.
 - [x] The delivery date defaults to the order's target date (the previous order's next delivery date); the user can change it.
 - [x] The earliest selectable delivery date comes from a function (later: the grocery service's soonest slot); for now it returns tomorrow.
+- [ ] The delivery days and times are the ones Instacart offers (about six days ahead), chosen after the shopping list (stage 3).
 - [x] The next delivery date defaults to the delivery date plus one day per meal; the user can change it.
 - [x] The next delivery date becomes the target date of the household's next order.
 - [x] Each order's decide-by date is its target date minus the household's decide-by offset.
@@ -21,12 +22,11 @@ The flow being built toward, one piece at a time:
 
 1. Meal ideas are generated, and while they generate the user is asked to rate recent meals.
 2. Pick meals.
-3. Servings: each picked meal's servings (− and + around the number). Leaving this step starts building the shopping list.
-4. Delivery date.
-5. Next delivery date (which sets the next order's decide-by date).
-6. The shopping list: the user waits for it here if it isn't built yet, then reviews it (removes items, changes quantities).
-7. An agent shops the list at the grocery store(s) and chooses the exact products to order; the user sees those exact items before placing (with grocery stores, later).
-8. Final review: the user checks the order and confirms; it's placed, and the confirmation shows the store order(s) it's associated with.
+3. Servings: each picked meal's servings (− and + around the number). Leaving this step starts the shopping list: it's made, then shopped at Instacart, in one wait.
+4. The shopping list: the Wegmans products chosen for it, which the user reviews and changes (piece 9). Until piece 9, the list of things to buy, after the dates.
+5. Delivery: the day and the time, from the ones Instacart offers (piece 9). Until piece 9, the delivery date, after servings.
+6. Next delivery date (which sets the next order's decide-by date).
+7. Final review: the user checks the order and places it; the confirmation shows the Instacart order.
 
 Each step does one thing.
 
@@ -69,7 +69,13 @@ The list is made in three stages:
 
 1. Python scales each picked meal's ingredients to its servings (deterministic).
 2. An AI agent combines those ingredients into one list of things to buy (e.g. "1 onion" and "1 cup diced onion" become onions), grouped by aisle.
-3. An agent shops that list at the grocery store(s) (Instacart and/or Walmart, whichever is easier to set up; both is ideal) and chooses the exact products to order, using the household's store accounts and preferences.
+3. An agent shops that list at Instacart: it chooses the exact product for each item, with alternatives; the user reviews them in the app, picks the delivery time, and approves, and the order is placed without anything more to do.
+
+Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-27):
+
+- No grocery service offers a public, self-serve way for another app to place orders on a shopper's account. Instacart's developer program isn't accepting applications; its tools that fill a real cart and check out are for partners (ChatGPT, Claude, Gemini, Muse). Walmart's checkout API and grocery program need approval and a business case.
+- For our household it works today, with the household's accounts (Nick's): Instacart's own tools in the ChatGPT apps, called through the Codex app-server with the household's ChatGPT sign-in, search Wegmans (with sizes, prices, pictures, and "Buy it again") and fill the cart; a headless browser with the household's Instacart session reads checkout (times, fees, total) and places the order after the user approves it in the app. The agent (Grok) only searches and chooses, through our tools; our code writes the cart and checks out. Instacart's terms don't allow an automated system to operate an account without its authorization; the account owner accepts that for personal use.
+- Walmart is the path if Castle Chef is ever offered to other households: its product API is self-serve, and one link fills anyone's Walmart cart with chosen products and quantities; the shopper then checks out themselves.
 
 - [x] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings (stages 1 and 2), asynchronously (it takes minutes), starting as soon as the servings are chosen; the user sees it when it's done.
 - [x] Changing the picked meals or their servings after the list was built rebuilds it from scratch; the user's changes to the old list are dropped. (Generation isn't deterministic and can change the list a lot, so there is no merging.)
@@ -78,14 +84,21 @@ The list is made in three stages:
 - [x] Every scaled ingredient line ends up in exactly one item to buy or one staple; the agent says which lines each covers, and the list isn't saved until every line is covered.
 - [x] Things counted (lemons, onions) are rounded up to whole ones; amounts in a unit keep up to two decimals (the product is chosen in stage 3).
 - [x] Items are grouped by aisle: produce, meat & seafood, dairy & eggs, frozen, pantry, and other (for what fits none of them).
-- [ ] Before placing, the user sees the exact products that will be ordered (stage 3).
+- [ ] The list is made and then shopped in one wait after servings; the shopping list step shows the chosen Wegmans products by aisle (picture, name cut off after two lines, size, price, count, an icon for what the household has bought before, and a chevron). The list of things to buy is no longer a step of its own (stage 3).
+- [ ] The agent gets the list (what to buy) and the meals with their scaled ingredients (for reference). For each item it chooses the product that best fits what the meals need, enough to cover the item's amount on the list, breaking ties by what the household has bought before, plus up to eight alternatives, or why there are none.
+- [ ] An item Wegmans doesn't have comes with alternatives to buy and/or why the meal works without it. Such items come first, in a red card; the user skips each or picks an alternative before going on.
+- [ ] Tapping a product shows whether it was bought before and what it's for; the user can change how many, switch to an alternative (up to eight, scrolling), or not buy it.
+- [ ] The delivery step shows the days and times Instacart offers, with their fees. Opening it fills the household's Wegmans cart with the chosen products and reads checkout; the household's own items already in that cart are set aside then and put back when the order is placed or discarded.
+- [ ] The final review shows the total for the chosen time and the account's address, card, tip, and replacement setting (the account's defaults).
+- [ ] Approving the order places it at Instacart with nothing more to do. Just before placing, the cart, time, delivery, address, card, tip, and total must exactly match what the user approved, and it clicks once. Any failure before that (signed out, the store's minimum not met, something changed, the checkout page changed) orders nothing and tells the user why; a failure after the click with no confirmation marks the order "check Instacart", never "not placed".
+- [ ] Only production places orders; development never orders and doesn't touch the real Instacart cart unless agreed for a test.
 
 ## Placing and status
 
 - [x] Placing an order calls the API, which saves the order and its status in the database.
 - [x] The call to the grocery service is a stub that does nothing and returns success.
 - [x] An order's status is saved and shown; for now it is always "order placed".
-- [ ] The confirmation after placing shows the store order(s) the order is associated with.
+- [ ] The confirmation after placing shows the Instacart order the order is associated with.
 
 ## Calendar and tasks
 
@@ -126,9 +139,9 @@ Personal settings:
 
 ## Deferred
 
-- Placing orders with a real grocery service (with shopping list stage 3).
+- Walmart, and ordering for households other than ours (see stage 3).
+- Setting up the ChatGPT and Instacart connections from the app (after the MVP; until then they're set up with commands).
 - Real delivery status updates.
-- Delivery time windows.
 - Handling gaps between orders (for now, reminders go out every day).
 - The suggestion agent using ratings.
 - Meal icons v2 (generated combinations of icons) and v3 (AI-generated images).
