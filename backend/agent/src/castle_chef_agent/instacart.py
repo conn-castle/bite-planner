@@ -286,8 +286,9 @@ class AppServer:
         message = self.wait_for(lambda m: m.get("id") == request_id, self.timeout_seconds)
         if "error" in message:
             error = message["error"]
-            detail = error.get("message", error) if isinstance(error, dict) else error
-            raise InstacartError(f"{method} failed: {detail}")
+            detail = str(error.get("message", error) if isinstance(error, dict) else error)
+            # Kept short: a failed web request's page can be in it (e.g. a bot check).
+            raise InstacartError(f"{method} failed: {' '.join(detail.split())[:300]}")
         result = message.get("result")
         if not isinstance(result, dict):
             raise InstacartError(

@@ -24,11 +24,9 @@ from castle_chef.settings import get_settings
 
 log = logging.getLogger(__name__)
 
-# Instacart's app in ChatGPT: the plugin to install, from OpenAI's curated
-# marketplace, and the id its app is listed under.
+# Instacart's app in ChatGPT: the plugin to install, from OpenAI's curated marketplace.
 INSTACART_PLUGIN = "plugin_asdk_app_691eab1e001081919e57189f8b2f03bc"
 INSTACART_MARKETPLACE = "openai-curated-remote"
-INSTACART_APP = "691eab1e001081919e57189f8b2f03bc"
 
 # How long the owner has to approve the sign-in and connect Instacart, both steps
 # together: within the worker task's 20-minute cap (docker/Dockerfile).
@@ -92,8 +90,8 @@ def store() -> Iterator[Instacart]:
 def login() -> int:
     """Sign Codex in to the household's ChatGPT account (a device code, if it isn't
     signed in) and connect the Instacart app there (a link the owner opens in that
-    account), printing what the owner does; then check the store's cart. Returns
-    0 once Instacart answers, 1 if a step failed or timed out."""
+    account), printing what the owner does, until the store's cart answers.
+    Returns 0 once it does, 1 if a step failed or timed out."""
     settings = get_settings()
     deadline = time.monotonic() + APPROVAL_TIMEOUT_SECONDS
     try:
@@ -138,11 +136,19 @@ def login() -> int:
                 print(
                     f"Connect {app.name} in the same ChatGPT account: {app.installUrl}", flush=True
                 )
-            while not _instacart_accessible(server):
-                if time.monotonic() > deadline:
-                    raise InstacartError("Instacart wasn't connected in time.")
+            # Connected once Instacart answers: its tools work from AWS, while ChatGPT's
+            # app listing (app/list) is behind a bot check there.
+            store = Instacart(server, settings.instacart_store)
+            while True:
+                try:
+                    cart = store.cart()
+                    break
+                except InstacartError as error:
+                    if time.monotonic() > deadline:
+                        raise InstacartError(
+                            f"Instacart wasn't connected in time: {error}"
+                        ) from error
                 time.sleep(POLL_SECONDS)
-            cart = Instacart(server, settings.instacart_store).cart()
     except InstacartError as error:
         log.error("instacart.connect_failed", extra={"error": str(error)})
         print(error, file=sys.stderr)
@@ -152,16 +158,3 @@ def login() -> int:
         f"Instacart is connected: the {settings.instacart_store} cart has {len(cart.items)} items."
     )
     return 0
-
-
-def _instacart_accessible(server: AppServer) -> bool:
-    """Whether the Instacart app is connected (app/list, every page)."""
-    cursor: str | None = None
-    while True:
-        page = server.request("app/list", {"forceRefetch": True, "cursor": cursor})
-        for app in page.get("data") or []:
-            if INSTACART_APP in app.get("id", ""):
-                return bool(app.get("isAccessible"))
-        cursor = page.get("nextCursor")
-        if not cursor:
-            return False

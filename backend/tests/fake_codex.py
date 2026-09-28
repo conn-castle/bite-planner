@@ -6,7 +6,7 @@ It's configured by `fake.json` in CODEX_HOME (the only setting the client passes
 it besides PATH) and logs each request it gets to `requests.jsonl` there:
 - signed_in: whether ChatGPT is signed in already (default true)
 - login_success: how the device sign-in ends (default true)
-- accessible_after: app/list calls before Instacart shows as connected (default 0)
+- accessible_after: tool calls that fail before Instacart is connected (default 0)
 - refuse_cart: answer cart changes with Instacart's recorded refusal (default false)
 - stop_on: a method on which it exits without answering
 - drop_search_items: answer searches without their product lists (a changed reply)
@@ -35,7 +35,7 @@ home = Path(os.environ["CODEX_HOME"])
 config: dict[str, Any] = (
     json.loads((home / "fake.json").read_text()) if (home / "fake.json").exists() else {}
 )
-app_list_calls = 0
+tool_calls = 0
 
 
 def fixture(name: str) -> dict[str, Any]:
@@ -69,7 +69,7 @@ def tool_call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def answer(method: str, params: dict[str, Any]) -> dict[str, Any]:
-    global app_list_calls
+    global tool_calls
     match method:
         case "initialize":
             return {"userAgent": "fake-codex"}
@@ -98,21 +98,14 @@ def answer(method: str, params: dict[str, Any]) -> dict[str, Any]:
                 "authPolicy": "ON_USE",
             }
         case "app/list":
-            app_list_calls += 1
-            accessible = app_list_calls > config.get("accessible_after", 0)
-            if params.get("cursor") is None:
-                # The first page holds another app; Instacart is on the next.
-                return {
-                    "data": [{"id": "app-other", "name": "Other", "isAccessible": True}],
-                    "nextCursor": "2",
-                }
-            return {
-                "data": [{"id": INSTACART_APP, "name": "Instacart", "isAccessible": accessible}],
-                "nextCursor": None,
-            }
+            # From AWS, ChatGPT's app listing is behind a bot check.
+            raise ValueError("failed to list apps: Request failed with status 403 Forbidden")
         case "thread/start":
             return {"thread": {"id": "thread-1"}}
         case "mcpServer/tool/call":
+            tool_calls += 1
+            if tool_calls <= config.get("accessible_after", 0):
+                raise ValueError(f"Unknown tool {params['tool']}")  # not connected yet
             return tool_call(params["tool"], params["arguments"])
     raise ValueError(method)
 

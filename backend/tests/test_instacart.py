@@ -156,8 +156,8 @@ def test_connecting_signs_in_then_connects_instacart_and_waits_for_it(codex_home
         "Instacart is connected: the Wegmans cart has 0 items.",
     ]
     methods = [r.get("method") for r in requests(codex_home)]
-    # Waits for the owner: app/list until Instacart shows as connected.
-    assert methods.count("app/list") >= 3
+    # Waits for the owner: reads the cart until Instacart answers.
+    assert methods.count("mcpServer/tool/call") == 3
     assert methods.index("plugin/install") > methods.index("account/login/start")
 
 
@@ -215,7 +215,7 @@ def test_connecting_gives_up_when_instacart_isnt_connected_in_time(
     monkeypatch.setattr(instacart, "APPROVAL_TIMEOUT_SECONDS", 0)
     result = CliRunner().invoke(app, ["agent-login", "codex"])
     assert result.exit_code == 1
-    assert "Instacart wasn't connected in time." in result.stderr
+    assert "Instacart wasn't connected in time: " in result.stderr
 
 
 def test_an_unknown_login_provider_is_a_usage_error() -> None:
