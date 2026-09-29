@@ -206,6 +206,8 @@ export type Delivered =
   | { kind: 'reminder'; orderNumber: number }
   | { kind: 'ideas_ready'; orderId: string }
   | { kind: 'list_ready'; orderId: string }
+  // Shopping the list failed: its step says why and offers Try again.
+  | { kind: 'list_failed'; orderId: string }
   | { kind: 'test' }
 
 export function parseDelivered(data: unknown): Delivered | null {
@@ -213,7 +215,10 @@ export function parseDelivered(data: unknown): Delivered | null {
   if (data.kind === 'reminder' && typeof data.order_number === 'number') {
     return { kind: 'reminder', orderNumber: data.order_number }
   }
-  if ((data.kind === 'ideas_ready' || data.kind === 'list_ready') && typeof data.order_id === 'string') {
+  if (
+    (data.kind === 'ideas_ready' || data.kind === 'list_ready' || data.kind === 'list_failed') &&
+    typeof data.order_id === 'string'
+  ) {
     return { kind: data.kind, orderId: data.order_id }
   }
   if (data.kind === 'test') return { kind: 'test' }
@@ -255,11 +260,10 @@ export function tapResult(
         }
       : { open: false, header: `Order ${number} isn't open`, message: "Home shows what's next." }
   }
-  const what = tapped.kind === 'list_ready' ? 'shopping list' : 'meal ideas'
+  const aboutList = tapped.kind === 'list_ready' || tapped.kind === 'list_failed'
+  const what = aboutList ? 'shopping list' : 'meal ideas'
   if (next.draft?.id === tapped.orderId) {
-    return tapped.kind === 'list_ready'
-      ? { open: true, orderId: tapped.orderId, step: 'list' }
-      : { open: true, orderId: tapped.orderId }
+    return aboutList ? { open: true, orderId: tapped.orderId, step: 'list' } : { open: true, orderId: tapped.orderId }
   }
   if (tappedOrder === 'discarded') {
     return {
@@ -397,7 +401,9 @@ function received(notification: PushNotificationSchema, queryClient: QueryClient
   logger.info('push.received', { kind: delivered?.kind ?? null })
   // Whatever it's about, Home may be showing something older.
   void queryClient.invalidateQueries({ queryKey: queryKeys.nextOrder })
-  if ((delivered?.kind === 'ideas_ready' || delivered?.kind === 'list_ready') && !orderFlowOpen) {
+  const aboutAnOrder =
+    delivered?.kind === 'ideas_ready' || delivered?.kind === 'list_ready' || delivered?.kind === 'list_failed'
+  if (delivered && aboutAnOrder && !orderFlowOpen) {
     toast.set({
       id: ++toastCount,
       title: notification.title ?? '',

@@ -48,8 +48,6 @@ export function WeekPage() {
   const today = localDate(useNow(DAY_CHECK_MS))
   const queryClient = useQueryClient()
   const shownDay = useRef(today)
-  const page = useRef<HTMLElement>(null)
-  const [presentingElement, setPresentingElement] = useState<HTMLElement>()
   const [flowOpen, setFlowOpen] = useState(false)
   // While Home shows, the next order is checked every 30 seconds: someone else
   // may start ordering, stop, or place it.
@@ -85,7 +83,6 @@ export function WeekPage() {
   // Where a notification's flow opens: its shopping list, for "list ready".
   const [flowStartAt, setFlowStartAt] = useState<'list'>()
   function openFlow(orderId?: string, startAt?: 'list') {
-    setPresentingElement(page.current ?? undefined)
     setFlowOrderId(orderId)
     setFlowStartAt(startAt)
     setFlowOpen(true)
@@ -175,7 +172,6 @@ export function WeekPage() {
           <Icon name="plus" />
         </IconButton>
       }
-      pageRef={page}
       onRefresh={() => Promise.all([next.refetch(), placed.refetch()])}
     >
       {failed?.error && (
@@ -217,7 +213,6 @@ export function WeekPage() {
       <OrderFlowModal
         isOpen={flowOpen}
         onDismiss={() => setFlowOpen(false)}
-        presentingElement={presentingElement}
         orderId={flowOrderId}
         startAt={flowStartAt}
       />

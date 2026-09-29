@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from castle_chef.db import get_session
 from castle_chef.dispatch import JOB_ID_ENV, JobMessage
-from castle_chef.jobs import fail_job
+from castle_chef.jobs import fail_job, fail_shops_of
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,11 @@ def _task_stopped(detail: dict[str, Any]) -> None:
     error = f"The worker stopped unexpectedly ({reason}; exit code {exit_code})."
     with get_session() as session:
         changed = fail_job(session, job_id, error)
-    log.error("job.worker_stopped", extra=fields | {"marked_failed": changed})
+        # A list's shopping runs in its build's task, right after it.
+        shops = fail_shops_of(session, job_id, error)
+    log.error(
+        "job.worker_stopped", extra=fields | {"marked_failed": changed, "shops_failed": shops}
+    )
 
 
 def _job_id(detail: dict[str, Any]) -> UUID | None:

@@ -1,15 +1,7 @@
-/* The create-order card (spec/mockup.html: .grab, .sh-top, .dots, .sh-body, .sh-foot). */
+/* The create-order flow, full-screen (spec/mockup.html: .sh-top, .dots, .sh-body, .sh-foot; its card and .grab are a review decision away). */
 
 .header {
   background: var(--cc-bg);
-}
-
-.grab {
-  width: 36px;
-  height: 5px;
-  margin: 7px auto 0;
-  border-radius: 3px;
-  background: var(--cc-fill-strong);
 }
 
 .header ion-toolbar {

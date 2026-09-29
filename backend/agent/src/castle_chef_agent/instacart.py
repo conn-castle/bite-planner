@@ -15,6 +15,7 @@ import selectors
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -106,6 +107,20 @@ class Product(BaseModel):
             image_url=product.image_url,
             bought_before=any(badge.label == BOUGHT_BEFORE_BADGE for badge in product.badges or []),
         )
+
+
+def describe(product: Product) -> str:
+    """One line: id, name, size, price, and whether it was bought before."""
+    parts = [
+        product.name,
+        product.size,
+        f"${product.price_cents / 100:.2f}" if product.price_cents is not None else "no price",
+        f"${product.price_per_lb_cents / 100:.2f}/lb, about {product.estimated_lb:g} lb"
+        if product.price_per_lb_cents is not None and product.estimated_lb is not None
+        else None,
+        "bought before" if product.bought_before else None,
+    ]
+    return f"{product.product_id}: " + " · ".join(filter(None, parts))
 
 
 class CartItem(BaseModel):
@@ -201,6 +216,9 @@ class AppServer:
         self._process: subprocess.Popen[bytes] | None = None
         # What's been read but not yet split into messages (one per line).
         self._buffer = b""
+        # One exchange at a time: callers on several threads (the agent's tool
+        # calls, made at once) would read each other's answers.
+        self._exchange = threading.RLock()
         self._workdir: tempfile.TemporaryDirectory[str] | None = None
 
     def __enter__(self) -> Self:
@@ -280,10 +298,11 @@ class AppServer:
 
     def request(self, method: str, params: Json) -> Json:
         """Send a request and return its result; InstacartError on an error reply."""
-        self._next_id += 1
-        request_id = self._next_id
-        self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
-        message = self.wait_for(lambda m: m.get("id") == request_id, self.timeout_seconds)
+        with self._exchange:
+            self._next_id += 1
+            request_id = self._next_id
+            self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+            message = self.wait_for(lambda m: m.get("id") == request_id, self.timeout_seconds)
         if "error" in message:
             error = message["error"]
             detail = str(error.get("message", error) if isinstance(error, dict) else error)
@@ -339,6 +358,10 @@ class AppServer:
     def call_tool(self, tool: str, arguments: Json) -> Json:
         """Call one of the ChatGPT apps' tools; its result (content, structuredContent,
         _meta). InstacartError if the tool reports an error."""
+        with self._exchange:
+            return self._call_tool(tool, arguments)
+
+    def _call_tool(self, tool: str, arguments: Json) -> Json:
         if self._thread_id is None:
             thread = self.request(
                 "thread/start",

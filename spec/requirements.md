@@ -8,13 +8,13 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 - [x] Anyone in the household can create and place an order.
 - [x] Creating an order walks the user through picking the meals, the delivery date, and the next delivery date.
 - [x] The delivery date defaults to the order's target date (the previous order's next delivery date); the user can change it.
-- [x] The earliest selectable delivery date comes from a function (later: the grocery service's soonest slot); for now it returns tomorrow.
-- [ ] The delivery days and times are the ones Instacart offers (about six days ahead), chosen after the shopping list (stage 3).
+- [x] The earliest selectable delivery date comes from a function; it returns tomorrow.
+- [ ] The delivery is a day and a latest time it should arrive by ("by 6:00 PM"), chosen after the shopping list. Any day from the earliest can be chosen, not only the days Instacart offers yet (it shows about six days ahead); the time starts at the household's delivery time (stage 3).
 - [x] The next delivery date defaults to the delivery date plus one day per meal; the user can change it.
 - [x] The next delivery date becomes the target date of the household's next order.
 - [x] Each order's decide-by date is its target date minus the household's decide-by offset.
 - [x] Delivery dates that overlap or leave a gap with the previous order are allowed.
-- [x] Orders cannot be edited once placed.
+- [x] Orders cannot be edited once placed. From stage 3, placed means booked at Instacart: an approved order waiting to book can still be changed in the app (even though Instacart allows some changes after booking, the app doesn't).
 
 ## Ordering flow
 
@@ -24,9 +24,9 @@ The flow being built toward, one piece at a time:
 2. Pick meals.
 3. Servings: each picked meal's servings (− and + around the number). Leaving this step starts the shopping list: it's made, then shopped at Instacart, in one wait.
 4. The shopping list: the Wegmans products chosen for it, which the user reviews and changes (piece 9). Until piece 9, the list of things to buy, after the dates.
-5. Delivery: the day and the time, from the ones Instacart offers (piece 9). Until piece 9, the delivery date, after servings.
+5. Delivery: the day, and the latest time it should arrive by (piece 9). Until piece 9, the delivery date, after servings.
 6. Next delivery date (which sets the next order's decide-by date).
-7. Final review: the user checks the order and places it; the confirmation shows the Instacart order.
+7. Final review: the user checks the order, with its estimated total, and approves it. It's booked at Instacart right away or, for a day not bookable yet, one day after Instacart first offers it; the confirmation shows the Instacart order.
 
 Each step does one thing.
 
@@ -59,7 +59,7 @@ Each step does one thing.
 ## Order lock
 
 - [x] Only one household member can be creating an order at a time.
-- [x] The lock is held from when order creation starts until it is closed or the order is placed.
+- [x] The lock is held from when order creation starts until it is closed or the order is placed (from stage 3: approved).
 - [x] The open app renews the lock every 30 seconds; the lock expires 2 minutes after the last renewal.
 - [x] While one member has order creation open, other members are told that another household member is ordering.
 
@@ -69,7 +69,7 @@ The list is made in three stages:
 
 1. Python scales each picked meal's ingredients to its servings (deterministic).
 2. An AI agent combines those ingredients into one list of things to buy (e.g. "1 onion" and "1 cup diced onion" become onions), grouped by aisle.
-3. An agent shops that list at Instacart: it chooses the exact product for each item, with alternatives; the user reviews them in the app, picks the delivery time, and approves, and the order is placed without anything more to do.
+3. An agent shops that list at Instacart: it chooses the exact product for each item, with alternatives; the user reviews them in the app, picks the delivery day and latest time, and approves, and the order is booked without anything more to do.
 
 Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-27):
 
@@ -84,21 +84,33 @@ Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-2
 - [x] Every scaled ingredient line ends up in exactly one item to buy or one staple; the agent says which lines each covers, and the list isn't saved until every line is covered.
 - [x] Things counted (lemons, onions) are rounded up to whole ones; amounts in a unit keep up to two decimals (the product is chosen in stage 3).
 - [x] Items are grouped by aisle: produce, meat & seafood, dairy & eggs, frozen, pantry, and other (for what fits none of them).
-- [ ] The list is made and then shopped in one wait after servings; the shopping list step shows the chosen Wegmans products by aisle (picture, name cut off after two lines, size, price, count, an icon for what the household has bought before, and a chevron). The list of things to buy is no longer a step of its own (stage 3).
+- [ ] The list is made and then shopped in one wait after servings; the shopping list step shows the chosen Wegmans products by aisle, as tiles (picture, the item and the product under it, an icon for what the household has bought before, price, how many, and a × to not buy it). The list of things to buy is no longer a step of its own (stage 3).
 - [ ] The agent gets the list (what to buy) and the meals with their scaled ingredients (for reference). For each item it chooses the product that best fits what the meals need, enough to cover the item's amount on the list, breaking ties by what the household has bought before, plus up to eight alternatives, or why there are none.
 - [ ] An item Wegmans doesn't have comes with alternatives to buy and/or why the meal works without it. Such items come first, in a red card; the user skips each or picks an alternative before going on.
-- [ ] Tapping a product shows whether it was bought before and what it's for; the user can change how many, switch to an alternative (up to eight, scrolling), or not buy it.
-- [ ] The delivery step shows the days and times Instacart offers, with their fees. Opening it fills the household's Wegmans cart with the chosen products and reads checkout; the household's own items already in that cart are set aside then and put back when the order is placed or discarded.
-- [ ] The final review shows the total for the chosen time and the account's address, card, tip, and replacement setting (the account's defaults).
-- [ ] Approving the order places it at Instacart with nothing more to do. Just before placing, the cart, time, delivery, address, card, tip, and total must exactly match what the user approved, and it clicks once. Any failure before that (signed out, the store's minimum not met, something changed, the checkout page changed) orders nothing and tells the user why; a failure after the click with no confirmation marks the order "check Instacart", never "not placed".
+- [ ] Tapping a product opens its page: whether it was bought before and what it's for; the user can change how many, switch to an alternative (up to eight), or not buy it.
+- [ ] The delivery step is the day and the latest time ("by 6:00 PM"); it doesn't ask Instacart anything. The time is the store's local time (the delivery address's), shown as that time whatever the phone's own time zone.
+- [ ] The final review fills the household's Wegmans cart with the chosen products and reads checkout for the estimated total: items, fees, tax, and the tip (from settings). Whenever the cart is filled (here, and when booking), the household's own items already in it are set aside first and put back when that's done: read, booked, failed, or interrupted (a run that stops midway puts them back on the next one).
+- [ ] The final review shows the estimated total, the day and latest time, the tip, and the account's address, card, and replacement setting (the account's defaults). Below the store's minimum ($10 at Wegmans), it says so and the order can't be approved.
+- [ ] Approving the order books it at Instacart with nothing more to do. The window (any of Instacart's windows; they're two hours): the latest one that day that ends by the chosen time; if it's full, the one before it, and so on, earlier through the day; if none of those is left, the window the time falls in (for "by 3:00 PM", 2–4 PM), the one window allowed to end after the chosen time. The review says so ("by 3:00 PM, or 2–4 PM if nothing earlier is left"), and the confirmation shows the window booked.
+- [ ] When it books: one day after Instacart first offers the chosen day (Instacart shows about six days ahead, so a Friday delivery first shows on Sunday and books on Monday), from a scheduled job; an order approved later than that books right away. Until then it waits to book.
+- [ ] While it waits to book, the order can be changed: opening it goes through the flow again, and it needs approving again (the total is read again); it doesn't book while it's being changed or until it's approved again.
+- [ ] Choosing the window never needs the user, except when the chosen day has none of those windows left: nothing is ordered, and the user is told and picks another day or time, which books it the same way.
+- [ ] Booking fills the cart again with the approved products and counts, and just before placing it checks that the cart is those products and counts, the address and card are the ones the final review showed, and the tip follows the tip rule, then clicks once. The window and the total are Instacart's at that moment (prices can change between approving and booking); the confirmation shows the total charged. An order is clicked at most once: a retried job, a second approve, or a scheduled run after it never clicks again.
+- [ ] Booking never goes without a product that was approved. If one is no longer available, the household's setting decides: use the first of its alternatives that's available (and tell whoever approved it about the swap), or ask (nothing is ordered, and whoever approved it is told and picks an alternative). With none of its alternatives available, it asks either way.
+- [ ] While it waits to book, the order can be cancelled outright (discarded, like a draft), up to when it books.
+- [ ] A failure before the click (signed out, the store's minimum not met, the address or card changed, the checkout page changed) orders nothing: the order stays approved, marked "Not booked" with why, and Try again books it the same way.
+- [ ] A failure after the click with no confirmation marks the order "check Instacart", never "not placed". The worker first looks for it in Instacart's orders; if it can't tell, the order asks "Was Order 4 placed?" with a link to the household's Instacart orders and "It was placed" / "It wasn't placed". Nothing books it again until that's settled.
 - [ ] Only production places orders; development never orders and doesn't touch the real Instacart cart unless agreed for a test.
 
 ## Placing and status
 
 - [x] Placing an order calls the API, which saves the order and its status in the database.
-- [x] The call to the grocery service is a stub that does nothing and returns success.
-- [x] An order's status is saved and shown; for now it is always "order placed".
-- [ ] The confirmation after placing shows the Instacart order the order is associated with.
+- [x] The call to the grocery service is a stub that does nothing and returns success (until piece 9 part 3, which books at Instacart).
+- [x] An order's status is saved and shown; for now it is always "order placed" (piece 9 part 3 adds waiting to book, not booked, and check Instacart).
+- [ ] After approving, the flow shows a waiting screen while it books ("Booking at Wegmans", about a minute, which can be closed), or, for a day not bookable yet, the day it will book.
+- [ ] The confirmation after booking shows the Instacart order number, the booked window, the total charged, and "Open in Instacart"; so does the order view.
+- [ ] Approving counts as ordering for the rest of the app: reminders stop and the next order starts from it, whether it's booked yet or not. While it waits, what the next order takes from it (its target and decide-by dates, and so its reminders) follows it: approving it again with another next delivery moves them, never starting another order, and cancelling it puts reminders back on its own dates, as if it had never been approved.
+- [ ] An approved order not booked yet is "Waiting to book": the order card's dot track shows it at the Placed dot, not yet checked, until it's booked (then "Order placed"). One that needs a new time says so on its card, and opening it goes to its delivery day and time.
 
 ## Calendar and tasks
 
@@ -110,6 +122,7 @@ Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-2
 - [x] The app sends push notifications to household members.
 - [x] Reminders to order start a set number of days before the decide-by date and go out daily at each member's notification time until the order is placed, including after the decide-by date.
 - [x] Reminders go to every member, including while another member is ordering.
+- [ ] Booking tells whoever approved the order how it went: booked (with the window, and any product swapped for an alternative), needs a new time, needs a product chosen, not booked (and why), or check Instacart. Tapping it opens that order (stage 3).
 
 ## Household
 
@@ -124,6 +137,9 @@ Household settings (shared by all members):
 - [x] Decide-by offset: days before the target date, default 1.
 - [x] Reminder lead: days before the decide-by date that reminders start, default 2.
 - [x] Default servings: the servings each picked meal starts at, default 4.
+- [ ] Delivery time: the latest time deliveries should arrive by, default 6:00 PM; each order's delivery starts at it (stage 3).
+- [ ] Tip: a percentage of the items' total, default 10%, and a maximum tip, default $15: the tip is the percentage, but never more than the maximum (stage 3).
+- [ ] A product gone at booking: use an alternative (default), or ask (stage 3).
 
 Personal settings:
 
@@ -133,7 +149,7 @@ Personal settings:
 
 - [x] History shows every past order and all of its meals, grouped by order.
 - [x] History's meals can be searched by name and filtered, including by rating.
-- [x] Order view: an order's dates, status, meals, and shopping list.
+- [x] Order view: an order's dates, status, meals, and shopping list (from stage 3, its Instacart order too).
 - [x] Meal view: a meal's recipe (servings, ingredients, facts).
 - [ ] Instructions view: a meal's cooking steps.
 
@@ -141,6 +157,7 @@ Personal settings:
 
 - Walmart, and ordering for households other than ours (see stage 3).
 - Setting up the ChatGPT and Instacart connections from the app (after the MVP; until then they're set up with commands).
+- Making shopping faster, once ordering works end to end: find out where its time goes (a 24-item list took 11 minutes with Grok at extra-high reasoning; now high).
 - Real delivery status updates.
 - Handling gaps between orders (for now, reminders go out every day).
 - The suggestion agent using ratings.

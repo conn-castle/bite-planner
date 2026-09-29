@@ -26,8 +26,6 @@ export function FlowFrame({ step, onBack, onClose, title, lede, footer, children
   return (
     <>
       <IonHeader className={styles.header}>
-        {/* The card closes with a swipe down, too. */}
-        <div className={styles.grab} aria-hidden="true" />
         <IonToolbar>
           <div className={styles.bar}>
             {onBack ? (

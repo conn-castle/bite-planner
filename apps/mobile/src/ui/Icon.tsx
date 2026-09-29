@@ -61,6 +61,7 @@ const PATHS = {
     </>
   ),
   undo: <path d="M9 6.5L4.5 11 9 15.5M5 11h9.5a5 5 0 010 10H11" />,
+  repeat: <path d="M4 12a8 8 0 0114-5.3L20 9M20 4v5h-5M20 12a8 8 0 01-14 5.3L4 15M4 20v-5h5" />,
   search: (
     <>
       <circle cx="11" cy="11" r="6.5" />

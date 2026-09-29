@@ -1,4 +1,4 @@
-import type { GroceryOrder, OrderDates } from '../../lib/api/types'
+import type { GroceryOrder, OrderDates, ShoppingItem } from '../../lib/api/types'
 import { isRecord } from '../../lib/isRecord'
 
 /**
@@ -44,26 +44,35 @@ export interface SetNotForUs extends InSession {
   notForUs: boolean
 }
 
-/** A shopping list item taken off the list (or put back), or how much of it to buy. */
+/**
+ * A shopping list item taken off the list (or put back; for a product, not
+ * bought), how much of it to buy, how many of its product, or switched to one of
+ * its alternatives (its product id).
+ */
 export interface SetItem extends InSession {
   orderId: string
   itemId: string
   removed?: boolean
   quantity?: number
+  count?: number
+  alternative?: string
 }
 
 export type OrderEdit = SetMeal | SetServings | SetDates | SetNotForUs | SetItem
 
 const isDate = (value: unknown): value is string | null => value === null || typeof value === 'string'
 
-const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value)
+const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 1
 
 /** Whether a pending mutation's variables are a change to an order (they are stored untyped). */
 export function isOrderEdit(value: unknown): value is OrderEdit {
   if (!isRecord(value) || typeof value.orderId !== 'string' || typeof value.session !== 'string') return false
   if (typeof value.itemId === 'string') {
     const removed = value.removed === undefined || typeof value.removed === 'boolean'
-    return removed && (value.quantity === undefined || typeof value.quantity === 'number')
+    const quantity = value.quantity === undefined || typeof value.quantity === 'number'
+    const count = value.count === undefined || isCount(value.count)
+    const alternative = value.alternative === undefined || typeof value.alternative === 'string'
+    return removed && quantity && count && alternative
   }
   if (typeof value.mealId === 'string') {
     if (typeof value.picked === 'boolean') return value.picked === false || isCount(value.servings)
@@ -84,9 +93,7 @@ export function applyEdits(order: GroceryOrder, edits: readonly OrderEdit[]): Gr
         const list = shown.shopping_list
         if (list === null) return shown
         const items = list.items.map((item) =>
-          item.id === edit.itemId
-            ? { ...item, removed: edit.removed ?? item.removed, quantity: edit.quantity ?? item.quantity }
-            : item,
+          item.id === edit.itemId ? changedItem(item, edit) : item,
         )
         return { ...shown, shopping_list: { ...list, items } }
       }
@@ -119,4 +126,27 @@ export function applyEdits(order: GroceryOrder, edits: readonly OrderEdit[]): Gr
         picks: shown.picks.map((pick) => (pick.meal_id === edit.mealId ? { ...pick, servings: edit.servings } : pick)),
       }
     }, order)
+}
+
+/** An item with one change applied, as the server applies it. */
+function changedItem(item: ShoppingItem, edit: SetItem): ShoppingItem {
+  let changed = { ...item, removed: edit.removed ?? item.removed, quantity: edit.quantity ?? item.quantity }
+  const chosen = item.alternatives.find((alternative) => alternative.product_id === edit.alternative)
+  if (chosen !== undefined) {
+    // Switched: the product it had becomes one of its alternatives.
+    const others = item.alternatives.filter((alternative) => alternative !== chosen)
+    changed = {
+      ...changed,
+      product: chosen,
+      alternatives: item.product === null ? others : [...others, item.product],
+      removed: false,
+      // Found, then: the member picked what the store has instead.
+      not_found: false,
+      skippable_reason: null,
+    }
+  }
+  if (edit.count !== undefined && changed.product !== null) {
+    changed = { ...changed, product: { ...changed.product, count: edit.count } }
+  }
+  return changed
 }

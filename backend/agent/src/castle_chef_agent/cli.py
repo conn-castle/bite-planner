@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from castle_chef_agent import shopping
 from castle_chef_agent.jobfiles import read_context
 from castle_chef_agent.meals import MealInput, MealRefused, MealsJob, meal_problems, save_meal
-from castle_chef_agent.server import Tools, serve
+from castle_chef_agent.server import InstacartSettings, Tools, serve
 from castle_chef_agent.shopping import Aisle
 
 app = typer.Typer(no_args_is_help=True)
@@ -157,6 +157,19 @@ def shopping_list_done(job_dir: JobDirOption) -> None:
 def mcp_serve(
     tools: Annotated[Tools, typer.Argument(help="Which job's tools to offer.")],
     job_dir: JobDirOption,
+    codex_home: Annotated[
+        Path | None, typer.Option(help="The Codex login (products tools).")
+    ] = None,
+    codex_lock_file: Annotated[Path | None, typer.Option(help="Its lock.")] = None,
+    codex_command: Annotated[str, typer.Option(help="How to start Codex.")] = "codex",
+    store: Annotated[str, typer.Option(help="The Instacart store.")] = "Wegmans",
 ) -> None:
     """Serve the job's tools to the agent's harness over MCP (stdio)."""
-    serve(tools, job_dir)
+    instacart = (
+        InstacartSettings(
+            codex_home=codex_home, lock_file=codex_lock_file, command=codex_command, store=store
+        )
+        if codex_home is not None
+        else None
+    )
+    serve(tools, job_dir, instacart)

@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
@@ -24,16 +24,18 @@ from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
 from castle_chef_agent.jobfiles import write_context
 from castle_chef_agent.meals import MealInput, MealsJob, load_meals, meal_problems
+from castle_chef_agent.products import ItemChoice
 from castle_chef_agent.server import Tools
 from pydantic import BaseModel, ValidationError
 from sqlmodel import Session, select
 
-from castle_chef import instacart, push, ratings, shopping
+from castle_chef import instacart, products, push, ratings, shopping
 from castle_chef.db import get_engine, get_session
-from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, finish_job
+from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, create_shop, finish_job
 from castle_chef.meals import add_meals
 from castle_chef.models import GroceryOrder, Job, JobKind, ListSource
-from castle_chef.notifications import ideas_ready, list_ready
+from castle_chef.notifications import ideas_ready, list_failed, list_ready
+from castle_chef.products import InvalidProducts
 from castle_chef.settings import REPO_ROOT, get_settings
 from castle_chef.shopping import InvalidList, ListEntry
 
@@ -58,7 +60,7 @@ GROK_ARGS = [
 # config: the agent's only tools (it gets no shell).
 MCP_TOML = Template("""[mcp_servers.castle-chef]
 command = "castle-chef"
-args = ["mcp", "$tools", "--job-dir", $job_dir]
+args = $args
 """)
 
 
@@ -94,7 +96,16 @@ class ListItems:
     source: ListSource
 
 
-type JobResult = Meals | ListItems
+@dataclass(frozen=True)
+class Products:
+    """A shop job's result: each numbered item's product and alternatives, for a build's list."""
+
+    build_id: UUID
+    items: dict[int, UUID]
+    choices: dict[int, ItemChoice]
+
+
+type JobResult = Meals | ListItems | Products
 
 
 def run_job(job_id: UUID) -> None:
@@ -122,19 +133,22 @@ def run_job(job_id: UUID) -> None:
     except JobDiscarded:
         log.info("job.discarded", extra=fields)
         return
-    except (AgentRunError, ValidationError, InvalidList) as error:
+    except (AgentRunError, ValidationError, InvalidList, InvalidProducts) as error:
         log.error("job.failed", extra=fields | {"error": str(error)})
         _finish(job_id, error=str(error))
+        _notify_failed(job)
         return
     except Exception as error:
         log.exception("job.crashed", extra=fields)
         _finish(job_id, error=f"Unexpected worker error: {error!r}")
+        _notify_failed(job)
         return
     counts = (
         {"meal_count": len(result.meals)}
         if isinstance(result, Meals)
         else {"item_count": len(result.items)}
     )
+    shop_id: UUID | None = None
     try:
         with get_session() as session:
             # Locking the job keeps its draft from being discarded mid-save; a job
@@ -147,8 +161,22 @@ def run_job(job_id: UUID) -> None:
             # by a newer list, meanwhile).
             if isinstance(result, Meals):
                 add_meals(session, job_id, result.meals)
+            elif isinstance(result, Products):
+                newest = shopping.newest_build(session, job.grocery_order_id)
+                if (
+                    newest is None
+                    or newest.id != result.build_id
+                    or not shopping.is_current(session, job.grocery_order_id, newest)
+                ):
+                    # Its list was replaced (the picks changed) while it shopped.
+                    finish_job(session, job_id, error=SUPERSEDED_ERROR)
+                    log.info("job.superseded", extra=fields | counts)
+                    return
+                products.save_choices(session, result.items, result.choices)
             else:
                 shopping.add_items(session, job_id, result.items, result.source)
+                # The list is shopped next, in this task (one wait for the member).
+                shop_id = create_shop(session, job, uuid4(), job.requested_by).id
             if not finish_job(session, job_id):
                 job = session.get(Job, job_id)
                 if job is not None and job.error == SUPERSEDED_ERROR:
@@ -164,6 +192,9 @@ def run_job(job_id: UUID) -> None:
         _finish(job_id, error=f"Could not save the result: {error!r}")
         return
     log.info("job.succeeded", extra=fields | counts)
+    if shop_id is not None:
+        run_job(shop_id)
+        return
     _notify_requester(job_id)
 
 
@@ -179,18 +210,42 @@ def _notify_requester(job_id: UUID) -> None:
             if job.kind == JobKind.GENERATE_MEALS:
                 notification = ideas_ready(session, job)
             else:
+                # A list is ready once it's shopped, while it's still for the picks.
+                build = session.get(Job, job.build_id) if job.kind == JobKind.SHOP else None
                 newest = shopping.newest_build(session, job.grocery_order_id)
-                if newest is None or newest.id != job.id:
+                if (
+                    build is None
+                    or newest is None
+                    or newest.id != build.id
+                    or not shopping.is_current(session, job.grocery_order_id, newest)
+                ):
                     log.info("job.notify_skipped", extra={"job_id": str(job_id)})
                     return
-                if not shopping.is_current(session, job.grocery_order_id, newest):
-                    log.info("job.notify_skipped", extra={"job_id": str(job_id)})
-                    return
-                notification = list_ready(session, job)
+                notification = list_ready(session, build)
             requester = job.requested_by
         push.notify(requester, notification)
     except Exception:
         log.exception("job.notify_failed", extra={"job_id": str(job_id)})
+
+
+def _notify_failed(job: Job) -> None:
+    """ "Couldn't shop your list", to whoever is waiting for it, while it's still the
+    list for the order's picks (a failed batch or build shows in the app). A
+    failure here is logged as an error."""
+    if job.kind != JobKind.SHOP or job.build_id is None:
+        return
+    try:
+        with get_session() as session:
+            build = session.get(Job, job.build_id)
+            newest = shopping.newest_build(session, job.grocery_order_id)
+            if build is None or newest is None or newest.id != build.id:
+                return
+            if not shopping.is_current(session, job.grocery_order_id, newest):
+                return
+            notification = list_failed(session, build)
+        push.notify(job.requested_by, notification)
+    except Exception:
+        log.exception("job.notify_failed", extra={"job_id": str(job.id)})
 
 
 def _finish(job_id: UUID, error: str) -> None:
@@ -260,7 +315,32 @@ def current_release() -> dict[str, str]:
 
 
 def process_job(job: Job) -> JobResult:
-    job_dir = get_settings().jobs_dir / str(job.id)
+    settings = get_settings()
+    job_dir = settings.jobs_dir / str(job.id)
+    if job.kind == JobKind.SHOP:
+        if settings.codex_home is None:
+            raise AgentRunError(
+                "No Codex login here (CASTLE_CHEF_CODEX_HOME): can't reach Instacart."
+            )
+        with get_session() as session:
+            build = session.get(Job, job.build_id) if job.build_id else None
+            if build is None:
+                raise JobDiscarded
+            context = products.shop_context(session, build, settings.instacart_store)
+        lock = settings.codex_lock_file
+        instacart_args = [
+            "--codex-home", str(settings.codex_home),
+            *(["--codex-lock-file", str(lock)] if lock else []),
+            "--codex-command", settings.codex_command,
+            "--store", settings.instacart_store,
+        ]  # fmt: skip
+        run_agent(job_dir, context.prompt, Tools.PRODUCTS, context.job, instacart_args)
+        # Checked against the items as the worker numbered them.
+        return Products(
+            build_id=build.id,
+            items=context.items,
+            choices=products.finished_choices(job_dir, context.job),
+        )
     if job.kind == JobKind.BUILD_LIST:
         if job.list_source is None:
             raise AgentRunError(f"List job {job.id} has no picks to build from.")
@@ -394,9 +474,11 @@ def agent_lock(**fields: str) -> Iterator[None]:
         yield
 
 
-def run_agent(job_dir: Path, prompt: str, tools: Tools, context: BaseModel) -> None:
-    """Run the agent on the prompt in a new job directory, with the job's tools and
-    the context they check against."""
+def run_agent(
+    job_dir: Path, prompt: str, tools: Tools, context: BaseModel, tool_args: list[str] | None = None
+) -> None:
+    """Run the agent on the prompt in a new job directory, with the job's tools (and
+    their server's extra arguments) and the context they check against."""
     settings = get_settings()
     agent_command = required_agent_command()
     job_dir.mkdir(parents=True)
@@ -405,7 +487,9 @@ def run_agent(job_dir: Path, prompt: str, tools: Tools, context: BaseModel) -> N
     write_context(job_dir, context)
     (job_dir / ".grok").mkdir()
     (job_dir / ".grok" / "config.toml").write_text(
-        MCP_TOML.substitute(tools=tools.value, job_dir=json.dumps(str(job_dir)))
+        MCP_TOML.substitute(
+            args=json.dumps(["mcp", tools.value, "--job-dir", str(job_dir), *(tool_args or [])])
+        )
     )
     venv_bin = Path(sys.executable).parent
     project = prepare_agent_project()

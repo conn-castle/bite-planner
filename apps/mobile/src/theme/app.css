@@ -19,9 +19,13 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* No tap flash; pressed states are designed per control. */
+/*
+ * No tap flash; pressed states are designed per control. No double-tap zoom
+ * (quick taps, like a stepper's + twice, zoomed the page in); pinch still zooms.
+ */
 * {
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 ::selection {
@@ -102,15 +106,6 @@ ion-header.header-translucent.cc-scrolled::after {
   height: 12px;
   pointer-events: none;
   background: linear-gradient(to bottom, rgba(20, 19, 17, 0.045), transparent);
-}
-
-/* Pushed pages: the toolbar title appears once the page's own heading scrolls away. */
-ion-header ion-title.cc-reveal {
-  transition: opacity 220ms var(--cc-ease);
-}
-
-ion-header:not(.cc-scrolled) ion-title.cc-reveal {
-  opacity: 0;
 }
 
 ion-header ion-title {
@@ -206,6 +201,14 @@ ion-modal.sheet-auto-height .ion-page {
   position: relative;
   display: block;
   contain: none;
+}
+
+/* The order flow: full-screen at every size (a review decision), not Ionic's
+   centered 600px dialog on wide screens. */
+ion-modal.cc-full-screen {
+  --width: 100%;
+  --height: 100%;
+  --border-radius: 0;
 }
 
 ion-modal::part(handle) {

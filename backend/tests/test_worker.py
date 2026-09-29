@@ -598,12 +598,13 @@ def test_a_list_is_built_from_the_picks_scaled_to_their_servings(
     ]
 
 
-def test_whoever_started_the_list_hears_when_it_is_ready(
+def test_whoever_started_the_list_hears_when_it_is_shopped(
     session: Session,
     draft: GroceryOrder,
     job: Job,
     monkeypatch: pytest.MonkeyPatch,
     sender: RecordingSender,
+    codex_home: Path,
 ) -> None:
     phone = with_phone(session, job)
     picked(session, job, 4)
@@ -617,7 +618,7 @@ def test_whoever_started_the_list_hears_when_it_is_ready(
         phone,
         NotificationKind.LIST_READY,
         "Your shopping list is ready",
-        "2 items for Order 1.",  # the salt, a staple, isn't one to buy
+        "2 products for Order 1.",  # the salt, a staple, isn't one to buy
     )
 
 
@@ -686,3 +687,152 @@ def test_a_list_the_agent_did_not_finish_fails_the_job(
         "The list has nothing to buy."
     )
     assert list_items(session, build) == []
+
+
+# Shopping a list (stage 3): right after it's built, in the same run.
+
+
+def shop_of(session: Session, build: Job) -> Job:
+    session.expire_all()
+    [shop] = session.exec(select(Job).where(Job.build_id == build.id)).all()
+    return shop
+
+
+def test_a_built_list_is_shopped_right_after(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    codex_home: Path,
+) -> None:
+    picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=2)
+
+    run_job(build)
+
+    shop = shop_of(session, build)
+    assert (shop.kind, shop.status, shop.requested_by) == (
+        JobKind.SHOP,
+        JobStatus.SUCCEEDED,
+        build.requested_by,
+    )
+    prompt = (tmp_path / "jobs" / str(shop.id) / "fake-agent-prompt.md").read_text()
+    # What to buy first (the items, their amounts, and their meals), then the
+    # meals, for reference.
+    assert "## Shopping list\n\n1. item 0: 2 (Meal 0)\n2. item 1: 2 (Meal 0)\n" in prompt
+    assert "## Meals" in prompt
+    assert "Meal 0, 4 servings: 1.5 lb Italian sausage; 3 bell peppers, sliced; salt" in prompt
+    # Each item to buy gets its product and alternatives; the staple gets none.
+    items = list_items(session, build)
+    assert [(i.name, i.product.product.name if i.product else None) for i in items] == [
+        ("item 0", "Wegmans Onions, Yellow"),
+        ("item 1", "Wegmans Onions, Yellow"),
+        ("salt", None),
+    ]
+    assert [a.product.name for a in items[0].alternatives] == ["Sweet Onions"]
+    assert items[0].product is not None and items[0].product.count == 1
+    assert not any(item.not_found for item in items)
+
+
+def test_shopping_without_an_instacart_connection_fails_but_keeps_the_list(
+    session: Session, draft: GroceryOrder, job: Job, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=2)
+
+    run_job(build)
+
+    assert reload(session, build).status == JobStatus.SUCCEEDED
+    shop = shop_of(session, build)
+    assert shop.status == JobStatus.FAILED
+    assert shop.error is not None and "No Codex login here" in shop.error
+    assert [item.product for item in list_items(session, build)] == [None, None, None]
+
+
+def test_a_superseded_build_isnt_shopped(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    codex_home: Path,
+) -> None:
+    [meal] = picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=1)
+    real_process_job = worker.process_job
+
+    def process_then_change_picks(claimed: Job) -> worker.JobResult:
+        result = real_process_job(claimed)
+        if claimed.kind == JobKind.BUILD_LIST:
+            with Session(get_engine()) as member:
+                pick = member.get_one(GroceryOrderMeal, (draft.id, meal.id))
+                pick.servings = 2
+                member.add(pick)
+                member.commit()
+                start_list(member, draft)
+        return result
+
+    monkeypatch.setattr(worker, "process_job", process_then_change_picks)
+
+    run_job(build)
+
+    session.expire_all()
+    assert session.exec(select(Job).where(Job.build_id == build.id)).all() == []
+
+
+def test_shopping_a_list_replaced_meanwhile_saves_nothing(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    codex_home: Path,
+) -> None:
+    [meal] = picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=1)
+    real_process_job = worker.process_job
+
+    def shop_then_change_picks(claimed: Job) -> worker.JobResult:
+        result = real_process_job(claimed)
+        if claimed.kind == JobKind.SHOP:  # the member changes servings while it shops
+            with Session(get_engine()) as member:
+                pick = member.get_one(GroceryOrderMeal, (draft.id, meal.id))
+                pick.servings = 2
+                member.add(pick)
+                member.commit()
+                start_list(member, draft)
+        return result
+
+    monkeypatch.setattr(worker, "process_job", shop_then_change_picks)
+
+    run_job(build)
+
+    shop = shop_of(session, build)
+    assert (shop.status, shop.error) == (JobStatus.FAILED, SUPERSEDED_ERROR)
+    assert [item.product for item in list_items(session, build)] == [None, None]
+
+
+def test_whoever_is_waiting_hears_when_shopping_fails(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    sender: RecordingSender,
+) -> None:
+    phone = with_phone(session, job)
+    picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=2)
+
+    run_job(build)  # no Instacart connection here: shopping fails
+
+    [(token, notification)] = sender.sent
+    assert (token, notification.kind, notification.title, notification.body) == (
+        phone,
+        NotificationKind.LIST_FAILED,
+        "Couldn't shop your list",
+        "Shopping Order 1's list at Wegmans stopped. Open it to try again.",
+    )

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import type { GroceryOrder, ShoppingItem } from '../../lib/api/types'
-import { formatDate } from '../../lib/dates'
 import { haptics } from '../../lib/haptics'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
@@ -9,58 +8,71 @@ import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 import { InfoDialog } from '../../ui/InfoDialog'
 import { Notice } from '../../ui/Notice'
+import { RetryNotice } from '../../ui/RetryNotice'
+import { logger } from '../../lib/log'
 import { ShoppingList } from '../../ui/ShoppingList'
 import { Stats } from '../../ui/Stats'
-import { Stepper } from '../../ui/Stepper'
 import { useNotifiedOfJob } from '../notifications/notifications'
 import { pickedMeals } from './batches'
-import { shownDeliveryDate } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { elapsed, plural } from './format'
-import { forMeals, itemAmount, listCounts, listState, quantityStep, splitList } from './list'
+import { forMeals, type ListState, listState, productTotals, splitList, totalShown, undecided } from './list'
 import styles from './ListStep.module.css'
 import { useOrderSession } from './lock'
-import { useEditsPending, useSetItem, useStartList } from './orders'
+import { useEditsPending, useSetItem, useSetItemError, useShopList, useStartList } from './orders'
+import { MAX_COUNT } from './ProductPage'
 import { stepIndex } from './steps'
-
-// The most of an item the stepper goes to.
-const MAX_QUANTITY = 99
 
 interface ListStepProps {
   order: GroceryOrder
+  /** Opens an item's product (or, for one the store doesn't have, its alternatives) as a page. */
+  onOpenProduct: (itemId: string) => void
   onBack: () => void
   onNext: () => void
   onClose: () => void
 }
 
 /**
- * The shopping list: waiting while it's made (it starts as the member leaves
- * Servings; here it starts if it hasn't), then every item to buy, by aisle,
- * each of which can be taken off or changed. Items assumed on hand are behind
- * a button.
+ * The shopping list: waiting while it's made and shopped at the store (it starts
+ * as the member leaves Servings; here it starts if it hasn't), then every item's
+ * product, by aisle, each of which can be changed; the items the store doesn't
+ * have come first, to decide on. Items assumed on hand are behind a button.
  */
-export function ListStep({ order, onBack, onNext, onClose }: ListStepProps) {
+export function ListStep({ order, onOpenProduct, onBack, onNext, onClose }: ListStepProps) {
   const session = useOrderSession()
   const startList = useStartList()
+  const shopList = useShopList()
   const { mutate: start } = startList
+  const { mutate: shop } = shopList
   const state = listState(order.shopping_list)
 
   // A list not started for these picks (e.g. starting failed offline, or picks
-  // changed elsewhere) starts here, once.
-  const started = useRef(false)
+  // changed elsewhere) starts here, once; and one made but never shopped (e.g.
+  // made before each list was shopped) is shopped, once.
+  const started = useRef<ListState | null>(null)
   useEffect(() => {
-    if (state !== 'start' || started.current) return
-    started.current = true
-    start({ orderId: order.id, jobId: crypto.randomUUID(), session })
-  }, [state, start, order.id, session])
+    if ((state !== 'start' && state !== 'shopStart') || started.current === state) return
+    started.current = state
+    const request = { orderId: order.id, jobId: crypto.randomUUID(), session }
+    if (state === 'start') start(request)
+    else shop(request)
+  }, [state, start, shop, order.id, session])
 
-  if (state === 'ready') return <ListReview order={order} onBack={onBack} onNext={onNext} onClose={onClose} />
+  if (state === 'ready') {
+    return <ListReview order={order} onOpenProduct={onOpenProduct} onBack={onBack} onNext={onNext} onClose={onClose} />
+  }
+  const failed = startList.isError ? startList.error.message : shopList.isError ? shopList.error.message : null
   return (
     <ListWait
       order={order}
       state={state}
-      onRetry={() => start({ orderId: order.id, jobId: crypto.randomUUID(), session })}
-      startFailed={startList.isError ? startList.error.message : null}
+      onRetry={() =>
+        state === 'shopFailed' || state === 'shopStart'
+          ? shop({ orderId: order.id, jobId: crypto.randomUUID(), session })
+          : start({ orderId: order.id, jobId: crypto.randomUUID(), session })
+      }
+      retrying={startList.isPending || shopList.isPending}
+      startFailed={failed}
       onBack={onBack}
       onClose={onClose}
     />
@@ -69,20 +81,38 @@ export function ListStep({ order, onBack, onNext, onClose }: ListStepProps) {
 
 interface ListWaitProps {
   order: GroceryOrder
-  state: 'start' | 'building' | 'failed'
+  state: Exclude<ListState, 'ready'>
   onRetry: () => void
+  retrying: boolean
   startFailed: string | null
   onBack: () => void
   onClose: () => void
 }
 
-/** While the list is made, or why it wasn't. */
-function ListWait({ order, state, onRetry, startFailed, onBack, onClose }: ListWaitProps) {
-  const job = order.shopping_list?.job
+/** While the list is made and shopped, or why it wasn't. */
+function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClose }: ListWaitProps) {
+  const list = order.shopping_list
+  const shopping = state === 'shopStart' || state === 'shopping' || state === 'shopFailed'
+  const job = shopping ? (list?.shop ?? undefined) : list?.job
   const now = useNow(1000)
-  const building = state !== 'failed'
-  const notified = useNotifiedOfJob(state === 'building' && job ? job.requested_by.user_id : null)
+  const working = state !== 'failed' && state !== 'shopFailed'
+  const running = state === 'building' || state === 'shopping'
+  const notified = useNotifiedOfJob(running && job ? job.requested_by.user_id : null)
   const meals = pickedMeals(order).length
+  const store = list?.store ?? 'the store'
+
+  // What went wrong is for the logs (the screen says it plainly): once per failed job.
+  const failedJob = state === 'failed' || state === 'shopFailed' ? job : undefined
+  const failedId = failedJob?.id
+  const failedError = failedJob?.error ?? null
+  useEffect(() => {
+    if (failedId === undefined) return
+    logger.error(shopping ? 'orders.shopping_failed' : 'orders.list_failed', {
+      orderId: order.id,
+      jobId: failedId,
+      error: failedError,
+    })
+  }, [failedId, failedError, shopping, order.id])
 
   return (
     <FlowFrame
@@ -114,20 +144,30 @@ function ListWait({ order, state, onRetry, startFailed, onBack, onClose }: ListW
     >
       <AgentWork
         art={<MealArt />}
-        title="Making your shopping list"
-        took={building ? (state === 'building' && job ? elapsed(new Date(job.created_at), now) : 'Starting') : null}
-        lede={`Combining what your ${plural(meals, 'meal')} need into one list. This usually takes a minute or two.`}
+        title={shopping ? `Shopping at ${store}` : 'Making your shopping list'}
+        took={working ? (running && job ? elapsed(new Date(job.created_at), now) : 'Starting') : null}
+        lede={
+          shopping
+            ? `Choosing ${store}'s products for your list. This can take several minutes.`
+            : `Combining what your ${plural(meals, 'meal')} need into one list, then shopping it at ${store}. This can take several minutes.`
+        }
       >
-        {state === 'failed' && (
+        {(state === 'failed' || state === 'shopFailed') && (
           <div className={styles.problem}>
-            <Notice action={<button onClick={onRetry}>Try again</button>}>
-              Couldn't make the list: {job?.error ?? 'it failed.'}
-            </Notice>
+            <RetryNotice
+              message={
+                state === 'failed'
+                  ? "We couldn't make your shopping list this time. Your meals and servings are saved."
+                  : `We couldn't finish shopping at ${store} this time. Your list is saved.`
+              }
+              onRetry={onRetry}
+              busy={retrying}
+            />
           </div>
         )}
         {startFailed && (
           <div className={styles.problem}>
-            <Notice action={<button onClick={onRetry}>Try again</button>}>Couldn't start: {startFailed}</Notice>
+            <RetryNotice message={`Couldn't start it: ${startFailed}`} onRetry={onRetry} busy={retrying} />
           </div>
         )}
       </AgentWork>
@@ -137,26 +177,34 @@ function ListWait({ order, state, onRetry, startFailed, onBack, onClose }: ListW
 
 interface ListReviewProps {
   order: GroceryOrder
+  onOpenProduct: (itemId: string) => void
   onBack: () => void
   onNext: () => void
   onClose: () => void
 }
 
-/** The list, ready: take items off (things you have), put them back, or change how much. */
-function ListReview({ order, onBack, onNext, onClose }: ListReviewProps) {
+/**
+ * The list, shopped: each item's product, with how many and a × to not buy it
+ * (tap it for its page: its alternatives and details); the items the store
+ * doesn't have come first, and each needs an alternative or skipping before going on.
+ */
+function ListReview({ order, onOpenProduct, onBack, onNext, onClose }: ListReviewProps) {
   const session = useOrderSession()
   const setItem = useSetItem()
+  const setItemError = useSetItemError()
   const saving = useEditsPending()
   const [showOnHand, setShowOnHand] = useState(false)
+  const list = order.shopping_list
+  const store = list?.store ?? 'the store'
   const meals = pickedMeals(order)
   const names = new Map(meals.map(({ meal }) => [meal.id, meal.name]))
-  const { toBuy, onHand } = splitList(order.shopping_list?.items ?? [])
-  const { ordered, removed } = listCounts(toBuy)
-  const delivery = shownDeliveryDate(order)
+  const { toBuy, onHand } = splitList(list?.items ?? [])
+  const totals = productTotals(toBuy)
+  const toDecide = undecided(toBuy)
 
-  function change(item: ShoppingItem, change: { removed?: boolean; quantity?: number }) {
+  function change(item: ShoppingItem, edit: { removed?: boolean; count?: number; alternative?: string }) {
     haptics.tap()
-    setItem.mutate({ orderId: order.id, itemId: item.id, session, ...change })
+    setItem.mutate({ orderId: order.id, itemId: item.id, session, ...edit })
   }
 
   return (
@@ -165,29 +213,33 @@ function ListReview({ order, onBack, onNext, onClose }: ListReviewProps) {
       onBack={onBack}
       onClose={onClose}
       title="Shopping list"
-      lede={`Built from your ${plural(meals.length, 'meal')}. Remove anything you already have.`}
+      lede={`${store} products for your ${plural(meals.length, 'meal')}. Tap one for its alternatives.`}
       footer={
         <>
           <FooterSummary
-            title={`${plural(ordered, 'item')} · ${plural(meals.length, 'meal')}`}
-            detail={delivery ? `Arrives ${formatDate(delivery, 'medium')}` : ''}
+            title={`${plural(totals.count, 'product')} · ${totalShown(totals)}`}
+            detail={
+              toDecide.length > 0
+                ? `Decide on ${toDecide.map((item) => item.name).join(', ')} first`
+                : 'Before fees and tip'
+            }
           />
-          <Button large onClick={onNext} disabled={saving || ordered === 0}>
+          <Button large onClick={onNext} disabled={saving || toDecide.length > 0 || totals.count === 0}>
             Next
           </Button>
         </>
       }
     >
-      {setItem.isError && (
+      {setItemError && (
         <div className={styles.problem}>
-          <Notice>Couldn't save that: {setItem.error.message}</Notice>
+          <Notice>Couldn't save that: {setItemError.message}</Notice>
         </div>
       )}
       <Stats
         stats={[
-          { value: ordered, label: 'to order' },
-          { value: removed, label: 'removed' },
-          { value: delivery ? formatDate(delivery, 'short') : '–', label: 'delivery' },
+          { value: totals.count, label: totals.count === 1 ? 'product' : 'products' },
+          { value: totalShown(totals), label: totals.unpriced > 0 ? `before fees; ${totals.unpriced} unpriced` : 'before fees' },
+          { value: toDecide.length, label: 'to decide' },
         ]}
       />
       {onHand.length > 0 && (
@@ -212,25 +264,16 @@ function ListReview({ order, onBack, onNext, onClose }: ListReviewProps) {
       )}
       <ShoppingList
         items={toBuy}
-        amount={itemAmount}
-        forMeals={(item) => forMeals(item, names)}
-        edit={{
-          onRemove: (item, removed) => change(item, { removed }),
-          onReset: (item) => item.recipe_quantity !== null && change(item, { quantity: item.recipe_quantity }),
-          amountControl: (item, disabled) =>
-            item.quantity !== null && (
-              <Stepper
-                inRow
-                value={item.quantity}
-                min={quantityStep(item)}
-                max={MAX_QUANTITY}
-                step={quantityStep(item)}
-                disabled={disabled}
-                format={(value) => itemAmount({ quantity: value, unit: item.unit })}
-                label={`How much ${item.name}`}
-                onChange={(quantity) => change(item, { quantity })}
-              />
-            ),
+        amount={() => ''}
+        forMeals={(item) => forMeals(item, names).replace(/^for /, '')}
+        shop={{
+          onOpen: (item) => onOpenProduct(item.id),
+          edit: {
+            onCount: (item, count) => change(item, { count }),
+            onRemove: (item, removed) => change(item, { removed }),
+            maxCount: MAX_COUNT,
+          },
+          missing: { store, onSkip: (item) => change(item, { removed: true }) },
         }}
       />
     </FlowFrame>

@@ -9,7 +9,7 @@ from uuid import UUID
 
 import typer
 from castle_chef_agent.cli import mcp_serve, meal_app, shopping_list_app
-from castle_chef_agent.instacart import InstacartError, Product
+from castle_chef_agent.instacart import InstacartError, Product, describe
 from sqlmodel import Session
 
 from castle_chef import household, instacart, push, worker
@@ -157,18 +157,7 @@ def household_notify_test(email: str) -> None:
 
 
 def _product_line(product: Product, quantity: float | None = None) -> str:
-    price = f"${product.price_cents / 100:.2f}" if product.price_cents is not None else "no price"
-    parts = [
-        f"{quantity:g} x" if quantity is not None else None,
-        product.name,
-        product.size,
-        price,
-        f"${product.price_per_lb_cents / 100:.2f}/lb, about {product.estimated_lb:g} lb"
-        if product.price_per_lb_cents is not None and product.estimated_lb is not None
-        else None,
-        "bought before" if product.bought_before else None,
-    ]
-    return f"  {product.product_id}: " + " · ".join(filter(None, parts))
+    return f"  {f'{quantity:g} x ' if quantity is not None else ''}{describe(product)}"
 
 
 @instacart_app.command("search")

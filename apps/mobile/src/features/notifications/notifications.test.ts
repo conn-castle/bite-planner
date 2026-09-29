@@ -332,6 +332,15 @@ describe('what a tap leads to', () => {
     })
   })
 
+  it('opens "couldn\'t shop your list" at the shopping list too, where it can be tried again', () => {
+    expect(push.parseDelivered({ kind: 'list_failed', order_id: 'd' })).toEqual({ kind: 'list_failed', orderId: 'd' })
+    expect(push.tapResult({ kind: 'list_failed', orderId: 'd' }, next(4, draft('d', 4)), null)).toEqual({
+      open: true,
+      orderId: 'd',
+      step: 'list',
+    })
+  })
+
   it('reads "list ready" from a notification', () => {
     expect(push.parseDelivered({ kind: 'list_ready', order_id: 'd' })).toEqual({ kind: 'list_ready', orderId: 'd' })
     expect(push.parseDelivered({ kind: 'list_ready' })).toBeNull()

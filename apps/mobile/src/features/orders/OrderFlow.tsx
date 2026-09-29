@@ -27,6 +27,7 @@ import { closeFlowSession, nextQuery, useNextOrder, useOpenOrder, useOrder, useS
 import { NextDeliveryStep } from './NextDeliveryStep'
 import { PickStep } from './PickStep'
 import { PlacedStep } from './PlacedStep'
+import { ProductPage } from './ProductPage'
 import { ReviewStep } from './ReviewStep'
 import { ServingsStep } from './ServingsStep'
 import { WaitStep } from './WaitStep'
@@ -37,8 +38,6 @@ const DAY_CHECK_MS = 60_000
 interface OrderFlowModalProps {
   isOpen: boolean
   onDismiss: () => void
-  /** The page the card modal slides over. */
-  presentingElement: HTMLElement | undefined
   /**
    * Opens this order as it is, rather than the household's draft (made if there's
    * none): a notification's, which must never start a new one.
@@ -49,12 +48,13 @@ interface OrderFlowModalProps {
 }
 
 /**
- * The create-order flow, as a card over the current page. Closing it (Close,
- * or a swipe down) keeps the household's draft to resume later, and lets the
- * rest of the household order. A recipe opens inside the card, on its own
- * navigation stack. Each opening is an ordering session of its own (lock.ts).
+ * The create-order flow, full-screen over the app (a review decision over the
+ * mockup's card: it's a long task, and a swipe mustn't close it). Closing it
+ * (Close) keeps the household's draft to resume later, and lets the rest of the
+ * household order. A recipe or a product opens inside it, on its own navigation
+ * stack. Each opening is an ordering session of its own (lock.ts).
  */
-export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId, startAt }: OrderFlowModalProps) {
+export function OrderFlowModal({ isOpen, onDismiss, orderId, startAt }: OrderFlowModalProps) {
   const queryClient = useQueryClient()
   const modal = useRef<HTMLIonModalElement>(null)
   const nav = useRef<HTMLIonNavElement>(null)
@@ -80,6 +80,7 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId, 
           onShown={(id) => (shownOrder.current = id)}
           onClose={() => void modal.current?.dismiss()}
           onOpenMeal={(mealId, servings) => void openMeal(nav.current, mealId, servings)}
+          onOpenProduct={(id, itemId) => void openProduct(nav.current, session, id, itemId)}
         />
       </OrderSession.Provider>
     ),
@@ -98,7 +99,7 @@ export function OrderFlowModal({ isOpen, onDismiss, presentingElement, orderId, 
   }
 
   return (
-    <IonModal ref={modal} isOpen={isOpen} onDidDismiss={dismissed} presentingElement={presentingElement}>
+    <IonModal ref={modal} className="cc-full-screen" isOpen={isOpen} onDidDismiss={dismissed}>
       <IonNav ref={nav} root={root} />
     </IonModal>
   )
@@ -116,8 +117,21 @@ async function openMeal(nav: HTMLIonNavElement | null, mealId: string, servings:
   }
 }
 
+/** Pushes an item of the shopped list onto the flow's nav (in the flow's ordering session). */
+async function openProduct(nav: HTMLIonNavElement | null, session: string, orderId: string, itemId: string) {
+  if (!nav) return
+  await nav.push(() => (
+    <OrderSession.Provider value={session}>
+      <ProductPage orderId={orderId} itemId={itemId} onDone={() => void nav.pop()} onLeave={() => void nav.popToRoot()} />
+    </OrderSession.Provider>
+  ))
+}
+
 /** Opens a meal's recipe: at a pick's servings, when it's one. */
 type OpenMeal = (mealId: string, servings?: number) => void
+
+/** Opens an item of an order's shopped list. */
+type OpenProduct = (orderId: string, itemId: string) => void
 
 interface OrderFlowProps {
   /** This order, as it is; otherwise the household's draft, made if there's none. */
@@ -129,10 +143,11 @@ interface OrderFlowProps {
   onShown: (orderId: string) => void
   onClose: () => void
   onOpenMeal: OpenMeal
+  onOpenProduct: OpenProduct
 }
 
 /** Opens the household's draft (creating it if needed), or the order given, and shows the step it is at. */
-function OrderFlow({ orderId, startAt, session, onShown, onClose, onOpenMeal }: OrderFlowProps) {
+function OrderFlow({ orderId, startAt, session, onShown, onClose, onOpenMeal, onOpenProduct }: OrderFlowProps) {
   const open = useOpenOrder()
   const { mutate: openOrder } = open
   const reopen = () => openOrder({ jobId: crypto.randomUUID(), session })
@@ -207,7 +222,14 @@ function OrderFlow({ orderId, startAt, session, onShown, onClose, onOpenMeal }: 
         ) : loading ? (
           <FlowLoading onClose={onClose} label="Loading your meal ideas…" />
         ) : (
-          <OrderStep order={order.shown} step={step} setStep={setStep} onClose={onClose} onOpenMeal={onOpenMeal} />
+          <OrderStep
+            order={order.shown}
+            step={step}
+            setStep={setStep}
+            onClose={onClose}
+            onOpenMeal={onOpenMeal}
+            onOpenProduct={onOpenProduct}
+          />
         )}
       </FlowNotice>
     )
@@ -279,11 +301,11 @@ interface OrderStepProps {
   setStep: (step: Step) => void
   onClose: () => void
   onOpenMeal: OpenMeal
+  onOpenProduct: OpenProduct
 }
 
-
 /** The screen for where the order is, each step going on to the next. */
-function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps) {
+function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenProduct }: OrderStepProps) {
   const session = useOrderSession()
   const { mutate: startList } = useStartList()
   if (order.status === 'placed') return <PlacedStep order={order} onClose={onClose} />
@@ -303,14 +325,25 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps
         onNext={() => {
           // The list starts as the member leaves Servings, after the servings are saved.
           startList({ orderId: order.id, jobId: crypto.randomUUID(), session })
-          setStep('delivery')
+          setStep('list')
         }}
         onClose={onClose}
       />
     )
   }
+  if (shown === 'list') {
+    return (
+      <ListStep
+        order={order}
+        onOpenProduct={(itemId) => onOpenProduct(order.id, itemId)}
+        onBack={() => setStep('servings')}
+        onNext={() => setStep('delivery')}
+        onClose={onClose}
+      />
+    )
+  }
   if (shown === 'delivery' || delivery === null) {
-    return <DeliveryStep order={order} onBack={() => setStep('servings')} onNext={() => setStep('next')} onClose={onClose} />
+    return <DeliveryStep order={order} onBack={() => setStep('list')} onNext={() => setStep('next')} onClose={onClose} />
   }
   const next = shownNextDeliveryDate(delivery, order.next_delivery_date, order.picks.length)
   if (shown === 'next') {
@@ -319,13 +352,10 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps
         order={order}
         delivery={delivery}
         onBack={() => setStep('delivery')}
-        onNext={() => setStep('list')}
+        onNext={() => setStep('review')}
         onClose={onClose}
       />
     )
-  }
-  if (shown === 'list') {
-    return <ListStep order={order} onBack={() => setStep('next')} onNext={() => setStep('review')} onClose={onClose} />
   }
   return (
     <ReviewStep
@@ -334,7 +364,7 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal }: OrderStepProps
       next={next}
       onOpenMeal={onOpenMeal}
       onChange={setStep}
-      onBack={() => setStep('list')}
+      onBack={() => setStep('next')}
       onClose={onClose}
     />
   )

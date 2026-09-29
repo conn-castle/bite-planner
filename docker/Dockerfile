@@ -105,9 +105,9 @@ ENV GROK_DISABLE_API_KEY_AUTH=true \
 # The commit is the image's; the release version is set by the deploy (infra/).
 ARG CASTLE_CHEF_COMMIT=unknown
 ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
-# A hard cap above the agent timeout (15 min) plus saving: a hung process can't
-# keep the task (and its bill) running.
-ENTRYPOINT ["timeout", "--kill-after=30s", "1200s", "castle-chef"]
+# A hard cap above two agent runs (15 min each: a list, then its shopping) plus
+# saving: a hung process can't keep the task (and its bill) running.
+ENTRYPOINT ["timeout", "--kill-after=30s", "2400s", "castle-chef"]
 # One job (the task gets CASTLE_CHEF_JOB_ID); `agent-login grok` signs the agent in,
 # and `agent-login codex` connects Instacart (CODEX_HOME on EFS, set by the task).
 CMD ["job", "run"]

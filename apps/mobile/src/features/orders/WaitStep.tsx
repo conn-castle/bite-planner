@@ -1,10 +1,12 @@
+import { useEffect } from 'react'
 import type { GroceryOrder } from '../../lib/api/types'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
-import { Notice } from '../../ui/Notice'
+import { RetryNotice } from '../../ui/RetryNotice'
+import { logger } from '../../lib/log'
 import { RatePrompt } from '../meals/RatePrompt'
 import { useNotifiedOfJob } from '../notifications/notifications'
 import { useSession } from '../session/session'
@@ -36,6 +38,12 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
   // Who started the batch being made (this member, when it was just asked for here).
   const startedBy = batch.status === 'running' ? batch.job.requested_by.user_id : generate.isPending ? userId : null
   const notified = useNotifiedOfJob(running ? startedBy : null)
+  // What went wrong is for the logs (the screen says it plainly): once per failed batch.
+  const failedId = batch.status === 'failed' ? batch.job.id : undefined
+  const failedError = batch.status === 'failed' ? batch.job.error : null
+  useEffect(() => {
+    if (failedId !== undefined) logger.error('orders.batch_failed', { orderId: order.id, jobId: failedId, error: failedError })
+  }, [failedId, failedError, order.id])
 
   return (
     <FlowFrame
@@ -79,9 +87,11 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
         )}
         {!running && batch.status === 'failed' && (
           <div className={styles.problem}>
-            <Notice action={<button onClick={start}>Try again</button>}>
-              Couldn't come up with meals: {batch.job.error ?? 'the batch failed.'}
-            </Notice>
+            <RetryNotice
+              message="We couldn't come up with meal ideas this time."
+              onRetry={start}
+              busy={generate.isPending}
+            />
           </div>
         )}
         {!running && batch.status !== 'failed' && (
@@ -91,7 +101,7 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
         )}
         {generate.isError && (
           <div className={styles.problem}>
-            <Notice>Couldn't start: {generate.error.message}</Notice>
+            <RetryNotice message={`Couldn't start it: ${generate.error.message}`} onRetry={start} busy={generate.isPending} />
           </div>
         )}
       </AgentWork>

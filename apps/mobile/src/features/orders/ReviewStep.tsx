@@ -14,7 +14,7 @@ import { pickedMeals } from './batches'
 import { coveredDays, dayRange } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { plural } from './format'
-import { listCounts } from './list'
+import { listCounts, productTotals, totalShown } from './list'
 import { useOrderSession } from './lock'
 import { useEditsPending, usePlaceOrder } from './orders'
 import styles from './ReviewStep.module.css'
@@ -45,7 +45,10 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onChange, onBack
   const saving = useEditsPending()
   const meals = pickedMeals(order)
   const servings = meals.reduce((total, pick) => total + pick.servings, 0)
-  const counts = listCounts(order.shopping_list?.items ?? [])
+  const items = order.shopping_list?.items ?? []
+  const counts = listCounts(items)
+  const products = productTotals(items)
+  const store = order.shopping_list?.store ?? 'the store'
   const covered = coveredDays(delivery, next)
 
   function placeOrder() {
@@ -65,7 +68,7 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onChange, onBack
       footer={
         <>
           <FooterSummary
-            title={`${plural(counts.ordered, 'item')} · ${plural(meals.length, 'meal')}`}
+            title={`${plural(products.count, 'product')} · ${plural(meals.length, 'meal')}`}
             detail={`Arrives ${formatDate(delivery, 'medium')}`}
           />
           <Button variant="accent" large onClick={placeOrder} disabled={saving || place.isPending}>
@@ -98,7 +101,7 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onChange, onBack
               stats={[
                 { value: meals.length, label: meals.length === 1 ? 'meal' : 'meals' },
                 { value: servings, label: servings === 1 ? 'serving' : 'servings' },
-                { value: counts.ordered, label: counts.ordered === 1 ? 'item' : 'items' },
+                { value: products.count, label: products.count === 1 ? 'product' : 'products' },
               ]}
             />
             {household && (
@@ -133,8 +136,8 @@ export function ReviewStep({ order, delivery, next, onOpenMeal, onChange, onBack
 
         <Group title="Shopping list">
           <Row
-            label={`${plural(counts.ordered, 'item')} to order`}
-            sub={counts.removed > 0 ? `${plural(counts.removed, 'item')} removed` : 'Everything the recipes need'}
+            label={`${plural(products.count, 'product')} at ${store}`}
+            sub={`${totalShown(products)} before fees${counts.removed > 0 ? ` · ${plural(counts.removed, 'item')} not bought` : ''}`}
             chevron
             onClick={() => onChange('list')}
           />

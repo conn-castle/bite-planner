@@ -7,6 +7,7 @@ import { usePressIntent } from '../../lib/usePressIntent'
 import { useNow } from '../../lib/useNow'
 import { MealArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
+import { CornerToggle } from '../../ui/CornerToggle'
 import { Icon } from '../../ui/Icon'
 import { Note } from '../../ui/Note'
 import { Notice } from '../../ui/Notice'
@@ -165,15 +166,12 @@ function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
           {minutes != null && <span className={styles.time}>{formatMinutes(minutes)}</span>}
         </span>
       </button>
-      <button
-        type="button"
-        className={`${styles.dismiss} cc-hit`}
-        onClick={onDismiss}
-        aria-pressed={notForUs}
-        aria-label={notForUs ? `Show meals like ${meal.name} again` : `Don't show meals like ${meal.name}`}
-      >
-        <Icon name={notForUs ? 'undo' : 'x'} />
-      </button>
+      <CornerToggle
+        off={notForUs}
+        offIcon="undo"
+        label={notForUs ? `Show meals like ${meal.name} again` : `Don't show meals like ${meal.name}`}
+        onToggle={onDismiss}
+      />
       <button
         type="button"
         className={styles.add}

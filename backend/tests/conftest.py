@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -102,3 +103,22 @@ def job(session: Session, draft: GroceryOrder) -> Job:
     session.commit()
     session.refresh(pending)
     return pending
+
+
+FAKE_CODEX = Path(__file__).parent / "fake_codex.py"
+
+
+@pytest.fixture
+def codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Instacart through a stand-in `codex app-server` (fake_codex.py) that replays
+    recorded replies; configure it with `fake.json` in the returned directory."""
+    from castle_chef import instacart
+
+    home = tmp_path / "codex"
+    home.mkdir()
+    monkeypatch.setenv("CASTLE_CHEF_CODEX_HOME", str(home))
+    monkeypatch.setenv("CASTLE_CHEF_CODEX_LOCK_FILE", str(home / "codex.lock"))
+    monkeypatch.setenv("CASTLE_CHEF_CODEX_COMMAND", f"{sys.executable} {FAKE_CODEX}")
+    monkeypatch.setattr(instacart, "POLL_SECONDS", 0)
+    get_settings.cache_clear()
+    return home

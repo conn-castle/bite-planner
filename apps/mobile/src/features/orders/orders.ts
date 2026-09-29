@@ -166,6 +166,7 @@ const SET_NOT_FOR_US = ['orders', 'set-not-for-us']
 const PLACE = ['orders', 'place']
 const DISCARD = ['orders', 'discard']
 const START_LIST = ['orders', 'start-list']
+const SHOP_LIST = ['orders', 'shop-list']
 const SET_ITEM = ['orders', 'set-item']
 const TAKE = ['orders', 'take']
 const RELEASE = ['orders', 'release']
@@ -344,12 +345,31 @@ export function registerOrderMutations(queryClient: QueryClient) {
       queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
   })
 
+  queryClient.setMutationDefaults(SHOP_LIST, {
+    // Shops the current list again (after shopping failed); shopping already on
+    // its way for it is kept.
+    mutationFn: async ({ orderId, jobId, session }: StartList): Promise<Job> => {
+      const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/list/shop`, { job_id: jobId }, session)
+      logger.info('orders.shopping_started', { orderId, jobId: job.id, status: job.status })
+      return job
+    },
+    retry,
+    scope: EDITS,
+    onSettled: (_job: Job | undefined, _error: Error | null, { orderId }: StartList) =>
+      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+  })
+
   queryClient.setMutationDefaults(SET_ITEM, {
-    mutationFn: ({ orderId, itemId, removed, quantity, session }: SetItem) =>
+    mutationFn: ({ orderId, itemId, removed, quantity, count, alternative, session }: SetItem) =>
       apiRequest<GroceryOrder>(
         'PATCH',
         `/v1/grocery-orders/${orderId}/list/items/${itemId}`,
-        { ...(removed === undefined ? {} : { removed }), ...(quantity === undefined ? {} : { quantity }) },
+        {
+          ...(removed === undefined ? {} : { removed }),
+          ...(quantity === undefined ? {} : { quantity }),
+          ...(count === undefined ? {} : { count }),
+          ...(alternative === undefined ? {} : { alternative }),
+        },
         session,
       ),
     retry,
@@ -508,9 +528,23 @@ export function useStartList() {
   return useMutation<Job, Error, StartList>({ mutationKey: START_LIST })
 }
 
+/** Shops the order's list again at the store, after shopping failed. */
+export function useShopList() {
+  return useMutation<Job, Error, StartList>({ mutationKey: SHOP_LIST })
+}
+
 /** Takes an item off the list or puts it back, or changes how much of it to buy; it shows at once. */
 export function useSetItem() {
   return useMutation<GroceryOrder, Error, SetItem>({ mutationKey: SET_ITEM })
+}
+
+/**
+ * Why the newest change to a list item failed, or null: from wherever it was
+ * made (the list, or a product's page since left), until the next change.
+ */
+export function useSetItemError(): Error | null {
+  const errors = useMutationState({ filters: { mutationKey: SET_ITEM }, select: (mutation) => mutation.state.error })
+  return errors.at(-1) ?? null
 }
 
 export function usePlaceOrder() {

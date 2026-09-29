@@ -6,7 +6,7 @@ holding items is assembled from recorded parts: fixtures/instacart/README.md).""
 import fcntl
 import json
 import os
-import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -17,20 +17,6 @@ from typer.testing import CliRunner
 from castle_chef import instacart
 from castle_chef.cli import app
 from castle_chef.settings import get_settings
-
-FAKE_CODEX = Path(__file__).parent / "fake_codex.py"
-
-
-@pytest.fixture
-def codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    home = tmp_path / "codex"
-    home.mkdir()
-    monkeypatch.setenv("CASTLE_CHEF_CODEX_HOME", str(home))
-    monkeypatch.setenv("CASTLE_CHEF_CODEX_LOCK_FILE", str(home / "codex.lock"))
-    monkeypatch.setenv("CASTLE_CHEF_CODEX_COMMAND", f"{sys.executable} {FAKE_CODEX}")
-    monkeypatch.setattr(instacart, "POLL_SECONDS", 0)
-    get_settings.cache_clear()
-    return home
 
 
 def configure(home: Path, **config: Any) -> None:
@@ -248,3 +234,12 @@ def test_a_reply_that_isnt_an_object_is_an_error(codex_home: Path) -> None:
     configure(codex_home, non_object_result_for="thread/start")
     with instacart.store() as store, pytest.raises(InstacartError, match="isn't an object"):
         store.cart()
+
+
+def test_searches_made_at_once_each_get_their_own_answer(codex_home: Path) -> None:
+    # The agent's tool calls can come all at once, on several threads.
+    queries = ["yellow onions", "curry leaves"] * 3
+    with instacart.store() as store, ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(store.search, queries))
+    matches = [len(result.matches) for result in results]
+    assert matches == [5, 0] * 3

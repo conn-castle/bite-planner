@@ -12,6 +12,7 @@ from typing import Annotated, Any, Self
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from castle_chef_agent.products import ProductCount
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,11 +39,14 @@ from castle_chef.jobs import (
     STALE_ERROR,
     BatchRunning,
     JobIdTaken,
+    ListNotReady,
     NothingToList,
     fail_job,
     is_stale,
+    shop_of,
     submit_build_list,
     submit_generate_meals,
+    submit_shop,
 )
 from castle_chef.models import (
     DECIDE_BY_OFFSET_DAYS,
@@ -118,6 +122,27 @@ class PlacedMealOut(MealSummaryOut):
     servings: int
 
 
+class ProductOut(BaseModel):
+    """A product at the store, and how many of it: packages, bags, or pieces."""
+
+    product_id: str
+    name: str
+    # As the store labels it: "2 lb", "13.5 fl oz", or "per lb" for weighed items.
+    size: str | None
+    # One's price in cents (estimated for weighed items); null if the store shows none.
+    price_cents: int | None
+    # Weighed items: the price per pound, and a package's estimated weight.
+    price_per_lb_cents: int | None
+    estimated_lb: float | None
+    image_url: str | None
+    bought_before: bool
+    count: int
+
+
+def product_out(chosen: ProductCount) -> ProductOut:
+    return ProductOut(**chosen.product.model_dump(), count=chosen.count)
+
+
 class ShoppingItemOut(BaseModel):
     """An item of an order's shopping list."""
 
@@ -134,7 +159,17 @@ class ShoppingItemOut(BaseModel):
     meal_ids: list[UUID]
     # Assumed on hand (salt, pepper, ...): never ordered; the app shows them only on request.
     on_hand: bool
+    # Taken off the list, or its product not to be bought.
     removed: bool
+    # What's bought for it at the store, once the list is shopped; null for an
+    # item the store doesn't have until the member picks an alternative.
+    product: ProductOut | None
+    # What the member can switch to (up to 8), or why there are none.
+    alternatives: list[ProductOut]
+    no_alternatives_reason: str | None
+    # The store doesn't have it; why the meals work without it, if they do.
+    not_found: bool
+    skippable_reason: str | None
 
 
 class ShoppingListOut(BaseModel):
@@ -144,6 +179,10 @@ class ShoppingListOut(BaseModel):
     job: JobOut
     # Ready for the order's picks and servings now: the newest build succeeded, from them.
     current: bool
+    # Shopping the newest succeeded build's items at the store: its newest shop
+    # job (null until it starts), and the store.
+    shop: JobOut | None
+    store: str
     # The newest succeeded build's items, by aisle; [] until one succeeds.
     items: list[ShoppingItemOut]
 
@@ -371,10 +410,14 @@ class LockIn(BaseModel):
 
 
 class ItemIn(PartialUpdate):
-    """A change to a shopping list item: taken off (or put back), or how much to buy."""
+    """A change to a shopping list item: taken off (or put back; for a product,
+    not bought), how much to buy, how many of its product, or switched to one of
+    its alternatives (its product id)."""
 
     removed: bool | None = None
     quantity: float | None = Field(default=None, gt=0)
+    count: int | None = Field(default=None, ge=1)
+    alternative: str | None = None
 
 
 class ServingsIn(BaseModel):
@@ -528,6 +571,11 @@ def item_out(item: ShoppingListItem) -> ShoppingItemOut:
         meal_ids=item.meal_ids,
         on_hand=item.on_hand,
         removed=item.removed,
+        product=product_out(item.product) if item.product else None,
+        alternatives=[product_out(alternative) for alternative in item.alternatives],
+        no_alternatives_reason=item.no_alternatives_reason,
+        not_found=item.not_found,
+        skippable_reason=item.skippable_reason,
     )
 
 
@@ -542,9 +590,12 @@ def shopping_list_out(
     if newest is None:
         return None
     built = shopping.newest_built(session, order.id)
+    shop = shop_of(session, built.id) if built is not None else None
     return ShoppingListOut(
         job=job_out(newest, [], people, rated),
         current=shopping.is_current(session, order.id, newest),
+        shop=job_out(shop, [], people, rated) if shop is not None else None,
+        store=get_settings().instacart_store,
         items=[]
         if built is None
         else [item_out(item) for item in shopping.items_of(session, built.id)],
@@ -626,6 +677,8 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     orders.ListNotCurrent: status.HTTP_409_CONFLICT,
     orders.ItemNotFound: status.HTTP_404_NOT_FOUND,
     orders.NoAmount: status.HTTP_409_CONFLICT,
+    orders.NoSuchProduct: status.HTTP_409_CONFLICT,
+    ListNotReady: status.HTTP_409_CONFLICT,
     NothingToList: status.HTTP_409_CONFLICT,
     orders.NotForUs: status.HTTP_409_CONFLICT,
     JobIdTaken: status.HTTP_409_CONFLICT,
@@ -1112,6 +1165,37 @@ def create_app() -> FastAPI:
                 ) from error
         return job_out(job, [], names(session, {job.requested_by}), {})
 
+    @api.post("/v1/grocery-orders/{order_id}/list/shop", status_code=status.HTTP_201_CREATED)
+    def shop_list(
+        order_id: UUID,
+        body: JobIn,
+        response: Response,
+        caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        session: Annotated[Session, Depends(db)],
+        dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
+    ) -> JobOut:
+        """Shop the draft's current list again (after shopping failed); shopping
+        already waiting, running, or done for it is returned instead (200)."""
+        draft = orders.lock_draft(session, caller.household_id, order_id, by)
+        newest = shopping.newest_build(session, draft.id)
+        current = newest if shopping.is_current(session, draft.id, newest) else None
+        job, created = submit_shop(
+            session, draft, caller.user_id, body.job_id, current, stale_after()
+        )
+        if not created:
+            response.status_code = status.HTTP_200_OK
+        else:
+            try:
+                dispatcher.dispatch(job.id)
+            except DispatchError as error:
+                log.error("job.dispatch_failed", extra={"job_id": str(job.id), "error": str(error)})
+                fail_job(session, job.id, "Shopping could not be started. Try again.")
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE, "Shopping could not be started. Try again."
+                ) from error
+        return job_out(job, [], names(session, {job.requested_by}), {})
+
     @api.patch("/v1/grocery-orders/{order_id}/list/items/{item_id}")
     def change_list_item(
         order_id: UUID,
@@ -1131,6 +1215,8 @@ def create_app() -> FastAPI:
             by,
             removed=body.removed,
             quantity=body.quantity,
+            count=body.count,
+            alternative=body.alternative,
         )
         order = orders.get_order(session, caller.household_id, order_id)
         return order_out(session, order, day, caller.user_id)

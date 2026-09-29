@@ -29,12 +29,18 @@ const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   shopping_list: null,
   ...fields,
 })
-const list = (current: boolean) => ({ job: { ...batch, id: 'build', kind: 'build_list' as const }, current, items: [] })
+const list = (current: boolean) => ({
+  job: { ...batch, id: 'build', kind: 'build_list' as const },
+  current,
+  shop: { ...batch, id: 'shop', kind: 'shop' as const },
+  store: 'Wegmans',
+  items: [],
+})
 
 describe('stepShown', () => {
   it('shows the step the member is at when the order supports it', () => {
     const ready = order({ shopping_list: list(true) })
-    for (const step of ['pick', 'servings', 'delivery', 'next', 'list', 'review'] as const) {
+    for (const step of ['pick', 'servings', 'list', 'delivery', 'next', 'review'] as const) {
       expect(stepShown(ready, step)).toBe(step)
     }
   })
@@ -49,8 +55,11 @@ describe('stepShown', () => {
     expect(stepShown(first, 'review')).toBe('delivery')
   })
 
-  it("keeps the review for a list made for the picks now: the shopping list waits for it otherwise", () => {
-    expect(stepShown(order({ shopping_list: null }), 'review')).toBe('list')
-    expect(stepShown(order({ shopping_list: list(false) }), 'review')).toBe('list')
+  it('keeps the steps after the list for a list made for the picks now and shopped: the list waits otherwise', () => {
+    for (const step of ['delivery', 'next', 'review'] as const) {
+      expect(stepShown(order({ shopping_list: null }), step)).toBe('list')
+      expect(stepShown(order({ shopping_list: list(false) }), step)).toBe('list')
+      expect(stepShown(order({ shopping_list: { ...list(true), shop: null } }), step)).toBe('list')
+    }
   })
 })

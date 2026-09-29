@@ -50,8 +50,12 @@ def send(*messages: dict[str, Any]) -> None:
 
 def tool_call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if tool == "instacart.search_products":
-        slug = re.sub(r"[^a-z]+", "-", arguments["query"].lower()).strip("-")
-        reply = fixture(f"search-{slug}")
+        slug = re.sub(r"[^a-z0-9]+", "-", arguments["query"].lower()).strip("-")
+        # The worker tests' made-up items ("item 0") get the onions'; any other query
+        # needs a recorded reply.
+        reply = fixture(
+            "search-yellow-onions" if re.fullmatch(r"item-\d+", slug) else f"search-{slug}"
+        )
         if config.get("drop_search_items"):
             del reply["_meta"]["instacart/widgetData"]["data"]["items"]
         return reply

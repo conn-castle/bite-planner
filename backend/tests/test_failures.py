@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from castle_chef.api import create_app
-from castle_chef.models import Job, JobStatus
+from castle_chef.models import Job, JobKind, JobStatus, ListSource
 from castle_chef.settings import get_settings
 
 
@@ -145,3 +145,36 @@ def test_unrecognized_events_are_logged_loudly(
     messages = [r.getMessage() for r in caplog.records]
     assert "failures.unknown_event" in messages
     assert "failures.task_without_job" in messages
+
+
+def test_a_crashed_worker_fails_the_shopping_it_was_doing_for_its_list(
+    events: TestClient, session: Session, job: Job
+) -> None:
+    # The build succeeded, and its task went on to shop its list, then crashed.
+    build = Job(
+        id=uuid4(),
+        grocery_order_id=job.grocery_order_id,
+        kind=JobKind.BUILD_LIST,
+        requested_by=job.requested_by,
+        status=JobStatus.SUCCEEDED,
+        list_source=ListSource(picks=[]),
+    )
+    session.add(build)
+    session.commit()
+    shop = Job(
+        id=uuid4(),
+        grocery_order_id=job.grocery_order_id,
+        kind=JobKind.SHOP,
+        requested_by=job.requested_by,
+        status=JobStatus.RUNNING,
+        build_id=build.id,
+    )
+    session.add(shop)
+    session.commit()
+
+    events.post("/events", json=task_stopped(str(build.id), 137, "OutOfMemoryError"))
+
+    assert reload(session, build).status == JobStatus.SUCCEEDED
+    failed = reload(session, shop)
+    assert failed.status == JobStatus.FAILED
+    assert failed.error == "The worker stopped unexpectedly (OutOfMemoryError; exit code 137)."

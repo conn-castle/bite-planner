@@ -8,6 +8,7 @@ from sqlmodel import Session, col, func, select
 from castle_chef import orders
 from castle_chef.models import AppUser, GroceryOrder, Job, Meal, ShoppingListItem
 from castle_chef.push import Notification, NotificationKind
+from castle_chef.settings import get_settings
 
 # How long APNs keeps one for a phone that's off or offline.
 REMINDER_EXPIRY = timedelta(hours=12)
@@ -76,19 +77,39 @@ def ideas_ready(session: Session, job: Job) -> Notification:
     )
 
 
-def list_ready(session: Session, job: Job) -> Notification:
-    """For the member whose leaving Servings started a shopping list, once it's built."""
-    order = session.get_one(GroceryOrder, job.grocery_order_id)
+def list_ready(session: Session, build: Job) -> Notification:
+    """For the member whose leaving Servings started a shopping list, once it's
+    built and shopped: its products to buy, and the items the store doesn't have."""
+    order = session.get_one(GroceryOrder, build.grocery_order_id)
     number = orders.number(session, order)
-    count = session.exec(
-        select(func.count())
-        .select_from(ShoppingListItem)
-        .where(ShoppingListItem.job_id == job.id, col(ShoppingListItem.on_hand).is_(False))
-    ).one()
+    items = session.exec(
+        select(ShoppingListItem).where(
+            ShoppingListItem.job_id == build.id, col(ShoppingListItem.on_hand).is_(False)
+        )
+    ).all()
+    count = sum(1 for item in items if item.product is not None)
+    missing = sum(1 for item in items if item.not_found)
+    body = f"{count} product{'' if count == 1 else 's'} for Order {number}."
+    if missing:
+        body += f" {missing} item{'' if missing == 1 else 's'} to decide on."
     return Notification(
         kind=NotificationKind.LIST_READY,
         title="Your shopping list is ready",
-        body=f"{count} item{'' if count == 1 else 's'} for Order {number}.",
+        body=body,
+        expires_in=LIST_READY_EXPIRY,
+        order_id=order.id,
+    )
+
+
+def list_failed(session: Session, build: Job) -> Notification:
+    """For the member waiting for the list, when shopping it at the store failed."""
+    order = session.get_one(GroceryOrder, build.grocery_order_id)
+    number = orders.number(session, order)
+    return Notification(
+        kind=NotificationKind.LIST_FAILED,
+        title="Couldn't shop your list",
+        body=f"Shopping Order {number}'s list at {get_settings().instacart_store} stopped. "
+        "Open it to try again.",
         expires_in=LIST_READY_EXPIRY,
         order_id=order.id,
     )

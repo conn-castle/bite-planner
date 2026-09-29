@@ -76,6 +76,14 @@
   font-size: 15px;
 }
 
+/* A product's tile: across it, on the fill. */
+.wide {
+  display: flex;
+  justify-content: space-between;
+  background: var(--cc-fill);
+  box-shadow: none;
+}
+
 /* Can't change: its value greyed out with its buttons. */
 .disabled .value {
   color: var(--cc-ink-3);

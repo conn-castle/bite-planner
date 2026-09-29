@@ -1,6 +1,6 @@
 import { placedMealPath } from '../meals/meals'
 import { useIonRouter } from '@ionic/react'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import type { ISODate, NextOrder, PlacedOrder } from '../../lib/api/types'
 import { formatDate, localDate } from '../../lib/dates'
@@ -71,20 +71,17 @@ interface PlacedOrderViewProps {
 function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewProps) {
   const userId = useSession().data?.user.id
   const router = useIonRouter()
-  const page = useRef<HTMLDivElement>(null)
-  const [presentingElement, setPresentingElement] = useState<HTMLElement>()
   const [flowOpen, setFlowOpen] = useState(false)
   const meals = plural(order.meals.length, 'meal')
   const following = followingOrder(order, placed, next)
   const theirLock = lockedByOther(next?.draft, userId)
 
   function openFlow() {
-    setPresentingElement(page.current?.closest<HTMLElement>('.ion-page') ?? undefined)
     setFlowOpen(true)
   }
 
   return (
-    <div ref={page}>
+    <div>
       <OrderCard
         number={order.number}
         look="placed"
@@ -154,7 +151,7 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
         </Group>
       )}
 
-      <OrderFlowModal isOpen={flowOpen} onDismiss={() => setFlowOpen(false)} presentingElement={presentingElement} />
+      <OrderFlowModal isOpen={flowOpen} onDismiss={() => setFlowOpen(false)} />
     </div>
   )
 }

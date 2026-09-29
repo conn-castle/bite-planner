@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
+from castle_chef_agent.products import ProductCount
 from castle_chef_agent.shopping import Aisle
 from pydantic import BaseModel
 from sqlalchemy import CheckConstraint, DateTime, Dialect, Enum, Index, Uuid, func, text
@@ -128,6 +129,25 @@ class ModelJSONB[M: BaseModel](TypeDecorator[M]):
         return None if value is None else self.model.model_validate(value)
 
 
+class ModelJSONBList[M: BaseModel](TypeDecorator[list[M]]):
+    """A JSONB column holding a list of one typed model: validated as it's read."""
+
+    impl = JSONB
+    cache_ok = True
+
+    def __init__(self, model: type[M]) -> None:
+        super().__init__()
+        self.model = model
+
+    def process_bind_param(self, value: list[M] | None, dialect: Dialect) -> object:
+        return [item.model_dump(mode="json") for item in value or []]
+
+    def process_result_value(self, value: object, dialect: Dialect) -> list[M]:
+        if not isinstance(value, list):
+            raise ValueError(f"Expected a JSON list, got {type(value).__name__}.")
+        return [self.model.model_validate(item) for item in value]
+
+
 class ListPick(BaseModel):
     """A pick as a shopping list was built from it."""
 
@@ -145,6 +165,7 @@ class ListSource(BaseModel):
 class JobKind(StrEnum):
     GENERATE_MEALS = "generate_meals"  # a batch of meal ideas
     BUILD_LIST = "build_list"  # the draft's shopping list
+    SHOP = "shop"  # the products to buy for a list, at the Instacart store
 
 
 class JobStatus(StrEnum):
@@ -164,6 +185,9 @@ class Job(TimestampMixin, SQLModel, table=True):
             "(kind::text = 'build_list') = (list_source IS NOT NULL)",
             name="job_list_source_for_lists",
         ),
+        CheckConstraint(
+            "(kind::text = 'shop') = (build_id IS NOT NULL)", name="job_build_for_shops"
+        ),
     )
 
     id: UUID = Field(primary_key=True)
@@ -179,6 +203,10 @@ class Job(TimestampMixin, SQLModel, table=True):
     requested_by: UUID
     # A build_list job's picks, as they were when it started; null for other kinds.
     list_source: ListSource | None = Field(default=None, sa_type=ModelJSONB(ListSource))
+    # A shop job's list: the build_list job whose items it chooses products for.
+    build_id: UUID | None = Field(
+        default=None, foreign_key="job.id", ondelete="CASCADE", index=True
+    )
     error: str | None = None
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
@@ -308,8 +336,25 @@ class ShoppingListItem(TimestampMixin, SQLModel, table=True):
     meal_ids: list[UUID] = Field(sa_type=ARRAY(Uuid))
     # Assumed on hand (salt, pepper, ...): never ordered, shown only on request.
     on_hand: bool = False
-    # The member took it off the list.
+    # The member took it off the list (or chose not to buy its product).
     removed: bool = Field(default=False, sa_column_kwargs={"server_default": "false"})
+    # What to buy for it at the store (a shop job's choices, then the member's
+    # changes): the product and how many; null before the list is shopped, for
+    # staples, and for an item the store doesn't have until the member picks one
+    # of its alternatives.
+    product: ProductCount | None = Field(default=None, sa_type=ModelJSONB(ProductCount))
+    # What the member can choose instead.
+    alternatives: list[ProductCount] = Field(
+        default_factory=list,
+        sa_type=ModelJSONBList(ProductCount),
+        sa_column_kwargs={"server_default": text("'[]'::jsonb")},
+    )
+    # Why the agent gave no alternatives.
+    no_alternatives_reason: str | None = None
+    # The store doesn't have it (the member picks an alternative or skips it), and
+    # why the meals work without it, if they do.
+    not_found: bool = Field(default=False, sa_column_kwargs={"server_default": "false"})
+    skippable_reason: str | None = None
 
 
 class MealRating(StrEnum):

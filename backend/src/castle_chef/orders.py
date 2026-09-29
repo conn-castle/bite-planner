@@ -18,19 +18,22 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, func, select
 
-from castle_chef import ratings, shopping
+from castle_chef import products, ratings, shopping
+from castle_chef.jobs import shop_of
 from castle_chef.models import (
     GroceryOrder,
     GroceryOrderMeal,
     GroceryOrderStatus,
     Household,
     Job,
+    JobStatus,
     Meal,
     MealRating,
     OrderStep,
     ShoppingListItem,
     utc_now,
 )
+from castle_chef.settings import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +76,10 @@ class ItemNotFound(Exception):
 
 class NoAmount(Exception):
     """The item has no amount to change (its recipes give none)."""
+
+
+class NoSuchProduct(Exception):
+    """The item has no such product (or no product) to change."""
 
 
 class ListNotCurrent(Exception):
@@ -449,7 +456,7 @@ def _not_ready(
 ) -> str | None:
     if not picks(session, order.id):
         return "Pick at least one meal."
-    if (problem := list_problem(session, order.id)) is not None:
+    if (problem := shopped_problem(session, order.id)) is not None:
         return problem
     try:
         check_dates(delivery, next_delivery, today)
@@ -459,12 +466,33 @@ def _not_ready(
 
 
 def list_problem(session: Session, order_id: UUID) -> str | None:
-    """Why the draft's shopping list isn't ready for its picks, or None if it is."""
+    """Why the draft's shopping list isn't the one for its picks, or None if it is."""
     newest = shopping.newest_build(session, order_id)
     if newest is None or not shopping.is_current(session, order_id, newest):
         if shopping.newest_built(session, order_id) is None:
             return "The shopping list isn't ready yet."
         return "The shopping list was made for other meals or servings; wait for the new one."
+    return None
+
+
+def shopped_problem(session: Session, order_id: UUID) -> str | None:
+    """Why the draft's list isn't ready to order: not the list for its picks, not
+    shopped yet, or with items the store doesn't have still to decide on."""
+    if (problem := list_problem(session, order_id)) is not None:
+        return problem
+    build = shopping.newest_build(session, order_id)
+    assert build is not None  # the list is current
+    shop = shop_of(session, build.id)
+    if shop is None or shop.status != JobStatus.SUCCEEDED:
+        return "The shopping list isn't shopped yet."
+    undecided = [
+        item.name
+        for item in products.items_to_buy(session, build.id)
+        if item.not_found and item.product is None
+    ]
+    if undecided:
+        store = get_settings().instacart_store
+        return f"Decide on what {store} doesn't have: {', '.join(undecided)}."
     return None
 
 
@@ -477,11 +505,14 @@ def change_item(
     *,
     removed: bool | None,
     quantity: float | None,
+    count: int | None = None,
+    alternative: str | None = None,
 ) -> None:
-    """Take an item off the draft's list (or put it back), or change how much of
-    it to buy (the amount worked out for the recipes resets it). Only the
-    current list's items to buy can change: a list made for other picks is
-    about to be replaced."""
+    """Take an item off the draft's list (or put it back; for a product, don't buy
+    it), change how much of it to buy (the amount worked out for the recipes
+    resets it), how many of its product to buy, or switch its product to one of
+    its alternatives (by product id). Only the current list's items to buy can
+    change: a list made for other picks is about to be replaced."""
     lock_draft(session, household_id, order_id, orderer)
     newest = shopping.newest_build(session, order_id)
     item = session.get(ShoppingListItem, item_id)
@@ -491,8 +522,33 @@ def change_item(
     if (problem := list_problem(session, order_id)) is not None:
         session.rollback()
         raise ListNotCurrent(problem)
+    shop = shop_of(session, newest.id)
+    if shop is not None and shop.status in (JobStatus.PENDING, JobStatus.RUNNING):
+        session.rollback()
+        raise ListNotCurrent("The list is being shopped; wait for it to finish.")
     if removed is not None:
         item.removed = removed
+    if alternative is not None and (
+        item.product is None or item.product.product.product_id != alternative
+    ):
+        # Switch to one of its alternatives; the product it had becomes one. (Its
+        # product already: a retried request, done.)
+        chosen = next((a for a in item.alternatives if a.product.product_id == alternative), None)
+        if chosen is None:
+            session.rollback()
+            raise NoSuchProduct("That product isn't one of the item's alternatives.")
+        others = [a for a in item.alternatives if a.product.product_id != alternative]
+        item.alternatives = [*others, item.product] if item.product else others
+        item.product = chosen
+        item.removed = False
+        # Found, then: the member picked what the store has instead.
+        item.not_found = False
+        item.skippable_reason = None
+    if count is not None:
+        if item.product is None:
+            session.rollback()
+            raise NoSuchProduct("The item has no product to buy more or fewer of.")
+        item.product = item.product.model_copy(update={"count": count})
     if quantity is not None and item.quantity is None:
         session.rollback()
         raise NoAmount("The recipes give no amount for this item, so there's none to change.")

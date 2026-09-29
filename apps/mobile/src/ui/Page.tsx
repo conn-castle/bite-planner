@@ -10,7 +10,7 @@ import {
   type RefresherEventDetail,
   useIonRouter,
 } from '@ionic/react'
-import { type MouseEvent, type ReactNode, type RefObject, useState } from 'react'
+import { type MouseEvent, type ReactNode, useState } from 'react'
 import { IconButton } from './Button'
 import { Icon } from './Icon'
 import styles from './Page.module.css'
@@ -24,13 +24,11 @@ interface PageProps {
   actions?: ReactNode
   /** Enables pull to refresh. */
   onRefresh?: () => Promise<unknown>
-  /** The page's element, e.g. to present a card modal over it. */
-  pageRef?: RefObject<HTMLElement | null>
   children: ReactNode
 }
 
 /** The frame of every tab's screen: a large title on the warm page, content that clears the tab bar. */
-export function Page({ title, overline, actions, onRefresh, pageRef, children }: PageProps) {
+export function Page({ title, overline, actions, onRefresh, children }: PageProps) {
   async function refresh(event: CustomEvent<RefresherEventDetail>) {
     try {
       await onRefresh?.()
@@ -40,7 +38,7 @@ export function Page({ title, overline, actions, onRefresh, pageRef, children }:
   }
 
   return (
-    <IonPage ref={pageRef}>
+    <IonPage>
       <IonContent className={styles.content}>
         {onRefresh && (
           <IonRefresher slot="fixed" onIonRefresh={(event) => void refresh(event)}>
@@ -63,7 +61,7 @@ export function Page({ title, overline, actions, onRefresh, pageRef, children }:
 }
 
 interface NavPageProps {
-  /** Shown in the toolbar once the page's own heading scrolls away (always, with a back label). */
+  /** Shown in the toolbar, always (a review decision over the mockup's title revealed on scroll). */
   title: string
   /**
    * Pushed in a tab rather than a nav: its content clears the tab bar, and
@@ -116,7 +114,7 @@ export function NavPage({ title, tab, actions, children }: NavPageProps) {
               </IconButton>
             )}
           </IonButtons>
-          <IonTitle className={bar ? undefined : 'cc-reveal'}>{title}</IonTitle>
+          <IonTitle>{title}</IonTitle>
           {actions && <IonButtons slot="end">{actions}</IonButtons>}
         </IonToolbar>
       </IonHeader>

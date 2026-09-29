@@ -4,7 +4,8 @@ Usage (as CASTLE_CHEF_AGENT_COMMAND): fake_agent.py MEALS STOP_REASON EXIT_CODE 
 followed by the Grok arguments the worker appends. Like Grok, it starts the MCP
 server the job directory's `.grok/config.toml` names and uses its tools: MEALS meals
 with `add_meal` (or, given a shopping list prompt, MEALS items sharing its lines with
-`add_item`, and salt with `add_staple`), then `done`. It takes SECONDS and prints
+`add_item`, and salt with `add_staple`; or, given a list to shop, each item's first
+search result, with the second as its alternative), then `done`. It takes SECONDS and prints
 Grok-style JSON. Settings are arguments because the worker gives the agent a minimal
 environment.
 """
@@ -55,7 +56,22 @@ async def use_tools() -> None:
             if check and getattr(result, "is_error", False):
                 raise SystemExit(f"{tool} failed: {result}")
 
-        if "`add_item`" in prompt:
+        if prompt.startswith("Choose what to buy at"):
+            # Each item: search for it, then choose the first result (one of it) with
+            # the second as its alternative.
+            for number, name in re.findall(r"^(\d+)\. (.+?)(?::[^(]*)? \(", prompt, re.MULTILINE):
+                result = await session.call_tool("search", {"item": int(number), "query": name})
+                ids = re.findall(r"^(\d+): ", result.content[0].text, re.MULTILINE)
+                await call(
+                    "choose",
+                    {
+                        "item": int(number),
+                        "product_id": ids[0],
+                        "count": 1,
+                        "alternatives": [{"product_id": ids[1], "count": 1}],
+                    },
+                )
+        elif "`add_item`" in prompt:
             lines = re.findall(r"^- (\d+[a-z]+): (.*)$", prompt, re.MULTILINE)
             salt = [line for line, text in lines if text.split(",")[0].endswith("salt")]
             rest = [line for line, text in lines if line not in salt]

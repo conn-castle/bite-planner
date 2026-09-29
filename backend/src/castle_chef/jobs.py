@@ -108,9 +108,9 @@ def submit_build_list(
     and commit. Returns (job, created): a build already made, being made, or
     waiting for the same picks is returned rather than started again, and a
     retried request (the client picks the id) gets the job it made. Builds for
-    other picks still waiting or running are failed as superseded in the same
-    transaction, so their results are dropped. The caller holds the order's
-    row lock."""
+    other picks still waiting or running, and shopping still under way, are
+    failed as superseded in the same transaction, so their results are dropped.
+    The caller holds the order's row lock."""
     if (existing := _retried(session, job_id, order, member_id, JobKind.BUILD_LIST)) is not None:
         return existing, False
     if not source.picks:
@@ -131,6 +131,14 @@ def submit_build_list(
         session.rollback()
         return newest, False
     superseded = [build.id for build in builds if build.status in ACTIVE]
+    # Shopping an older list too: its products would be for items being replaced.
+    superseded += session.exec(
+        select(Job.id).where(
+            Job.grocery_order_id == order.id,
+            Job.kind == JobKind.SHOP,
+            col(Job.status).in_(ACTIVE),
+        )
+    ).all()
     if superseded:
         session.execute(
             update(Job)
@@ -261,3 +269,78 @@ def fail_stale_jobs(
     if stale:
         log.error("jobs.stale_failed", extra={"count": stale})
     return stale
+
+
+# Shopping a list (a `shop` job for a build's items).
+
+
+class ListNotReady(Exception):
+    """There's no finished list for the order's picks to shop for."""
+
+
+def shop_of(session: Session, build_id: UUID) -> Job | None:
+    """The newest shop job for a build."""
+    return session.exec(
+        select(Job)
+        .where(Job.build_id == build_id, Job.kind == JobKind.SHOP)
+        .order_by(col(Job.created_at).desc(), col(Job.id).desc())
+        .limit(1)
+    ).first()
+
+
+def create_shop(session: Session, build: Job, job_id: UUID, member_id: UUID) -> Job:
+    """Stage a shop job for the build's list (the caller commits)."""
+    job = Job(
+        id=job_id,
+        grocery_order_id=build.grocery_order_id,
+        kind=JobKind.SHOP,
+        requested_by=member_id,
+        build_id=build.id,
+    )
+    session.add(job)
+    return job
+
+
+def submit_shop(
+    session: Session,
+    order: GroceryOrder,
+    member_id: UUID,
+    job_id: UUID,
+    build: Job | None,
+    stale_after: tuple[timedelta, timedelta],
+) -> tuple[Job, bool]:
+    """Shop the order's current list again (after a failure), and commit. Returns
+    (job, created): a shop already waiting, running, or done for this list is
+    returned rather than started again, and a retried request gets the job it
+    made. `build` is the order's current list (None: not ready). The caller holds
+    the order's row lock."""
+    if (existing := _retried(session, job_id, order, member_id, JobKind.SHOP)) is not None:
+        return existing, False
+    if build is None:
+        session.rollback()
+        raise ListNotReady("The shopping list isn't ready yet.")
+    fail_stale_jobs(session, order.id, *stale_after)
+    current = shop_of(session, build.id)
+    if current is not None and current.status in (*ACTIVE, JobStatus.SUCCEEDED):
+        session.rollback()
+        return current, False
+    job = create_shop(session, build, job_id, member_id)
+    session.commit()
+    session.refresh(job)
+    log.info(
+        "job.created",
+        extra={"job_id": str(job.id), "kind": job.kind, "grocery_order_id": str(order.id)},
+    )
+    return job, True
+
+
+def fail_shops_of(session: Session, build_id: UUID, error: str) -> int:
+    """Fail the build's shop jobs that haven't finished, and commit (their worker
+    stopped with the build's task)."""
+    failed = session.execute(
+        update(Job)
+        .where(col(Job.build_id) == build_id, col(Job.status).in_(ACTIVE))
+        .values(status=JobStatus.FAILED, error=error, finished_at=func.now(), updated_at=func.now())
+    ).rowcount
+    session.commit()
+    return failed

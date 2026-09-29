@@ -10,6 +10,8 @@ interface StepperProps {
   label: string
   /** In a row of a group: on the fill, a little smaller. */
   inRow?: boolean
+  /** Across its container on the fill, − and + at the ends (a product's tile). */
+  wide?: boolean
   /** How much − and + change the value (1 by default). */
   step?: number
   /** How the value reads, e.g. "1½". */
@@ -26,6 +28,7 @@ export function Stepper({
   onChange,
   label,
   inRow,
+  wide,
   step: by = 1,
   format = String,
   disabled = false,
@@ -40,7 +43,7 @@ export function Stepper({
 
   return (
     <div
-      className={[styles.stepper, inRow && styles.inRow, disabled && styles.disabled].filter(Boolean).join(' ')}
+      className={[styles.stepper, inRow && styles.inRow, wide && styles.wide, disabled && styles.disabled].filter(Boolean).join(' ')}
       role="group"
       aria-label={label}
       aria-disabled={disabled}

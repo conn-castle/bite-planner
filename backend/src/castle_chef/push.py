@@ -37,6 +37,7 @@ class NotificationKind(StrEnum):
     REMINDER = "reminder"
     IDEAS_READY = "ideas_ready"
     LIST_READY = "list_ready"
+    LIST_FAILED = "list_failed"  # shopping the list failed
     TEST = "test"  # `castle-chef household notify-test`
 
 

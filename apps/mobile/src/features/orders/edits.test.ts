@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import type { GroceryOrder } from '../../lib/api/types'
+import type { GroceryOrder, Product } from '../../lib/api/types'
 import { applyEdits, isOrderEdit } from './edits'
+
+const YELLOW: Product = {
+  product_id: 'yellow',
+  name: 'Wegmans Onions, Yellow',
+  size: '2 lb',
+  price_cents: 229,
+  price_per_lb_cents: null,
+  estimated_lb: null,
+  image_url: null,
+  bought_before: true,
+  count: 1,
+}
+const SWEET: Product = { ...YELLOW, product_id: 'sweet', name: 'Sweet Onions', count: 2 }
 
 const order: GroceryOrder = {
   id: 'order-2',
@@ -135,9 +148,11 @@ describe('changes to the shopping list', () => {
         meals: [],
       },
       current: true,
+      shop: null,
+      store: 'Wegmans',
       items: [
-        { id: 'onions', name: 'onions', quantity: 2, recipe_quantity: 2, unit: null, aisle: 'produce', meal_ids: [], on_hand: false, removed: false },
-        { id: 'beef', name: 'ground beef', quantity: 1, recipe_quantity: 1, unit: 'lb', aisle: 'meat_seafood', meal_ids: [], on_hand: false, removed: false },
+        { id: 'onions', name: 'onions', quantity: 2, recipe_quantity: 2, unit: null, aisle: 'produce', meal_ids: [], on_hand: false, removed: false, product: YELLOW, alternatives: [SWEET], no_alternatives_reason: null, not_found: false, skippable_reason: null },
+        { id: 'beef', name: 'ground beef', quantity: 1, recipe_quantity: 1, unit: 'lb', aisle: 'meat_seafood', meal_ids: [], on_hand: false, removed: false, product: null, alternatives: [], no_alternatives_reason: null, not_found: false, skippable_reason: null },
       ],
     },
   }
@@ -153,9 +168,22 @@ describe('changes to the shopping list', () => {
     ])
   })
 
+  it('shows a product switched to an alternative, the old one now an alternative, and a new count', () => {
+    const [onions] = applyEdits(listed, [
+      { session: 'phone', orderId: 'order-2', itemId: 'onions', alternative: 'sweet' },
+      { session: 'phone', orderId: 'order-2', itemId: 'onions', count: 3 },
+    ]).shopping_list?.items ?? []
+    expect([onions.product?.product_id, onions.product?.count]).toEqual(['sweet', 3])
+    expect(onions.alternatives.map((product) => product.product_id)).toEqual(['yellow'])
+  })
+
   it('is recognized as a change to the order', () => {
     expect(isOrderEdit({ session: 's', orderId: 'o', itemId: 'i', removed: true })).toBe(true)
+    expect(isOrderEdit({ session: 's', orderId: 'o', itemId: 'i', count: 2 })).toBe(true)
+    expect(isOrderEdit({ session: 's', orderId: 'o', itemId: 'i', alternative: '3371870' })).toBe(true)
     expect(isOrderEdit({ session: 's', orderId: 'o', itemId: 'i', quantity: 'lots' })).toBe(false)
+    expect(isOrderEdit({ session: 's', orderId: 'o', itemId: 'i', count: 1.5 })).toBe(false)
+    expect(isOrderEdit({ session: 's', orderId: 'o', itemId: 'i', count: 0 })).toBe(false)
   })
 })
 

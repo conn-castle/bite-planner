@@ -1,0 +1,29 @@
+/* A card's red ×, a little off its top-right corner (a review decision over the mockup's .pc .dx). */
+.toggle {
+  appearance: none;
+  position: absolute;
+  z-index: 1;
+  top: -7px;
+  right: -7px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--cc-bg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  color: var(--cc-danger);
+  font-size: 17px;
+  cursor: pointer;
+}
+
+.toggle svg {
+  stroke-width: 2.4;
+}
+
+/* Off: its icon puts it back (e.g. ↺). */
+.undo {
+  color: var(--cc-ink-2);
+}

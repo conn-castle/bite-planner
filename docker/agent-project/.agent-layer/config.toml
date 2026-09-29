@@ -8,7 +8,7 @@ mode = "yolo"
 [agents.grok]
 enabled = true
 model = "grok-4.7"
-reasoning_effort = "xhigh"
+reasoning_effort = "high"
 disable_memory = true
 
 # Agent Layer requires every client's switch; the worker uses only Grok.

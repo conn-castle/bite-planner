@@ -19,6 +19,7 @@
 
 /* As wide as a phone's alert, as tall as what it says. */
 .dialog {
+  outline: none;
   display: flex;
   flex-direction: column;
   align-items: center;

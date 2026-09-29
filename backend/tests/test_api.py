@@ -15,19 +15,21 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from botocore.stub import Stubber
+from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import IngredientInput, MealInput
+from castle_chef_agent.products import ItemChoice, ProductCount
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import text
 from sqlmodel import Session, col, select
 
 from castle_chef import api as api_module
-from castle_chef import orders
+from castle_chef import orders, products
 from castle_chef.api import app, create_app
 from castle_chef.auth import AuthError, AuthUnavailable, Principal
 from castle_chef.db import get_engine
 from castle_chef.dispatch import DispatchError, LocalDispatcher, SqsDispatcher, get_dispatcher
-from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, fail_job, finish_job
+from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, create_shop, fail_job, finish_job
 from castle_chef.meals import add_meals
 from castle_chef.models import Aisle, GroceryOrder, Job, JobStatus, Meal, ShoppingListItem
 from castle_chef.settings import get_settings, load_ssm_parameters
@@ -301,8 +303,9 @@ def request_list(
     )
 
 
-def finish_list(job_id: str, items: list[ListEntry] | None = None) -> None:
-    """What the worker does with a list build whose agent succeeds."""
+def finish_list(job_id: str, items: list[ListEntry] | None = None, shop: bool = True) -> None:
+    """What the worker does with a list build whose agent succeeds, then (unless
+    `shop` is False) shopping it."""
     with Session(get_engine()) as worker_session:
         claim_job(worker_session, UUID(job_id))
         job = worker_session.get_one(Job, UUID(job_id))
@@ -319,6 +322,57 @@ def finish_list(job_id: str, items: list[ListEntry] | None = None) -> None:
             job.list_source,
         )
         assert finish_job(worker_session, UUID(job_id))
+    if shop:
+        shop_list(job_id)
+
+
+ONIONS = Product(
+    product_id="17499438",
+    name="Wegmans Onions, Yellow",
+    size="2 lb",
+    price_cents=229,
+    price_per_lb_cents=None,
+    estimated_lb=None,
+    image_url="https://example.com/onions.jpg",
+    bought_before=True,
+)
+SWEET = ONIONS.model_copy(
+    update={
+        "product_id": "3371870",
+        "name": "Sweet Onions",
+        "size": "per lb",
+        "price_cents": 172,
+        "price_per_lb_cents": 229,
+        "estimated_lb": 0.75,
+        "bought_before": False,
+    }
+)
+
+
+def shop_list(build_id: str, missing: frozenset[str] = frozenset()) -> None:
+    """What the worker does next: shops the build's items (onions for each, sweet
+    onions as the alternative; items named in `missing`, not found)."""
+    with Session(get_engine()) as worker_session:
+        build = worker_session.get_one(Job, UUID(build_id))
+        shop = create_shop(worker_session, build, uuid4(), build.requested_by)
+        worker_session.commit()
+        claim_job(worker_session, shop.id)
+        items = products.items_to_buy(worker_session, build.id)
+        choices = {
+            number: ItemChoice(
+                item=number,
+                chosen=None if item.name in missing else ProductCount(product=ONIONS, count=1),
+                alternatives=[ProductCount(product=SWEET, count=2)],
+                skippable_reason="Only for garnish." if item.name in missing else None,
+            )
+            for number, item in enumerate(items, start=1)
+        }
+        products.save_choices(
+            worker_session,
+            {number: item.id for number, item in enumerate(items, start=1)},
+            choices,
+        )
+        assert finish_job(worker_session, shop.id)
 
 
 def ready_list(client: TestClient, order_id: str, user: UUID = MOM) -> dict[str, Any]:
@@ -856,13 +910,14 @@ def test_another_households_job_id_is_rejected(
 
 def test_a_job_id_from_a_previous_order_is_rejected(client: TestClient) -> None:
     first = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
-    [old_batch, old_list] = first["jobs"]
+    [old_batch, old_list, old_shop] = first["jobs"]
+    assert [job["kind"] for job in first["jobs"]] == ["generate_meals", "build_list", "shop"]
     draft = open_draft(client)["id"]
 
     detail(request_batch(client, draft, MOM, UUID(old_batch["id"])), 409)
 
     assert get_order(client, draft)["jobs"] == []
-    assert get_order(client, first["id"])["jobs"] == [old_batch, old_list]
+    assert get_order(client, first["id"])["jobs"] == [old_batch, old_list, old_shop]
 
 
 def test_one_batch_at_a_time(client: TestClient) -> None:
@@ -2012,6 +2067,8 @@ def test_leaving_servings_starts_one_list_for_the_picks(
     assert get_order(client, order_id)["shopping_list"] | {"job": None} == {
         "job": None,
         "current": False,
+        "shop": None,
+        "store": "Wegmans",
         "items": [],
     }
     # Its job isn't a batch of meal ideas.
@@ -2200,6 +2257,177 @@ def test_meal_ideas_and_the_list_are_made_side_by_side(client: TestClient) -> No
     ok(request_batch(client, order_id), 201)  # "generate more" while the list is made
     ok(set_servings(client, order_id, tacos, 2))
     ok(request_list(client, order_id), 201)  # and a new list while more ideas are made
+
+
+# Shopping the list (stage 3).
+
+
+def shopped_draft(
+    client: TestClient, shop: bool = True, missing: frozenset[str] = frozenset()
+) -> tuple[str, str]:
+    """A draft with dates and a list built for its picks: (order id, build id),
+    shopped unless `shop` is False (items named in `missing` not found)."""
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+    ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=2)))
+    build = ok(request_list(client, order_id), 201)
+    finish_list(
+        build["id"],
+        [
+            ListEntry(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=[1]),
+            ListEntry(name="cotija", quantity=4, unit="oz", aisle=Aisle.DAIRY_EGGS, meals=[1]),
+            ListEntry(name="salt", aisle=Aisle.PANTRY, meals=[1], on_hand=True),
+        ],
+        shop=False,
+    )
+    if shop:
+        shop_list(build["id"], missing)
+    return order_id, build["id"]
+
+
+def item_named(order: dict[str, Any], name: str) -> dict[str, Any]:
+    [item] = [i for i in order["shopping_list"]["items"] if i["name"] == name]
+    return item
+
+
+def test_a_shopped_list_shows_each_items_product_and_alternatives(client: TestClient) -> None:
+    order_id, _ = shopped_draft(client)
+
+    shopping_list = get_order(client, order_id)["shopping_list"]
+
+    assert shopping_list["shop"]["kind"] == "shop"
+    assert shopping_list["shop"]["status"] == "succeeded"
+    tortillas = item_named(get_order(client, order_id), "tortillas")
+    assert tortillas["product"] == {
+        "product_id": "17499438",
+        "name": "Wegmans Onions, Yellow",
+        "size": "2 lb",
+        "price_cents": 229,
+        "price_per_lb_cents": None,
+        "estimated_lb": None,
+        "image_url": "https://example.com/onions.jpg",
+        "bought_before": True,
+        "count": 1,
+    }
+    assert [(a["name"], a["count"]) for a in tortillas["alternatives"]] == [("Sweet Onions", 2)]
+    assert item_named(get_order(client, order_id), "salt")["product"] is None
+
+
+def test_placing_waits_for_the_list_to_be_shopped(client: TestClient) -> None:
+    order_id, build_id = shopped_draft(client, shop=False)
+
+    assert detail(place(client, order_id), 409) == "The shopping list isn't shopped yet."
+    shop_list(build_id)
+    ok(place(client, order_id))
+
+
+def test_placing_waits_for_a_decision_on_what_the_store_doesnt_have(client: TestClient) -> None:
+    order_id, _ = shopped_draft(client, missing=frozenset({"cotija", "tortillas"}))
+    order = get_order(client, order_id)
+    cotija, tortillas = item_named(order, "cotija"), item_named(order, "tortillas")
+    assert (cotija["not_found"], cotija["product"], cotija["skippable_reason"]) == (
+        True,
+        None,
+        "Only for garnish.",
+    )
+
+    problem = detail(place(client, order_id), 409)
+
+    assert problem == "Decide on what Wegmans doesn't have: cotija, tortillas."  # by aisle
+    ok(change_item(client, order_id, cotija["id"], {"removed": True}))  # skip it
+    swapped = ok(change_item(client, order_id, tortillas["id"], {"alternative": "3371870"}))
+    # Found, then: the store has what the member picked instead.
+    tortillas = item_named(swapped, "tortillas")
+    assert (tortillas["not_found"], tortillas["skippable_reason"]) == (False, None)
+    ok(place(client, order_id))
+
+
+def test_members_change_how_many_of_a_product_to_buy(client: TestClient) -> None:
+    order_id, _ = shopped_draft(client)
+    tortillas = item_named(get_order(client, order_id), "tortillas")
+
+    order = ok(change_item(client, order_id, tortillas["id"], {"count": 3}))
+
+    assert item_named(order, "tortillas")["product"]["count"] == 3
+    detail(change_item(client, order_id, tortillas["id"], {"count": 0}), 422)
+
+
+def test_switching_to_an_alternative_keeps_the_product_it_had_as_one(client: TestClient) -> None:
+    order_id, _ = shopped_draft(client)
+    tortillas = item_named(get_order(client, order_id), "tortillas")
+
+    order = ok(change_item(client, order_id, tortillas["id"], {"alternative": "3371870"}))
+
+    switched = item_named(order, "tortillas")
+    assert (switched["product"]["name"], switched["product"]["count"]) == ("Sweet Onions", 2)
+    assert [a["name"] for a in switched["alternatives"]] == ["Wegmans Onions, Yellow"]
+    # The same switch again (a retried request whose answer was lost): done already.
+    again = ok(change_item(client, order_id, tortillas["id"], {"alternative": "3371870"}))
+    assert item_named(again, "tortillas") == switched
+    # And back.
+    order = ok(change_item(client, order_id, tortillas["id"], {"alternative": "17499438"}))
+    assert item_named(order, "tortillas")["product"]["name"] == "Wegmans Onions, Yellow"
+    problem = detail(change_item(client, order_id, tortillas["id"], {"alternative": "1"}), 409)
+    assert problem == "That product isn't one of the item's alternatives."
+
+
+def test_items_cant_change_while_the_list_is_shopped(client: TestClient) -> None:
+    order_id, build_id = shopped_draft(client, shop=False)
+    with Session(get_engine()) as worker_session:
+        create_shop(worker_session, worker_session.get_one(Job, UUID(build_id)), uuid4(), MOM)
+        worker_session.commit()
+    tortillas = item_named(get_order(client, order_id), "tortillas")
+
+    problem = detail(change_item(client, order_id, tortillas["id"], {"removed": True}), 409)
+
+    assert problem == "The list is being shopped; wait for it to finish."
+
+
+def test_an_item_without_a_product_has_no_count_to_change(client: TestClient) -> None:
+    order_id, _ = shopped_draft(client, missing=frozenset({"cotija"}))
+    cotija = item_named(get_order(client, order_id), "cotija")
+
+    problem = detail(change_item(client, order_id, cotija["id"], {"count": 2}), 409)
+
+    assert problem == "The item has no product to buy more or fewer of."
+
+
+def shop_again(client: TestClient, order_id: str, job_id: UUID | None = None) -> Response:
+    return client.post(
+        f"/v1/grocery-orders/{order_id}/list/shop",
+        headers=as_user(MOM),
+        json={"job_id": str(job_id or uuid4())},
+    )
+
+
+def test_shopping_that_failed_can_be_started_again(
+    client: TestClient, dispatcher: RecordingDispatcher
+) -> None:
+    order_id, build_id = shopped_draft(client, shop=False)
+    with Session(get_engine()) as worker_session:
+        failed = create_shop(
+            worker_session, worker_session.get_one(Job, UUID(build_id)), uuid4(), MOM
+        )
+        worker_session.commit()
+        fail_job(worker_session, failed.id, "Instacart needs you to sign in again.")
+    job_id = uuid4()
+
+    started = ok(shop_again(client, order_id, job_id), 201)
+    retried = ok(shop_again(client, order_id, job_id))
+
+    assert (started["id"], started["kind"], started["status"]) == (str(job_id), "shop", "pending")
+    assert retried == started
+    assert dispatcher.dispatched[-1] == job_id
+    assert get_order(client, order_id)["shopping_list"]["shop"]["id"] == str(job_id)
+    # Shopping already on its way is returned, not started again.
+    assert ok(shop_again(client, order_id))["id"] == str(job_id)
+
+
+def test_shopping_needs_a_list_for_the_picks(client: TestClient) -> None:
+    order_id, [tacos, _] = with_suggestions(client)
+    ok(pick(client, order_id, tacos))
+
+    assert detail(shop_again(client, order_id), 409) == "The shopping list isn't ready yet."
 
 
 # Error bodies.

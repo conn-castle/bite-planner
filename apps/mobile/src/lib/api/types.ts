@@ -87,7 +87,7 @@ export interface MealSummary {
  */
 export interface Job {
   id: string
-  kind: 'generate_meals' | 'build_list'
+  kind: 'generate_meals' | 'build_list' | 'shop'
   status: JobStatus
   error: string | null
   requested_by: Member
@@ -100,6 +100,22 @@ export interface Job {
 export type Aisle = 'produce' | 'meat_seafood' | 'dairy_eggs' | 'frozen' | 'pantry' | 'other'
 
 /** An item of an order's shopping list. */
+/** A product at the store, and how many of it: packages, bags, or pieces. */
+export interface Product {
+  product_id: string
+  name: string
+  /** As the store labels it: "2 lb", "13.5 fl oz", or "per lb" for weighed items. */
+  size: string | null
+  /** One's price in cents (estimated for weighed items); null if the store shows none. */
+  price_cents: number | null
+  /** Weighed items: the price per pound, and a package's estimated weight. */
+  price_per_lb_cents: number | null
+  estimated_lb: number | null
+  image_url: string | null
+  bought_before: boolean
+  count: number
+}
+
 export interface ShoppingItem {
   id: string
   name: string
@@ -113,7 +129,16 @@ export interface ShoppingItem {
   meal_ids: string[]
   /** Assumed on hand (salt, pepper, ...): never ordered, shown only on request. */
   on_hand: boolean
+  /** Taken off the list, or its product not to be bought. */
   removed: boolean
+  /** What's bought for it at the store, once the list is shopped; null for an item the store doesn't have until the member picks an alternative. */
+  product: Product | null
+  /** What the member can switch to (up to 8), or why there are none. */
+  alternatives: Product[]
+  no_alternatives_reason: string | null
+  /** The store doesn't have it; why the meals work without it, if they do. */
+  not_found: boolean
+  skippable_reason: string | null
 }
 
 /** A draft's shopping list: its newest build, and the newest succeeded build's items. */
@@ -121,6 +146,10 @@ export interface ShoppingList {
   job: Job
   /** Ready for the order's picks and servings now: the newest build succeeded, from them. */
   current: boolean
+  /** Shopping the list at the store: its newest shop job (null until it starts). */
+  shop: Job | null
+  /** The store it's shopped at: "Wegmans". */
+  store: string
   /** By aisle; empty until a build succeeds. */
   items: ShoppingItem[]
 }

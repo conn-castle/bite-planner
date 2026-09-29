@@ -45,7 +45,12 @@ export function ListPage({ tab }: { tab: OrderTab }) {
               { value: order.meals.length, label: order.meals.length === 1 ? 'meal' : 'meals' },
             ]}
           />
-          <ShoppingList items={toBuy} amount={itemAmount} forMeals={(item) => forMeals(item, names)} />
+          <ShoppingList
+            items={toBuy}
+            amount={itemAmount}
+            forMeals={(item) => forMeals(item, names)}
+            shop={toBuy.some((item) => item.product !== null) ? {} : undefined}
+          />
           <Note icon="lock">Order {order.number} is placed, so its list is read-only.</Note>
         </div>
       )}
