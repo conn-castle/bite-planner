@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { OrderLock } from '../../lib/api/types'
-import { lockHolder, lockRequest } from './lock'
+import type { GroceryOrder, OrderLock, OrderStep } from '../../lib/api/types'
+import { lockHolder, lockRequest, withLock } from './lock'
 
 const lock = (userId: string, session: string | null): OrderLock => ({
   member: { user_id: userId, name: userId === 'me' ? 'Me' : 'Sam' },
@@ -38,5 +38,39 @@ describe('lockRequest', () => {
   it("never takes another member's, or asks about a placed order", () => {
     expect(lockRequest('someone else', false)).toBeNull()
     expect(lockRequest(null, false)).toBeNull()
+  })
+})
+
+describe('withLock', () => {
+  const draft = (reached: OrderStep): GroceryOrder => ({
+    id: 'draft',
+    number: 4,
+    status: 'draft',
+    created_by: { user_id: 'me', name: 'Me' },
+    created_at: '2026-09-24T09:00:00Z',
+    target_date: null,
+    decide_by_date: null,
+    reminders_start_date: null,
+    earliest_delivery_date: '2026-09-25',
+    delivery_date: null,
+    delivery_by: null,
+    best_window: null,
+    fallback_window: null,
+    next_delivery_date: null,
+    reached_step: reached,
+    jobs: [],
+    picks: [],
+    lock: null,
+    shopping_list: null,
+    quote: null,
+  })
+  const at = (step: OrderStep): OrderLock => ({ ...lock('me', 'phone'), step })
+
+  it('keeps the copy as far along as the server: a step the lock reaches is one the flow has reached', () => {
+    expect(withLock(draft('list'), at('delivery'))).toMatchObject({ lock: at('delivery'), reached_step: 'delivery' })
+  })
+
+  it('keeps the furthest step when the member goes back', () => {
+    expect(withLock(draft('review'), at('servings'))).toMatchObject({ lock: at('servings'), reached_step: 'review' })
   })
 })

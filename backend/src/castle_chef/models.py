@@ -232,13 +232,14 @@ class GroceryOrderStatus(StrEnum):
 
 
 class OrderStep(StrEnum):
-    """The create-order flow's steps, as its lock reports where the holder is."""
+    """The create-order flow's steps, in the flow's order: where its lock's holder
+    is, and the furthest an order's flow has gone."""
 
     PICK = "pick"  # picking meals, or waiting for ideas
     SERVINGS = "servings"
+    LIST = "list"  # the shopping list: waiting for it, then reviewing it
     DELIVERY = "delivery"  # the delivery date
     NEXT = "next"  # the next delivery date
-    LIST = "list"  # the shopping list: waiting for it, then reviewing it
     REVIEW = "review"  # the final review, which places it
 
 
@@ -289,6 +290,13 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
     # delivery time is shown until then).
     delivery_by: time | None = None
     next_delivery_date: date | None = None
+    # The furthest step any opening of its flow has reached: where the flow opens
+    # again (the member can go back from there).
+    reached_step: OrderStep = Field(
+        default=OrderStep.PICK,
+        sa_type=Enum(OrderStep, name="order_step", values_callable=_values),
+        sa_column_kwargs={"server_default": OrderStep.PICK.value},
+    )
     # When it was placed, and the Neon Auth user who placed it (anyone in the
     # household can finish a draft). Both null while it's a draft.
     placed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))

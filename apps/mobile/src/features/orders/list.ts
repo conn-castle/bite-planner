@@ -80,9 +80,13 @@ export function totalShown({ cents, unpriced }: { cents: number; unpriced: numbe
   return `${formatMoney(cents)}${unpriced > 0 ? '+' : ''}`
 }
 
-/** The order's list, if it's ready for its picks now: made, shopped, and every item the store doesn't have decided. */
+/**
+ * The order's list, if it's ready for its picks now: made, shopped, every item
+ * the store doesn't have decided, and something left to buy.
+ */
 export function readyList(order: Pick<GroceryOrder, 'shopping_list'>): ShoppingList | null {
   const list = order.shopping_list
   if (list === null || listState(list) !== 'ready' || undecided(list.items).length > 0) return null
+  if (productTotals(splitList(list.items).toBuy).count === 0) return null
   return list
 }

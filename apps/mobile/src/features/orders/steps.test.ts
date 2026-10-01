@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { GroceryOrder, Job } from '../../lib/api/types'
+import type { GroceryOrder, Job, ShoppingItem } from '../../lib/api/types'
 import { stepShown } from './steps'
 
 const batch: Job = {
@@ -24,6 +24,7 @@ const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
+  reached_step: 'pick',
   jobs: [batch],
   picks: [{ meal_id: 'tacos', servings: 4 }],
   lock: null,
@@ -33,12 +34,38 @@ const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   fallback_window: null,
   ...fields,
 })
+const onions: ShoppingItem = {
+  id: 'onions',
+  name: 'yellow onions',
+  quantity: 2,
+  recipe_quantity: 2,
+  unit: null,
+  aisle: 'produce',
+  meal_ids: ['tacos'],
+  on_hand: false,
+  removed: false,
+  product: {
+    product_id: '17499438',
+    name: 'Wegmans Onions, Yellow',
+    size: '2 lb',
+    price_cents: 229,
+    price_per_lb_cents: null,
+    estimated_lb: null,
+    image_url: null,
+    bought_before: true,
+    count: 1,
+  },
+  alternatives: [],
+  no_alternatives_reason: null,
+  not_found: false,
+  skippable_reason: null,
+}
 const list = (current: boolean) => ({
   job: { ...batch, id: 'build', kind: 'build_list' as const },
   current,
   shop: { ...batch, id: 'shop', kind: 'shop' as const },
   store: 'Wegmans',
-  items: [],
+  items: [onions],
 })
 
 describe('stepShown', () => {
@@ -47,6 +74,22 @@ describe('stepShown', () => {
     for (const step of ['pick', 'servings', 'list', 'delivery', 'next', 'review'] as const) {
       expect(stepShown(ready, step)).toBe(step)
     }
+  })
+
+  it("opens where the order's flow got to, and shows the step the member goes to after", () => {
+    const reviewed = order({ shopping_list: list(true), reached_step: 'review' })
+    expect(stepShown(reviewed, undefined)).toBe('review')
+    expect(stepShown(reviewed, 'servings')).toBe('servings')
+    expect(stepShown(order({ shopping_list: list(true) }), undefined)).toBe('pick')
+  })
+
+  it('opens as far as the order allows when it no longer supports the step its flow got to', () => {
+    // The picks changed after the list was made: their list is next.
+    expect(stepShown(order({ shopping_list: list(false), reached_step: 'review' }), undefined)).toBe('list')
+    expect(stepShown(order({ picks: [], reached_step: 'review' }), undefined)).toBe('pick')
+    // Everything on the list was taken off since.
+    const emptied = { ...list(true), items: [{ ...onions, removed: true }] }
+    expect(stepShown(order({ shopping_list: emptied, reached_step: 'review' }), undefined)).toBe('list')
   })
 
   it('goes back to picking when there is nothing picked', () => {

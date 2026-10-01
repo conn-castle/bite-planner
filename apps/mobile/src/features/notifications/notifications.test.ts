@@ -292,6 +292,7 @@ describe('what a tap leads to', () => {
     delivery_date: null,
     delivery_by: null,
     next_delivery_date: null,
+    reached_step: 'pick',
     jobs: [],
     picks: [],
     lock: null,

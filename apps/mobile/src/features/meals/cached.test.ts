@@ -29,6 +29,7 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
+  reached_step: 'pick',
   jobs: [
     {
       id: 'job',

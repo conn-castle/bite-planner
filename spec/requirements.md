@@ -36,7 +36,7 @@ Each step does one thing.
 ## Draft order
 
 - [ ] An unplaced order is a household draft: its suggestions, picks, and dismissals are kept when the flow is closed.
-- [x] Any household member can resume the draft.
+- [x] Any household member can resume the draft, at the furthest step its flow has reached.
 - [x] A household member can discard the draft.
 
 ## Picking meals

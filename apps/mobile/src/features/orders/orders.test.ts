@@ -35,6 +35,7 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
+  reached_step: 'pick',
   jobs: [],
   picks: mealIds.map((meal_id) => ({ meal_id, servings: 4 })),
   lock: null,

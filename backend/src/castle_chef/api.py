@@ -245,6 +245,8 @@ class GroceryOrderOut(BaseModel):
     best_window: windows.Window | None
     fallback_window: windows.Window | None
     next_delivery_date: date | None
+    # The furthest step its flow has reached: where the flow opens again.
+    reached_step: OrderStep
     # Its jobs, oldest first: the suggestions are their meals.
     jobs: list[JobOut]
     # In the order their meals were suggested.
@@ -707,6 +709,7 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
         best_window=windows.choose(windows.DAY, by),
         fallback_window=windows.fallback(by),
         next_delivery_date=order.next_delivery_date,
+        reached_step=order.reached_step,
         jobs=[job_out(job, meals[job.id], people, rated) for job in jobs],
         picks=[
             PickOut(meal_id=pick.meal.id, servings=pick.servings)

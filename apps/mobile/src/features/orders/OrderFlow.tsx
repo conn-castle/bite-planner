@@ -44,7 +44,7 @@ interface OrderFlowModalProps {
    * none): a notification's, which must never start a new one.
    */
   orderId?: string
-  /** The step it opens at (a notification's: the shopping list); picking meals otherwise. */
+  /** The step it opens at (a notification's: the shopping list); the furthest the order's flow has reached otherwise. */
   startAt?: Step
 }
 
@@ -151,13 +151,25 @@ interface OrderFlowProps {
 function OrderFlow({ orderId, startAt, session, onShown, onClose, onOpenMeal, onOpenProduct }: OrderFlowProps) {
   const open = useOpenOrder()
   const { mutate: openOrder } = open
-  const reopen = () => openOrder({ jobId: crypto.randomUUID(), session })
   const userId = useSession().data?.user.id
   // The household's draft shows at once when it's cached, while opening it confirms it (or makes one).
   const cachedDraftId = useNextOrder().data?.draft?.id
   const order = useOrder(orderId ?? open.data?.id ?? cachedDraftId, session)
   const { refetch } = order
-  const [step, setStep] = useState<Step>(startAt ?? 'pick')
+  // The step the member is at: a notification's to start with; otherwise, once the
+  // order is fetched for this opening, the furthest its flow has reached (the copy
+  // shown until then may be behind), as far as the order supports it. Then only
+  // the member moves it, so a list finishing never skips them past it.
+  const [step, setStep] = useState<Step | undefined>(startAt)
+  const startFrom = useCallback((opened: GroceryOrder) => setStep((at) => at ?? stepShown(opened, undefined)), [])
+  const reopen = () => openOrder({ jobId: crypto.randomUUID(), session }, { onSuccess: startFrom })
+  const refetchGiven = useCallback(
+    () =>
+      void refetch().then((fetched) => {
+        if (fetched.status === 'success') startFrom(fetched.data)
+      }),
+    [refetch, startFrom],
+  )
   // Where the flow is, as the lock tells the others.
   const shownStep: Step = order.shown === undefined ? 'pick' : stepShown(order.shown, step)
   // The copy cached before opening (the next order's) may be out of date; the lock goes by the order itself.
@@ -194,13 +206,14 @@ function OrderFlow({ orderId, startAt, session, onShown, onClose, onOpenMeal, on
   }, [today, refetch])
 
   // Opening the flow gets or creates the draft, once (a development re-mount must
-  // not repeat it); a given order is only fetched.
+  // not repeat it); a given order is only fetched (again: the copy cached may be behind).
   const opened = useRef(false)
   useEffect(() => {
-    if (opened.current || orderId !== undefined) return
+    if (opened.current) return
     opened.current = true
-    openOrder({ jobId: crypto.randomUUID(), session })
-  }, [openOrder, orderId, session])
+    if (orderId === undefined) openOrder({ jobId: crypto.randomUUID(), session }, { onSuccess: startFrom })
+    else refetchGiven()
+  }, [openOrder, orderId, session, startFrom, refetchGiven])
 
   // A discarded draft wins over the copy still on screen, once opening has settled
   // (it may be making a new draft to replace a cached one that's gone).
@@ -259,7 +272,7 @@ function OrderFlow({ orderId, startAt, session, onShown, onClose, onOpenMeal, on
           <Notice
             action={
               // A given order is fetched again, never made.
-              <button onClick={() => (orderId ? void refetch() : reopen())}>
+              <button onClick={() => (orderId ? refetchGiven() : reopen())}>
                 Try again
               </button>
             }
@@ -298,7 +311,8 @@ function FlowLoading({ onClose, label }: { onClose: () => void; label?: string }
 
 interface OrderStepProps {
   order: GroceryOrder
-  step: Step
+  /** The step the member is at; undefined until known (the furthest the order's flow has reached shows). */
+  step: Step | undefined
   setStep: (step: Step) => void
   onClose: () => void
   onOpenMeal: OpenMeal

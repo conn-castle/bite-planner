@@ -29,11 +29,13 @@ export function stepDoing(step: OrderStep): string {
 }
 
 /**
- * The step to show: the one the user is at, unless the order can't support it
- * (e.g. another change removed every pick: picking meals; the list not made,
- * shopped, and decided for these picks: the list; no delivery date yet: that step).
+ * The step to show: the one the user went to (undefined: none yet, as the flow
+ * opens: the furthest the order's flow has reached), unless the order can't
+ * support it (e.g. another change removed every pick: picking meals; the list not
+ * made, shopped, and decided for these picks: the list; no delivery date yet: that step).
  */
-export function stepShown(order: GroceryOrder, step: OrderStep): OrderStep {
+export function stepShown(order: GroceryOrder, chosen: OrderStep | undefined): OrderStep {
+  const step = chosen ?? order.reached_step
   if (suggestions(order).length === 0 || order.picks.length === 0) return 'pick'
   const afterList: OrderStep[] = ['delivery', 'next', 'review']
   if (afterList.includes(step) && readyList(order) === null) return 'list'

@@ -122,6 +122,11 @@ describe('the shopped list', () => {
     expect(readyList({ shopping_list: { ...shopped, items: [item({})] } })).not.toBeNull()
   })
 
+  it('is not ready to go on with nothing left to buy', () => {
+    const shopped = { ...list('succeeded', true), items: [item({ removed: true }), item({ id: 'x', on_hand: true })] }
+    expect(readyList({ shopping_list: shopped })).toBeNull()
+  })
+
   it('totals the products bought, not the ones skipped', () => {
     const items = [item({}), item({ id: 'x', removed: true }), item({ id: 'y', on_hand: true, product: null })]
     expect(productTotals(items)).toEqual({ count: 1, cents: 458, unpriced: 0 })

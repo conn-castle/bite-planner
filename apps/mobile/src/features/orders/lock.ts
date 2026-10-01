@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import type { GroceryOrder, OrderLock } from '../../lib/api/types'
+import { stepIndex } from './steps'
 
 /**
  * The order lock: only one ordering session (one opening of the order flow, on
@@ -54,3 +55,13 @@ export function lockedByOther(order: GroceryOrder | null | undefined, userId: st
 
 /** Why the flow can't change the order: another member has it, or this member on another phone. */
 export type LockedOut = { by: 'someone else' | 'you elsewhere'; lock: OrderLock } | null
+
+/**
+ * The order with the lock the server just gave or renewed for this session: the
+ * step the lock is at is one its flow has reached, so the copy kept stays as far
+ * along as the server's (where the flow opens again).
+ */
+export function withLock(order: GroceryOrder, lock: OrderLock): GroceryOrder {
+  const reached = stepIndex(lock.step) > stepIndex(order.reached_step) ? lock.step : order.reached_step
+  return { ...order, lock, reached_step: reached }
+}

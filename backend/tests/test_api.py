@@ -649,6 +649,7 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "best_window": {"start": "16:00:00", "end": "18:00:00"},
         "fallback_window": {"start": "17:00:00", "end": "19:00:00"},
         "next_delivery_date": None,
+        "reached_step": "pick",
         "jobs": [],
         "picks": [],
         "lock": draft["lock"],
@@ -1936,6 +1937,23 @@ def test_renewing_keeps_the_lock_and_says_where_the_member_is(
     assert get_order(client, order_id, DAD)["lock"] is None
     assert ok(renew(client, order_id))["member"]["user_id"] == str(MOM)
     assert get_order(client, order_id, DAD)["lock"]["member"]["user_id"] == str(MOM)
+
+
+def test_the_draft_keeps_the_furthest_step_its_flow_reached_for_whoever_opens_it_next(
+    client: TestClient,
+) -> None:
+    order_id = open_draft(client)["id"]
+    assert get_order(client, order_id)["reached_step"] == "pick"
+
+    # Mom goes through the list to the delivery date, then back to the servings.
+    for step in ("servings", "list", "delivery", "list", "servings"):
+        ok(renew(client, order_id, step=step))
+    close_flow(client, order_id)
+
+    # Dad opens it where she got to; his flow going further moves it on.
+    assert open_draft(client, DAD)["reached_step"] == "delivery"
+    ok(renew(client, order_id, DAD, step="review"))
+    assert get_order(client, order_id, DAD)["reached_step"] == "review"
 
 
 def test_a_lock_two_minutes_old_goes_to_whoever_opens_the_order_next(

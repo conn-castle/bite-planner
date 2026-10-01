@@ -6,7 +6,7 @@ import { ApiError } from '../../lib/api/errors'
 import type { GroceryOrder, OrderLock, OrderStep } from '../../lib/api/types'
 import { errorFields, logger } from '../../lib/log'
 import { queryKeys } from '../../lib/query/keys'
-import { LOCK_RENEW_MS, type LockedOut, lockHolder, lockRequest } from './lock'
+import { LOCK_RENEW_MS, type LockedOut, lockHolder, lockRequest, withLock } from './lock'
 import { FlowClosed, takeLock } from './orders'
 
 interface OrderLockState {
@@ -58,7 +58,7 @@ export function useOrderLock(
           logger.info('orders.lock_taken', { orderId })
         } else {
           const lock = await apiRequest<OrderLock>('PUT', `/v1/grocery-orders/${orderId}/lock`, { step }, session)
-          queryClient.setQueryData<GroceryOrder>(queryKeys.order(orderId), (cached) => cached && { ...cached, lock })
+          queryClient.setQueryData<GroceryOrder>(queryKeys.order(orderId), (cached) => cached && withLock(cached, lock))
         }
       } catch (error) {
         if (error instanceof FlowClosed) return

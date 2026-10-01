@@ -28,6 +28,7 @@ const order: GroceryOrder = {
   delivery_date: '2026-09-29',
   delivery_by: null,
   next_delivery_date: '2026-10-02',
+  reached_step: 'pick',
   jobs: [],
   picks: [{ meal_id: 'tacos', servings: 4 }],
   lock: null,

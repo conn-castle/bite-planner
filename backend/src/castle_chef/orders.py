@@ -131,7 +131,15 @@ def _take(order: GroceryOrder, orderer: Orderer, step: OrderStep, now: datetime)
         order.locked_at = now
     order.locked_by, order.lock_session = orderer.user_id, orderer.session
     order.lock_renewed_at, order.lock_step = now, step
+    _reach(order, step)
     return True
+
+
+def _reach(order: GroceryOrder, step: OrderStep) -> None:
+    """Note a step the flow is at, if it's further than the order has gone."""
+    flow = list(OrderStep)
+    if flow.index(step) > flow.index(order.reached_step):
+        order.reached_step = step
 
 
 def _check_session(session: Session, order: GroceryOrder, orderer: Orderer) -> None:
@@ -282,6 +290,7 @@ def renew_lock(
     took over, changes nothing (OrderLocked)."""
     order = lock_draft(session, household_id, order_id, orderer)
     order.lock_renewed_at, order.lock_step = utc_now(), step
+    _reach(order, step)
     session.add(order)
     session.commit()
     session.refresh(order)

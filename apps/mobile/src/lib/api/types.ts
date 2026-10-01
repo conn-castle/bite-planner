@@ -225,6 +225,8 @@ export interface GroceryOrder {
   /** The one window booking may use that ends after that time, if nothing ending by it is left ("or 2–4 PM"). */
   fallback_window: DeliveryWindow | null
   next_delivery_date: ISODate | null
+  /** The furthest step its flow has reached: where the flow opens again. */
+  reached_step: OrderStep
   /** Its batches of suggestions, oldest first; the suggestions are their meals. */
   jobs: Job[]
   /** In the order their meals were suggested. */
@@ -237,8 +239,8 @@ export interface GroceryOrder {
   quote: Quote | null
 }
 
-/** The create-order flow's steps, as a lock reports where its holder is. */
-export type OrderStep = 'pick' | 'servings' | 'delivery' | 'next' | 'list' | 'review'
+/** The create-order flow's steps, in order: where a lock's holder is, and how far an order's flow has gone. */
+export type OrderStep = 'pick' | 'servings' | 'list' | 'delivery' | 'next' | 'review'
 
 /**
  * The order lock: one ordering session (an opening of the flow, on one phone)

@@ -35,7 +35,7 @@ import {
   type SetNotForUs,
   type SetServings,
 } from './edits'
-import { LOCK_RENEW_MS } from './lock'
+import { LOCK_RENEW_MS, withLock } from './lock'
 
 /**
  * Grocery orders: the household's next order and its draft, everything the
@@ -468,7 +468,7 @@ export function registerOrderMutations(queryClient: QueryClient) {
     scope: EDITS,
     meta: NOT_PERSISTED,
     onSuccess: (lock: OrderLock, { orderId }: TakeLock) =>
-      queryClient.setQueryData<GroceryOrder>(orderKey(orderId), (order) => order && { ...order, lock }),
+      queryClient.setQueryData<GroceryOrder>(orderKey(orderId), (order) => order && withLock(order, lock)),
   })
 
   queryClient.setMutationDefaults(RELEASE, {
