@@ -12,8 +12,9 @@ import { Skeleton } from '../../ui/Skeleton'
 import { MealPage } from '../meals/MealPage'
 import { loadingIdeas, setOrderFlowOpen, stopAwaitingIdeas, useAwaitedIdeas } from '../notifications/notifications'
 import { useSession } from '../session/session'
+import { useHousehold } from '../settings/settings'
 import { suggestions } from './batches'
-import { shownDeliveryDate, shownNextDeliveryDate } from './dates'
+import { shownDeliveryBy, shownDeliveryDate, shownNextDeliveryDate } from './dates'
 import { DeliveryStep } from './DeliveryStep'
 import { FlowFrame } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
@@ -308,6 +309,7 @@ interface OrderStepProps {
 function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenProduct }: OrderStepProps) {
   const session = useOrderSession()
   const { mutate: startList } = useStartList()
+  const household = useHousehold().shown
   if (order.status === 'placed') return <PlacedStep order={order} onClose={onClose} />
   if (suggestions(order).length === 0) return <WaitStep order={order} onClose={onClose} />
 
@@ -361,6 +363,7 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenProduct }:
     <ReviewStep
       order={order}
       delivery={delivery}
+      by={shownDeliveryBy(order, household?.delivery_time)}
       next={next}
       onOpenMeal={onOpenMeal}
       onChange={setStep}

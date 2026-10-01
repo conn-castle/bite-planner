@@ -48,6 +48,21 @@ database_url() {
   export DATABASE_URL
 }
 
+# Checkout reads the household's Instacart session from SSM (the task role does in
+# AWS): short-lived credentials from the `conn` profile, passed by environment only.
+aws_credentials() {
+  local exported
+  aws_args=(--env AWS_DEFAULT_REGION=us-east-1
+    --env CASTLE_CHEF_INSTACART_SESSION_PARAMETER=/castle-chef/shared/instacart-session)
+  if exported=$(aws configure export-credentials --profile conn --format env 2>/dev/null); then
+    eval "$exported"
+    aws_args+=(--env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY --env AWS_SESSION_TOKEN)
+  else
+    # The job then fails reading the session, saying so.
+    echo "No AWS sign-in (aws sso login --profile conn --use-device-code): a job that opens Instacart's checkout will fail." >&2
+  fi
+}
+
 # EFS's access points make each login directory the agent user's, mode 700.
 prepare_login_volume() {
   docker run --rm --platform linux/amd64 --volume "$LOGIN_VOLUME:$LOGIN_DIR" \
@@ -82,9 +97,10 @@ case "${1:-}" in
     need_image
     database_url
     prepare_login_volume
+    aws_credentials
     container=castle-chef-job-$job_id
     status=0
-    docker run --name "$container" "${fargate_args[@]}" \
+    docker run --name "$container" "${fargate_args[@]}" "${aws_args[@]}" \
       --env DATABASE_URL --env "CASTLE_CHEF_JOB_ID=$job_id" "$IMAGE" || status=$?
     out=${XDG_STATE_HOME:-$HOME/.local/state}/castle-chef/docker-jobs/$job_id
     mkdir -p "$out"

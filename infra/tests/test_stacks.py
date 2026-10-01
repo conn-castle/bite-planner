@@ -128,6 +128,23 @@ def test_the_worker_can_mount_only_the_login_access_points(runtime: Template) ->
     assert len(allowed) == len(access_points)
 
 
+def test_the_worker_reads_and_renews_the_instacart_session(runtime: Template) -> None:
+    granted = [
+        (policy["Properties"]["Roles"], statement)
+        for policy in runtime.find_resources("AWS::IAM::Policy").values()
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]
+        if "instacart-session" in json.dumps(statement["Resource"])
+    ]
+    # Only the worker's task role (not its execution role, or any other).
+    [(roles, statement)] = granted
+    assert "WorkerTaskRole" in json.dumps(roles)
+    assert statement["Action"] == ["ssm:GetParameter", "ssm:PutParameter"]
+    environment = {e["Name"]: e["Value"] for e in worker_container(runtime)["Environment"]}
+    assert environment["CASTLE_CHEF_INSTACART_SESSION_PARAMETER"] == (
+        "/castle-chef/shared/instacart-session"
+    )
+
+
 def test_each_queued_job_starts_one_worker_with_its_id(runtime: Template) -> None:
     runtime.has_resource_properties(
         "AWS::Pipes::Pipe",

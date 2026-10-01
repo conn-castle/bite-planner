@@ -35,11 +35,11 @@ RUN uv sync --frozen --no-default-groups --group api
 
 FROM build AS worker-build
 COPY backend/agent ./agent
-RUN uv sync --frozen --no-default-groups --no-install-project
+RUN uv sync --frozen --no-default-groups --group worker --no-install-project
 COPY backend/alembic.ini ./
 COPY backend/migrations ./migrations
 COPY backend/src ./src
-RUN uv sync --frozen --no-default-groups
+RUN uv sync --frozen --no-default-groups --group worker
 
 # The agent's own environment: only its commands (castle_chef_agent) and their
 # dependencies, installed as a package (no source tree), with a `castle-chef` launcher.
@@ -59,6 +59,26 @@ ADD --checksum=sha256:0e211868c9fd73cb49ad35ac675b5eafdf6b9f453df8a493df980c59a5
 RUN mkdir /opt/codex && tar -xzf /tmp/codex.tar.gz -C /opt/codex \
  && chmod -R a+rX /opt/codex && /opt/codex/bin/codex --version
 
+# Chrome Headless Shell, for the agent's Instacart checkout tools (castle_chef_agent.checkout):
+# the build Playwright expects (uv.lock's playwright 1.63.0: chromium-headless-shell
+# revision 1243), where Playwright looks for it. Unzipped keeping each file's mode.
+FROM python AS chromium
+ADD --checksum=sha256:a9da028861a0cf789ff25c2fed45f5f1aaf969ed9247835b6a7821a4f7af9d1d \
+    https://cdn.playwright.dev/builds/cft/153.0.8010.12/linux64/chrome-headless-shell-linux64.zip \
+    /tmp/chromium.zip
+RUN python - <<'PY'
+import os, zipfile
+target = "/opt/ms-playwright/chromium_headless_shell-1243"
+with zipfile.ZipFile("/tmp/chromium.zip") as archive:
+    for entry in archive.infolist():
+        path = archive.extract(entry, target)
+        if not entry.is_dir():
+            os.chmod(path, (entry.external_attr >> 16 & 0o777) | 0o444)
+for marker in ("INSTALLATION_COMPLETE", "DEPENDENCIES_VALIDATED"):
+    open(os.path.join(target, marker), "w").close()
+PY
+RUN chmod -R a+rX /opt/ms-playwright
+
 FROM python AS api
 COPY --from=lambda-adapter /lambda-adapter /opt/extensions/lambda-adapter
 COPY --from=api-build /app/backend /app/backend
@@ -69,6 +89,20 @@ ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
 CMD ["uvicorn", "castle_chef.api:app", "--host", "0.0.0.0", "--port", "8080"]
 
 FROM python AS worker
+# The headless shell's libraries (Playwright's list for Debian 13), from the Debian
+# snapshot the base image was built from, so the versions are fixed.
+RUN sed -i \
+      -e 's|^URIs: http://deb.debian.org/debian$|URIs: http://snapshot.debian.org/archive/debian/20260918T000000Z|' \
+      -e 's|^URIs: http://deb.debian.org/debian-security$|URIs: http://snapshot.debian.org/archive/debian-security/20260918T000000Z|' \
+      /etc/apt/sources.list.d/debian.sources \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get install -y --no-install-recommends \
+      fonts-liberation libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
+      libcairo2 libcups2t64 libdbus-1-3 libdrm2 libfontconfig1 libgbm1 libglib2.0-0t64 \
+      libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+      libxfixes3 libxkbcommon0 libxrandr2 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=chromium /opt/ms-playwright /opt/ms-playwright
 # The agent runs as this unprivileged user; the worker (root) starts it.
 RUN groupadd --gid 65532 agent \
  && useradd --uid 65532 --gid 65532 --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin agent
@@ -96,10 +130,11 @@ ENV GROK_DISABLE_API_KEY_AUTH=true \
     CASTLE_CHEF_AGENT_COMMAND="al -q grok" \
     CASTLE_CHEF_AGENT_UID=65532 \
     CASTLE_CHEF_AGENT_PATH=/opt/castle-chef-agent/bin:/usr/local/bin:/usr/bin:/bin \
-    CASTLE_CHEF_AGENT_ENV='["GROK_AUTH_PATH","GROK_DISABLE_API_KEY_AUTH","GROK_DISABLE_AUTOUPDATER"]' \
+    CASTLE_CHEF_AGENT_ENV='["GROK_AUTH_PATH","GROK_DISABLE_API_KEY_AUTH","GROK_DISABLE_AUTOUPDATER","PLAYWRIGHT_BROWSERS_PATH"]' \
     CASTLE_CHEF_AGENT_PROJECT_TEMPLATE=/opt/castle-chef/agent-project \
     CASTLE_CHEF_AGENT_PROJECT_DIR=/tmp/agent-project \
     CASTLE_CHEF_CODEX_COMMAND=/opt/codex/bin/codex \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     CASTLE_CHEF_JOBS_DIR=/tmp/jobs \
     CASTLE_CHEF_LOGS_DIR=/tmp/logs
 # The commit is the image's; the release version is set by the deploy (infra/).

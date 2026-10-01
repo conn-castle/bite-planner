@@ -1,10 +1,19 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { DECIDE_BY_OFFSET_DAYS, NAME_LENGTH, REMINDER_LEAD_DAYS, SERVINGS } from '../../lib/api/limits'
-import type { Household, PersonalSettings } from '../../lib/api/types'
+import {
+  DECIDE_BY_OFFSET_DAYS,
+  NAME_LENGTH,
+  REMINDER_LEAD_DAYS,
+  SERVINGS,
+  TIP_MAX_CENTS,
+  TIP_PERCENT,
+} from '../../lib/api/limits'
+import type { Household, PersonalSettings, ProductGone } from '../../lib/api/types'
 import { errorFields, logger } from '../../lib/log'
 import { Button } from '../../ui/Button'
 import { Group, Row } from '../../ui/Group'
+import { Icon } from '../../ui/Icon'
+import { formatMoney } from '../../lib/products'
 import { Notice } from '../../ui/Notice'
 import { Page } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
@@ -125,6 +134,75 @@ function HouseholdGroup({ household, userId }: { household: Household; userId: s
         />
         <Row label="Members" detail={members.join(', ')} />
       </Group>
+      <Group
+        title="Delivery"
+        footerIcon="truck"
+        footer="Each order arrives by the delivery time unless you choose another. The tip is added when it's booked at Instacart."
+      >
+        <Row
+          label="Delivery time"
+          sub="The latest it should arrive"
+          detail={
+            <TimeField
+              // "18:00:00" from the server; the field shows hours and minutes.
+              value={household.delivery_time.slice(0, 5)}
+              label="Delivery time"
+              onChange={(time) => change.mutate({ delivery_time: time })}
+            />
+          }
+        />
+        <Row
+          label="Tip"
+          sub="Of the items' total"
+          detail={
+            <Stepper
+              inRow
+              value={household.tip_percent}
+              min={TIP_PERCENT.min}
+              max={TIP_PERCENT.max}
+              format={(value) => `${value}%`}
+              label="Tip percentage"
+              onChange={(value) => change.mutate({ tip_percent: value })}
+            />
+          }
+        />
+        <Row
+          label="Maximum tip"
+          sub="Never more, whatever the percentage"
+          detail={
+            <Stepper
+              inRow
+              value={household.tip_max_cents}
+              min={TIP_MAX_CENTS.min}
+              max={TIP_MAX_CENTS.max}
+              step={100}
+              format={(value) => formatMoney(value).replace(/\.00$/, '')}
+              label="Maximum tip"
+              onChange={(value) => change.mutate({ tip_max_cents: value })}
+            />
+          }
+        />
+      </Group>
+      <Group
+        title="If a product is gone"
+        footer="When an order is booked and one of its products is no longer available. With no alternative left, it asks either way."
+      >
+        {PRODUCT_GONE.map((option) => (
+          <Row
+            key={option.value}
+            label={option.label}
+            sub={option.sub}
+            detail={
+              household.product_gone === option.value ? (
+                <span role="img" aria-label="Chosen">
+                  <Icon name="check" />
+                </span>
+              ) : undefined
+            }
+            onClick={() => change.mutate({ product_gone: option.value })}
+          />
+        ))}
+      </Group>
       {error && (
         <div className={styles.notice}>
           <Notice>Couldn't save the change: {error.message}</Notice>
@@ -133,6 +211,11 @@ function HouseholdGroup({ household, userId }: { household: Household; userId: s
     </>
   )
 }
+
+const PRODUCT_GONE: readonly { value: ProductGone; label: string; sub: string }[] = [
+  { value: 'use_alternative', label: 'Use an alternative', sub: 'The first of its alternatives available' },
+  { value: 'ask', label: 'Ask me', sub: 'Nothing is ordered until you choose' },
+]
 
 function PersonalGroup({ settings }: { settings: PersonalSettings }) {
   const change = useChangePersonal()

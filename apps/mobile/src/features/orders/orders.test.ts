@@ -2,7 +2,7 @@ import { MutationObserver, QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiRequest } from '../../lib/api/client'
 import { ApiError } from '../../lib/api/errors'
-import type { GroceryOrder, Job, Meal, NextOrder, OrderDates } from '../../lib/api/types'
+import type { GroceryOrder, Job, Meal, NextOrder } from '../../lib/api/types'
 import { queryKeys } from '../../lib/query/keys'
 import type { SetMeal, SetNotForUs, SetServings } from './edits'
 import {
@@ -10,6 +10,7 @@ import {
   FlowClosed,
   nextQuery,
   type OpenOrder,
+  type PlacedDates,
   type PlaceOrder,
   registerOrderMutations,
   type StartList,
@@ -32,11 +33,15 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   reminders_start_date: null,
   earliest_delivery_date: '2026-09-25',
   delivery_date: null,
+  delivery_by: null,
   next_delivery_date: null,
   jobs: [],
   picks: mealIds.map((meal_id) => ({ meal_id, servings: 4 })),
   lock: null,
   shopping_list: null,
+  quote: null,
+  best_window: null,
+  fallback_window: null,
 })
 
 // The ordering session of the flow making the changes.
@@ -170,20 +175,23 @@ describe('opening the draft', () => {
 })
 
 describe('placing the order', () => {
-  const place = (dates: OrderDates) =>
+  const place = (dates: PlacedDates) =>
     new MutationObserver<GroceryOrder, Error, PlaceOrder>(queryClient, { mutationKey: ['orders', 'place'] }).mutate({
       orderId: 'draft',
       dates,
+      quoteId: 'quote-1',
       session,
     })
-  const dates: OrderDates = { delivery_date: '2026-09-27', next_delivery_date: '2026-09-30' }
+  const dates: PlacedDates = { delivery_date: '2026-09-27', delivery_by: '18:00', next_delivery_date: '2026-09-30' }
 
-  it('sends the dates shown with it, and keeps the placed order', async () => {
+  it('sends the dates and time shown with it, and the total it was placed for, and keeps the placed order', async () => {
     request.mockResolvedValue({ ...draft(['soup']), ...dates, status: 'placed' })
 
     const placed = await place(dates)
 
-    expect(request.mock.calls).toEqual([['POST', '/v1/grocery-orders/draft/place', dates, session]])
+    expect(request.mock.calls).toEqual([
+      ['POST', '/v1/grocery-orders/draft/place', { ...dates, quote_id: 'quote-1' }, session],
+    ])
     expect(placed.status).toBe('placed')
     expect(queryClient.getQueryData<GroceryOrder>(queryKeys.order('draft'))?.status).toBe('placed')
   })

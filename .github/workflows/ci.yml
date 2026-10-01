@@ -36,6 +36,8 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      # The checkout tools' tests drive a headless browser: the build uv.lock's Playwright expects.
+      - run: uv run playwright install --with-deps --only-shell chromium
       - run: uv run pytest
 
   mobile:

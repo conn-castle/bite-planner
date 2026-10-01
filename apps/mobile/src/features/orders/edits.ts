@@ -80,7 +80,9 @@ export function isOrderEdit(value: unknown): value is OrderEdit {
     return isCount(value.servings)
   }
   const { dates } = value
-  return isRecord(dates) && isDate(dates.delivery_date) && isDate(dates.next_delivery_date)
+  return (
+    isRecord(dates) && isDate(dates.delivery_date) && isDate(dates.delivery_by) && isDate(dates.next_delivery_date)
+  )
 }
 
 /** The order as it will be once every change is saved. */

@@ -26,11 +26,15 @@ const order: GroceryOrder = {
   reminders_start_date: null,
   earliest_delivery_date: '2026-09-26',
   delivery_date: '2026-09-29',
+  delivery_by: null,
   next_delivery_date: '2026-10-02',
   jobs: [],
   picks: [{ meal_id: 'tacos', servings: 4 }],
   lock: null,
   shopping_list: null,
+  quote: null,
+  best_window: null,
+  fallback_window: null,
 }
 
 const picked = (shown: GroceryOrder) => shown.picks.map((pick) => pick.meal_id)
@@ -44,10 +48,11 @@ describe('applyEdits', () => {
     const shown = applyEdits(order, [
       { session: 'phone', orderId: 'order-2', mealId: 'soup', picked: true, servings: 4 },
       { session: 'phone', orderId: 'order-2', mealId: 'tacos', picked: false },
-      { session: 'phone', orderId: 'order-2', dates: { delivery_date: '2026-09-30', next_delivery_date: null } },
+      { session: 'phone', orderId: 'order-2', dates: { delivery_date: '2026-09-30', delivery_by: '15:00', next_delivery_date: null } },
     ])
     expect(picked(shown)).toEqual(['soup'])
     expect(shown.delivery_date).toBe('2026-09-30')
+    expect(shown.delivery_by).toBe('15:00')
     expect(shown.next_delivery_date).toBeNull()
   })
 
@@ -193,7 +198,15 @@ describe('isOrderEdit', () => {
     expect(isOrderEdit({ session: 's', orderId: 'o', mealId: 'm', picked: false })).toBe(true)
     expect(isOrderEdit({ session: 's', orderId: 'o', mealId: 'm', servings: 6 })).toBe(true)
     expect(isOrderEdit({ session: 's', orderId: 'o', mealId: 'm', notForUs: false })).toBe(true)
-    expect(isOrderEdit({ session: 's', orderId: 'o', dates: { delivery_date: '2026-09-30', next_delivery_date: null } })).toBe(true)
+    expect(
+      isOrderEdit({
+        session: 's',
+        orderId: 'o',
+        dates: { delivery_date: '2026-09-30', delivery_by: '15:00', next_delivery_date: null },
+      }),
+    ).toBe(true)
+    // Saved before there was a delivery time: not a change this app can show.
+    expect(isOrderEdit({ session: 's', orderId: 'o', dates: { delivery_date: '2026-09-30', next_delivery_date: null } })).toBe(false)
   })
 
   it('rejects anything else a pending mutation may hold', () => {

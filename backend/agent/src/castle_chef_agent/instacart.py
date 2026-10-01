@@ -141,6 +141,8 @@ class Cart(BaseModel):
     # Whether checkout is allowed; if not, why (e.g. "$10 Min. to checkout").
     can_check_out: bool
     blocked_because: str | None
+    # Blocked only because the cart is below the store's order minimum.
+    below_minimum: bool
 
 
 class CartUpdate(BaseModel):
@@ -154,6 +156,8 @@ class CartUpdate(BaseModel):
 
 class _Validation(BaseModel):
     status: str | None = None
+    # Why it's invalid: MIN_TO_CHECKOUT below the store's minimum.
+    label: str | None = None
 
 
 class _CheckoutButton(BaseModel):
@@ -469,6 +473,7 @@ class Instacart:
             blocked_because=None
             if valid
             else data.checkout_button.disabled_message or "Checkout isn't allowed.",
+            below_minimum=not valid and data.cart.validation.label == "MIN_TO_CHECKOUT",
         )
 
 

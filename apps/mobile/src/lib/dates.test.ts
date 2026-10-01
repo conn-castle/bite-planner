@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addDays, daysBetween, formatDate, localDate, relativeDay, relativeMoment } from './dates'
+import { addDays, daysBetween, formatDate, formatWindow, localDate, relativeDay, relativeMoment } from './dates'
 
 // Time zones are set with vi.stubEnv('TZ', ...), which Node applies at once.
 afterEach(() => {
@@ -61,5 +61,13 @@ describe('relativeMoment', () => {
     // 8:40 PM on Sep 24 in New York is already Sep 25 in UTC.
     expect(relativeMoment(new Date('2026-09-25T00:40:00Z'), today, 'en-US')).toBe('yesterday at 8:40 PM')
     expect(relativeMoment(new Date('2026-09-22T00:40:00Z'), today, 'en-US')).toBe('on Mon, Sep 21 at 8:40 PM')
+  })
+})
+
+describe('formatWindow', () => {
+  it('shows a delivery window as its hours, with what they share once', () => {
+    expect(formatWindow({ start: '14:00:00', end: '16:00:00' }, 'en-US')).toBe('2–4 PM')
+    expect(formatWindow({ start: '11:00:00', end: '13:00:00' }, 'en-US')).toBe('11 AM–1 PM')
+    expect(formatWindow({ start: '14:30:00', end: '16:30:00' }, 'en-US')).toBe('2:30–4:30 PM')
   })
 })

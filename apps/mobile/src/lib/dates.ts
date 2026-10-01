@@ -98,3 +98,15 @@ export function formatClockTime(time: ClockTime, locale?: string): string {
   const [hours, minutes] = time.split(':').map(Number)
   return new Date(2000, 0, 1, hours, minutes).toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' })
 }
+
+/** "2–4 PM", "11 AM–1 PM": a delivery window, with the hours alone when they're on the hour. */
+export function formatWindow({ start, end }: { start: ClockTime; end: ClockTime }, locale?: string): string {
+  const at = (time: ClockTime) => {
+    const [hours, minutes] = time.split(':').map(Number)
+    return new Date(2000, 0, 1, hours, minutes)
+  }
+  const onHour = [start, end].every((time) => time.slice(3, 5) === '00')
+  const format = new Intl.DateTimeFormat(locale, onHour ? { hour: 'numeric' } : { hour: 'numeric', minute: '2-digit' })
+  // formatRange drops what the two share ("2 – 4 PM"); the dash closes up, as in the spec.
+  return format.formatRange(at(start), at(end)).replace(/\s*–\s*/, '–')
+}

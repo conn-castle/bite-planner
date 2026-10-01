@@ -1,4 +1,4 @@
-import type { GroceryOrder, ISODate, OrderDates } from '../../lib/api/types'
+import type { ClockTime, GroceryOrder, ISODate, OrderDates } from '../../lib/api/types'
 import { addDays, dateRange, daysBetween, formatDate, toLocalDate } from '../../lib/dates'
 import type { BarDay } from '../../ui/DateBar'
 import { plural } from './format'
@@ -38,11 +38,17 @@ export function shownNextDeliveryDate(delivery: ISODate, saved: ISODate | null, 
 }
 
 /**
- * The dates to save when the delivery date changes: a next delivery date on or
- * before the new delivery date no longer makes sense, so it is cleared.
+ * The dates to save when the delivery date (or its latest time) changes: a next
+ * delivery date on or before the new delivery date no longer makes sense, so it
+ * is cleared.
  */
-export function datesForDelivery(delivery: ISODate, next: ISODate | null): OrderDates {
-  return { delivery_date: delivery, next_delivery_date: next !== null && next > delivery ? next : null }
+export function datesForDelivery(delivery: ISODate, by: ClockTime | null, next: ISODate | null): OrderDates {
+  return { delivery_date: delivery, delivery_by: by, next_delivery_date: next !== null && next > delivery ? next : null }
+}
+
+/** The latest time to show: the one chosen, else the household's delivery time (null while that loads). */
+export function shownDeliveryBy(order: Pick<GroceryOrder, 'delivery_by'>, deliveryTime: ClockTime | undefined): ClockTime | null {
+  return order.delivery_by ?? deliveryTime ?? null
 }
 
 /** The days an order covers: its delivery date up to the day before the next delivery. */

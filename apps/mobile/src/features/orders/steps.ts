@@ -11,7 +11,7 @@ const FLOW_STEPS: readonly { step: OrderStep; name: string; doing: string }[] = 
   { step: 'pick', name: 'Pick meals', doing: 'picking meals' },
   { step: 'servings', name: 'Servings', doing: 'choosing the servings' },
   { step: 'list', name: 'Shopping list', doing: 'checking the shopping list' },
-  { step: 'delivery', name: 'Delivery date', doing: 'choosing the delivery date' },
+  { step: 'delivery', name: 'Delivery', doing: 'choosing the delivery day and time' },
   { step: 'next', name: 'Next delivery', doing: 'choosing the next delivery date' },
   { step: 'review', name: 'Review', doing: 'reviewing the order' },
 ]

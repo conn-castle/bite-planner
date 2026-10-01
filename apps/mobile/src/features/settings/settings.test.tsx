@@ -32,6 +32,10 @@ const household = (settings: Partial<Household> = {}): Household => ({
   decide_by_offset_days: 1,
   reminder_lead_days: 2,
   default_servings: 4,
+  delivery_time: '18:00:00',
+  tip_percent: 10,
+  tip_max_cents: 1500,
+  product_gone: 'use_alternative',
   members: [{ user_id: 'sam', name: 'Sam', email: 'sam@example.com' }],
   ...settings,
 })

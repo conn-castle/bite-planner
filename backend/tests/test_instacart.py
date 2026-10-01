@@ -65,6 +65,7 @@ def test_a_cart_under_the_store_minimum_cant_check_out(codex_home: Path) -> None
     assert (cart.items, cart.subtotal_cents) == ([], 0)
     assert not cart.can_check_out
     assert cart.blocked_because == "$10 Min. to checkout"
+    assert cart.below_minimum
 
 
 def test_updating_the_cart_sends_the_quantities_and_returns_the_cart(codex_home: Path) -> None:

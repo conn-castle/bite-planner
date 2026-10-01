@@ -13,6 +13,8 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, Relationship, SQLModel
 
+from castle_chef.checkout import CartLedger, Quote, QuoteRequest
+
 
 def utc_now() -> datetime:
     """Return the current UTC time."""
@@ -29,6 +31,8 @@ class Range(NamedTuple):
 DECIDE_BY_OFFSET_DAYS = Range(1, 7)
 REMINDER_LEAD_DAYS = Range(0, 7)  # 0: on the decide-by day
 SERVINGS = Range(1, 12)  # a pick's, and the household's default for new picks
+TIP_PERCENT = Range(0, 30)  # of the items' total
+TIP_MAX_CENTS = Range(0, 10_000)
 
 
 def _between(column: str, allowed: Range) -> str:
@@ -166,6 +170,7 @@ class JobKind(StrEnum):
     GENERATE_MEALS = "generate_meals"  # a batch of meal ideas
     BUILD_LIST = "build_list"  # the draft's shopping list
     SHOP = "shop"  # the products to buy for a list, at the Instacart store
+    QUOTE = "quote"  # what the list's products cost at checkout, for the final review
 
 
 class JobStatus(StrEnum):
@@ -188,6 +193,11 @@ class Job(TimestampMixin, SQLModel, table=True):
         CheckConstraint(
             "(kind::text = 'shop') = (build_id IS NOT NULL)", name="job_build_for_shops"
         ),
+        CheckConstraint(
+            "(kind::text = 'quote') = (quote_request IS NOT NULL)",
+            name="job_quote_request_for_quotes",
+        ),
+        CheckConstraint("kind::text = 'quote' OR quote IS NULL", name="job_quote_only_quotes"),
     )
 
     id: UUID = Field(primary_key=True)
@@ -207,6 +217,10 @@ class Job(TimestampMixin, SQLModel, table=True):
     build_id: UUID | None = Field(
         default=None, foreign_key="job.id", ondelete="CASCADE", index=True
     )
+    # A quote job's products, counts, and tip rule, as they were when it started;
+    # and, once it succeeds, what checkout showed. Null for other kinds.
+    quote_request: QuoteRequest | None = Field(default=None, sa_type=ModelJSONB(QuoteRequest))
+    quote: Quote | None = Field(default=None, sa_type=ModelJSONB(Quote))
     error: str | None = None
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
@@ -270,6 +284,10 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
         sa_type=Enum(GroceryOrderStatus, name="grocery_order_status", values_callable=_values),
     )
     delivery_date: date | None = None
+    # The latest time it should arrive by on the delivery date, in the store's
+    # time zone ("by 6:00 PM"); null until the member chooses one (the household's
+    # delivery time is shown until then).
+    delivery_by: time | None = None
     next_delivery_date: date | None = None
     # When it was placed, and the Neon Auth user who placed it (anyone in the
     # household can finish a draft). Both null while it's a draft.
@@ -381,6 +399,13 @@ class MealPreference(TimestampMixin, SQLModel, table=True):
     )
 
 
+class ProductGone(StrEnum):
+    """What booking does when an approved product is no longer available."""
+
+    USE_ALTERNATIVE = "use_alternative"  # the first of its alternatives available
+    ASK = "ask"  # nothing is ordered until whoever approved it chooses
+
+
 class Household(TimestampMixin, SQLModel, table=True):
     """A group of people who share orders and meals. Each household sees only its own."""
 
@@ -396,6 +421,10 @@ class Household(TimestampMixin, SQLModel, table=True):
         CheckConstraint(
             _between("default_servings", SERVINGS), name="household_default_servings_range"
         ),
+        CheckConstraint(_between("tip_percent", TIP_PERCENT), name="household_tip_percent_range"),
+        CheckConstraint(
+            _between("tip_max_cents", TIP_MAX_CENTS), name="household_tip_max_cents_range"
+        ),
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -406,6 +435,23 @@ class Household(TimestampMixin, SQLModel, table=True):
     reminder_lead_days: int = Field(default=2, sa_column_kwargs={"server_default": "2"})
     # The servings each picked meal starts at.
     default_servings: int = Field(default=4, sa_column_kwargs={"server_default": "4"})
+    # The latest time deliveries should arrive by (each order's starts at it), in
+    # the store's time zone.
+    delivery_time: time = Field(default=time(18, 0), sa_column_kwargs={"server_default": "18:00"})
+    # The tip: this percentage of the items' total, but never more than the maximum.
+    tip_percent: int = Field(default=10, sa_column_kwargs={"server_default": "10"})
+    tip_max_cents: int = Field(default=1500, sa_column_kwargs={"server_default": "1500"})
+    # When an approved product is gone at booking: use its first available
+    # alternative, or ask whoever approved the order.
+    product_gone: ProductGone = Field(
+        default=ProductGone.USE_ALTERNATIVE,
+        sa_type=Enum(ProductGone, name="product_gone", values_callable=_values),
+        sa_column_kwargs={"server_default": ProductGone.USE_ALTERNATIVE.value},
+    )
+    # The household's own items a run took out of its Instacart cart (and the
+    # products it put in), until they're put back (castle_chef.cart); null when
+    # the cart is the household's own.
+    cart_ledger: CartLedger | None = Field(default=None, sa_type=ModelJSONB(CartLedger))
 
 
 class AppUser(SQLModel, table=True):

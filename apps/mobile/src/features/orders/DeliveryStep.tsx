@@ -1,14 +1,17 @@
-import type { GroceryOrder, ISODate } from '../../lib/api/types'
-import { addDays, formatDate, localDate, relativeDay } from '../../lib/dates'
+import type { ClockTime, GroceryOrder, ISODate } from '../../lib/api/types'
+import { addDays, formatClockTime, formatDate, formatWindow, localDate, relativeDay } from '../../lib/dates'
 import { haptics } from '../../lib/haptics'
 import { useNow } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { ChoiceCard } from '../../ui/ChoiceCard'
 import { DateBar } from '../../ui/DateBar'
 import { FieldLabel } from '../../ui/FieldLabel'
+import { Group, Row } from '../../ui/Group'
 import { Notice } from '../../ui/Notice'
+import { TimeField } from '../../ui/TimeField'
+import { useHousehold } from '../settings/settings'
 import { pickedMeals } from './batches'
-import { datesForDelivery, deliveryBar, deliveryChoice, deliveryWhy, shownDeliveryDate } from './dates'
+import { datesForDelivery, deliveryBar, deliveryChoice, deliveryWhy, shownDeliveryBy, shownDeliveryDate } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { useOrderSession } from './lock'
 import { useEditsPending, useSetDates } from './orders'
@@ -27,7 +30,11 @@ interface DeliveryStepProps {
   onClose: () => void
 }
 
-/** When the order arrives: the target date (the previous order's next delivery), or another day. */
+/**
+ * When the order arrives: the target date (the previous order's next delivery),
+ * or another day; and the latest time it should arrive by that day (the
+ * household's delivery time to start with).
+ */
 export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepProps) {
   const session = useOrderSession()
   const setDates = useSetDates()
@@ -36,10 +43,26 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
   const delivery = shownDeliveryDate(order)
   const choice = delivery === null ? null : deliveryChoice(order, delivery)
   const earliest = order.earliest_delivery_date
+  const household = useHousehold()
+  const by = shownDeliveryBy(order, household.shown?.delivery_time)
+  // No window ends by the time or includes it: an order that couldn't be booked.
+  const unbookable = order.best_window === null
 
   function choose(date: ISODate) {
     haptics.tap()
-    setDates.mutate({ orderId: order.id, dates: datesForDelivery(date, order.next_delivery_date), session })
+    setDates.mutate({
+      orderId: order.id,
+      dates: datesForDelivery(date, order.delivery_by, order.next_delivery_date),
+      session,
+    })
+  }
+
+  function chooseTime(time: ClockTime) {
+    const dates =
+      delivery === null
+        ? { delivery_date: null, delivery_by: time, next_delivery_date: null }
+        : datesForDelivery(delivery, time, order.next_delivery_date)
+    setDates.mutate({ orderId: order.id, dates, session })
   }
 
   return (
@@ -47,25 +70,29 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
       step={stepIndex('delivery')}
       onBack={onBack}
       onClose={onClose}
-      title="Delivery date"
+      notice={
+        setDates.isError ? (
+          <Notice>Couldn't save that: {setDates.error.message}</Notice>
+        ) : by === null && household.isError ? (
+          <Notice>Couldn't load the household's delivery time: {household.error.message}</Notice>
+        ) : unbookable && by ? (
+          <Notice>No delivery window ends by {formatClockTime(by)} or includes it. Choose a later time.</Notice>
+        ) : null
+      }
+      title="Delivery"
       lede={<Lede order={order} />}
       footer={
         <>
           <FooterSummary
             title={delivery ? formatDate(delivery, 'medium') : 'No date yet'}
-            detail={delivery ? 'Delivery date' : 'Pick a delivery date'}
+            detail={delivery ? (by ? `Arrives by ${formatClockTime(by)}` : 'Delivery date') : 'Pick a delivery date'}
           />
-          <Button large onClick={onNext} disabled={delivery === null || saving}>
+          <Button large onClick={onNext} disabled={delivery === null || by === null || unbookable || saving}>
             Next
           </Button>
         </>
       }
     >
-      {setDates.isError && (
-        <div className={styles.notice}>
-          <Notice>Couldn't save that: {setDates.error.message}</Notice>
-        </div>
-      )}
       {delivery && choice && (
         <ChoiceCard
           suggested={choice !== 'pick'}
@@ -78,8 +105,31 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
         {delivery ? 'Other days' : 'Delivery day'}
       </FieldLabel>
       <DateBar days={deliveryBar(order, today)} selected={delivery} onChoose={choose} label="Delivery date" />
+      {by && (
+        <div className={styles.groups}>
+          <Group footer={windowNote(order, by)}>
+            <Row
+              label="Arrive by"
+              detail={
+                // "18:00:00" from the server; the field shows hours and minutes.
+                <TimeField value={by.slice(0, 5)} label="Arrive by" onChange={chooseTime} />
+              }
+            />
+          </Group>
+        </div>
+      )}
     </FlowFrame>
   )
+}
+
+/** Which window booking picks for the time: "Booked in the latest delivery window ending by then…". */
+function windowNote({ best_window: best, fallback_window: fallback }: GroceryOrder, by: ClockTime): string {
+  if (best === null) return 'No delivery window ends by then. Choose a later time.'
+  // Hours and minutes: the server's times have seconds, a time just chosen doesn't.
+  if (best.end.slice(0, 5) > by.slice(0, 5)) return `Booked ${formatWindow(best)}, the one window that includes it.`
+  return fallback
+    ? `Booked in the latest delivery window ending by then (${formatWindow(best)} if it's open), or ${formatWindow(fallback)} if nothing earlier is left.`
+    : `Booked in the latest delivery window ending by then (${formatWindow(best)} if it's open).`
 }
 
 /** Where the default comes from: the first order has none; a passed target moves to the soonest delivery. */

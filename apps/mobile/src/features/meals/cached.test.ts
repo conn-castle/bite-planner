@@ -27,6 +27,7 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
   reminders_start_date: null,
   earliest_delivery_date: '2026-09-25',
   delivery_date: null,
+  delivery_by: null,
   next_delivery_date: null,
   jobs: [
     {
@@ -42,6 +43,9 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
   picks: [],
   lock: null,
   shopping_list: null,
+  quote: null,
+  best_window: null,
+  fallback_window: null,
 })
 
 const placed: PlacedOrder = {
@@ -50,6 +54,7 @@ const placed: PlacedOrder = {
   placed_at: '2026-09-18T09:00:00Z',
   placed_by: { user_id: 'sam', name: 'Sam' },
   delivery_date: '2026-09-20',
+  delivery_by: null,
   next_delivery_date: '2026-09-25',
   shopping_list: [],
   meals: [{ ...meal('fajitas'), servings: 4 }],

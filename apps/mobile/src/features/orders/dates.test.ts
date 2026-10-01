@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   coveredDays,
   datesForDelivery,
+  shownDeliveryBy,
   defaultDeliveryDate,
   defaultNextDeliveryDate,
   deliveryChoice,
@@ -82,20 +83,33 @@ describe('shownNextDeliveryDate', () => {
 })
 
 describe('datesForDelivery', () => {
-  it('keeps the next delivery date while it is still after the new delivery date', () => {
-    expect(datesForDelivery('2026-09-29', '2026-10-02')).toEqual({
+  it('keeps the next delivery date while it is still after the new delivery date, and the time chosen', () => {
+    expect(datesForDelivery('2026-09-29', '15:00', '2026-10-02')).toEqual({
       delivery_date: '2026-09-29',
+      delivery_by: '15:00',
       next_delivery_date: '2026-10-02',
     })
   })
 
   it('clears the next delivery date when the delivery moves onto or past it', () => {
-    expect(datesForDelivery('2026-10-02', '2026-10-02').next_delivery_date).toBeNull()
-    expect(datesForDelivery('2026-10-05', '2026-10-02').next_delivery_date).toBeNull()
+    expect(datesForDelivery('2026-10-02', null, '2026-10-02').next_delivery_date).toBeNull()
+    expect(datesForDelivery('2026-10-05', null, '2026-10-02').next_delivery_date).toBeNull()
   })
 
-  it('leaves an unset next delivery date unset', () => {
-    expect(datesForDelivery('2026-09-28', null)).toEqual({ delivery_date: '2026-09-28', next_delivery_date: null })
+  it('leaves an unset next delivery date and time unset', () => {
+    expect(datesForDelivery('2026-09-28', null, null)).toEqual({
+      delivery_date: '2026-09-28',
+      delivery_by: null,
+      next_delivery_date: null,
+    })
+  })
+})
+
+describe('shownDeliveryBy', () => {
+  it("shows the time chosen, else the household's delivery time", () => {
+    expect(shownDeliveryBy({ delivery_by: '15:00:00' }, '18:00:00')).toBe('15:00:00')
+    expect(shownDeliveryBy({ delivery_by: null }, '18:00:00')).toBe('18:00:00')
+    expect(shownDeliveryBy({ delivery_by: null }, undefined)).toBeNull()
   })
 })
 

@@ -12,11 +12,11 @@ import {
 import { apiRequest } from '../../lib/api/client'
 import { ApiError, isRetryable } from '../../lib/api/errors'
 import type {
+  ClockTime,
   GroceryOrder,
   ISODate,
   Job,
   NextOrder,
-  OrderDates,
   OrderLock,
   OrderStep,
   PlacedOrder,
@@ -167,6 +167,7 @@ const PLACE = ['orders', 'place']
 const DISCARD = ['orders', 'discard']
 const START_LIST = ['orders', 'start-list']
 const SHOP_LIST = ['orders', 'shop-list']
+const QUOTE = ['orders', 'quote']
 const SET_ITEM = ['orders', 'set-item']
 const TAKE = ['orders', 'take']
 const RELEASE = ['orders', 'release']
@@ -208,10 +209,18 @@ export interface StartList extends InSession {
 export interface OrderAction {
   orderId: string
 }
+/** The dates and latest time an order is placed with: all of them set. */
+export interface PlacedDates {
+  delivery_date: ISODate
+  delivery_by: ClockTime
+  next_delivery_date: ISODate
+}
 export interface PlaceOrder extends InSession {
   orderId: string
-  /** The dates shown when Place was tapped (they may be untouched defaults), saved with it. */
-  dates: OrderDates
+  /** The dates and time shown when Place was tapped (they may be untouched defaults), saved with it. */
+  dates: PlacedDates
+  /** The quote whose total was shown; the server refuses it if it's no longer the order's current one. */
+  quoteId: string
 }
 
 async function startBatch(orderId: string, jobId: string, session: string): Promise<Job> {
@@ -359,6 +368,22 @@ export function registerOrderMutations(queryClient: QueryClient) {
       queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
   })
 
+  queryClient.setMutationDefaults(QUOTE, {
+    // Fills the cart and reads checkout for the order as it is now (after the
+    // changes before it); a quote for the same products already read or being read is kept.
+    mutationFn: async ({ orderId, jobId, session }: StartList): Promise<Job> => {
+      const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/quote`, { job_id: jobId }, session)
+      logger.info('orders.quote_started', { orderId, jobId: job.id, status: job.status })
+      return job
+    },
+    retry,
+    scope: EDITS,
+    // Only while the final review that asked for it is open.
+    meta: NOT_PERSISTED,
+    onSettled: (_job: Job | undefined, _error: Error | null, { orderId }: StartList) =>
+      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+  })
+
   queryClient.setMutationDefaults(SET_ITEM, {
     mutationFn: ({ orderId, itemId, removed, quantity, count, alternative, session }: SetItem) =>
       apiRequest<GroceryOrder>(
@@ -393,8 +418,8 @@ export function registerOrderMutations(queryClient: QueryClient) {
     // With the dates on screen, which the server saves as it places the order, so
     // what's placed is what was shown. Placing an order that is already placed
     // returns it unchanged, so a resend is safe.
-    mutationFn: ({ orderId, dates, session }: PlaceOrder) =>
-      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/place`, dates, session),
+    mutationFn: ({ orderId, dates, quoteId, session }: PlaceOrder) =>
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/place`, { ...dates, quote_id: quoteId }, session),
     retry,
     scope: EDITS,
     onSuccess: async (order: GroceryOrder) => {
@@ -531,6 +556,11 @@ export function useStartList() {
 /** Shops the order's list again at the store, after shopping failed. */
 export function useShopList() {
   return useMutation<Job, Error, StartList>({ mutationKey: SHOP_LIST })
+}
+
+/** Finds out what the order would cost at the store now (the final review's total). */
+export function useQuoteOrder() {
+  return useMutation<Job, Error, StartList>({ mutationKey: QUOTE })
 }
 
 /** Takes an item off the list or puts it back, or changes how much of it to buy; it shows at once. */

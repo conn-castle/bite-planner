@@ -42,6 +42,9 @@ LOG_RETENTION = logs.RetentionDays.THREE_MONTHS
 # The APNs auth key (Production, topic com.conncastle.castlechef) and its id.
 APNS_KEY_PARAMETER = "/castle-chef/shared/apns-key-base64"
 APNS_KEY_ID_PARAMETER = "/castle-chef/shared/apns-key-id"
+# The household's Instacart website session (browser cookies), which the worker
+# reads for checkout and writes back as Instacart renews it.
+INSTACART_SESSION_PARAMETER = "/castle-chef/shared/instacart-session"
 
 
 @dataclass(frozen=True)
@@ -214,6 +217,7 @@ class RuntimeStack(Stack):
                 "CASTLE_CHEF_AGENT_LOCK_FILE": f"{GROK_AUTH_DIR}/agent.lock",
                 "CASTLE_CHEF_CODEX_HOME": CODEX_HOME_DIR,
                 "CASTLE_CHEF_CODEX_LOCK_FILE": f"{CODEX_HOME_DIR}/codex.lock",
+                "CASTLE_CHEF_INSTACART_SESSION_PARAMETER": INSTACART_SESSION_PARAMETER,
             },
         )
         container.add_mount_points(
@@ -238,6 +242,17 @@ class RuntimeStack(Stack):
                         ]
                     }
                 },
+            )
+        )
+
+        # The worker reads the Instacart session and writes it back when Instacart
+        # renews it (the agent's environment has no AWS credentials, and it has no shell).
+        worker.task_role.add_to_principal_policy(
+            iam.PolicyStatement(
+                actions=["ssm:GetParameter", "ssm:PutParameter"],
+                resources=[
+                    f"arn:aws:ssm:{self.region}:{self.account}:parameter{INSTACART_SESSION_PARAMETER}"
+                ],
             )
         )
 

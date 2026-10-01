@@ -40,6 +40,9 @@ export interface HouseholdMember {
   email: string | null
 }
 
+/** What booking does when an approved product is gone: use its first available alternative, or ask. */
+export type ProductGone = 'use_alternative' | 'ask'
+
 /** The household's settings, shared by everyone in it (`GET /v1/household`). */
 export interface HouseholdSettings {
   /** Days before an order's target date that it's decided by: 1–7. */
@@ -48,6 +51,12 @@ export interface HouseholdSettings {
   reminder_lead_days: number
   /** The servings each picked meal starts at: 1–12. */
   default_servings: number
+  /** The latest time deliveries should arrive by (each order's starts at it), in the store's time zone. */
+  delivery_time: ClockTime
+  /** The tip: this percentage of the items' total (0–30), never more than `tip_max_cents` (up to $100). */
+  tip_percent: number
+  tip_max_cents: number
+  product_gone: ProductGone
 }
 
 export interface Household extends HouseholdSettings {
@@ -87,7 +96,7 @@ export interface MealSummary {
  */
 export interface Job {
   id: string
-  kind: 'generate_meals' | 'build_list' | 'shop'
+  kind: 'generate_meals' | 'build_list' | 'shop' | 'quote'
   status: JobStatus
   error: string | null
   requested_by: Member
@@ -154,6 +163,46 @@ export interface ShoppingList {
   items: ShoppingItem[]
 }
 
+/** One line of checkout's summary, as Instacart labels it: "Service fee", 249. */
+export interface QuoteLine {
+  label: string
+  cents: number
+}
+
+/** What checkout showed for the order's products, with a scheduled delivery and the household's tip. */
+export interface Checkout {
+  /** The items' total, with the store's loyalty prices. */
+  items_cents: number
+  /** The summary's other lines (delivery, service fee, tax, ...). */
+  fees: QuoteLine[]
+  tip_cents: number
+  total_cents: number
+  /** The account's delivery address, to its ZIP code. */
+  address: string
+  /** "Visa ending 4242" */
+  card: string
+  /** What Instacart does when an item is out of stock, per item: the different settings ("Replace with best match"). */
+  replacements: string[]
+}
+
+/** What the order would cost at the store (the final review): its newest quote. */
+export interface Quote {
+  job: Job
+  /** For the order's products, counts, and tip rule now; otherwise a new one is due. */
+  current: boolean
+  /** It failed because Castle Chef is signed out of Instacart's website (someone signs it in again first). */
+  signed_out: boolean
+  /** Once it succeeds: why Instacart won't check the cart out (below the store's minimum), or checkout. */
+  blocked_because: string | null
+  checkout: Checkout | null
+}
+
+/** A delivery window, in the store's time zone. */
+export interface DeliveryWindow {
+  start: ClockTime
+  end: ClockTime
+}
+
 export interface GroceryOrder {
   id: string
   /** "Order 3" */
@@ -169,6 +218,12 @@ export interface GroceryOrder {
   reminders_start_date: ISODate | null
   earliest_delivery_date: ISODate
   delivery_date: ISODate | null
+  /** The latest time it should arrive by, in the store's time zone; null until chosen (the household's delivery time shows). */
+  delivery_by: ClockTime | null
+  /** For that time: the window booking picks when every window is open; null when none ends by it or includes it (it can't be booked). */
+  best_window: DeliveryWindow | null
+  /** The one window booking may use that ends after that time, if nothing ending by it is left ("or 2–4 PM"). */
+  fallback_window: DeliveryWindow | null
   next_delivery_date: ISODate | null
   /** Its batches of suggestions, oldest first; the suggestions are their meals. */
   jobs: Job[]
@@ -178,6 +233,8 @@ export interface GroceryOrder {
   lock: OrderLock | null
   /** Its shopping list; null until one is started. */
   shopping_list: ShoppingList | null
+  /** What it would cost: its newest quote; null until one is started. */
+  quote: Quote | null
 }
 
 /** The create-order flow's steps, as a lock reports where its holder is. */
@@ -211,6 +268,8 @@ export interface PlacedOrder {
   placed_at: ISODateTime
   placed_by: Member
   delivery_date: ISODate
+  /** The latest time it should arrive by; null for orders placed before there was one. */
+  delivery_by: ClockTime | null
   /** Its meals cover the days up to the one before this. */
   next_delivery_date: ISODate
   /** The picked meals, in the order they were suggested. */
@@ -238,9 +297,10 @@ export interface NextOrder {
   draft: GroceryOrder | null
 }
 
-/** Body of `PUT /v1/grocery-orders/{id}/dates`: both dates, every time. */
+/** Body of `PUT /v1/grocery-orders/{id}/dates`: both dates and the latest time, every time. */
 export interface OrderDates {
   delivery_date: ISODate | null
+  delivery_by: ClockTime | null
   next_delivery_date: ISODate | null
 }
 

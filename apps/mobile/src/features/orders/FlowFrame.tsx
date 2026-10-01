@@ -17,12 +17,18 @@ interface FlowFrameProps {
   lede?: ReactNode
   /** The bar along the bottom: a short summary and the step's main action. */
   footer: ReactNode
+  /**
+   * The step's problem (a change that couldn't be saved, why it can't go on), in
+   * the one place a problem shows: a problem with the whole flow (the order
+   * couldn't be refreshed) takes its place, so the screen never shows two.
+   */
+  notice?: ReactNode
   children?: ReactNode
 }
 
 /** One screen of the create-order flow: Back, progress dots, and Close on top; the step's action at the bottom. */
-export function FlowFrame({ step, onBack, onClose, title, lede, footer, children }: FlowFrameProps) {
-  const notice = useContext(FlowNotice)
+export function FlowFrame({ step, onBack, onClose, title, lede, footer, notice: stepNotice, children }: FlowFrameProps) {
+  const notice = useContext(FlowNotice) ?? stepNotice
   return (
     <>
       <IonHeader className={styles.header}>

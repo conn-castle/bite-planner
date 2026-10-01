@@ -12,8 +12,9 @@ from castle_chef_agent.cli import mcp_serve, meal_app, shopping_list_app
 from castle_chef_agent.instacart import InstacartError, Product, describe
 from sqlmodel import Session
 
-from castle_chef import household, instacart, push, worker
+from castle_chef import checkout, household, instacart, push, worker
 from castle_chef import log as logging_config
+from castle_chef.checkout import CheckoutError
 from castle_chef.db import get_session
 from castle_chef.dispatch import JOB_ID_ENV
 from castle_chef.settings import get_settings, load_ssm_parameters
@@ -24,7 +25,8 @@ household_app = typer.Typer(
     no_args_is_help=True, help="Manage households and who is in them (invite-only)."
 )
 instacart_app = typer.Typer(
-    no_args_is_help=True, help="Check the household's Instacart store (read-only)."
+    no_args_is_help=True,
+    help="Check the household's Instacart store (read-only), or sign in to its website.",
 )
 app.add_typer(meal_app, name="meal")
 app.add_typer(shopping_list_app, name="shopping-list")
@@ -175,6 +177,18 @@ def instacart_search(query: str) -> None:
     typer.echo(f"Related ({len(results.related)}):")
     for product in results.related:
         typer.echo(_product_line(product))
+
+
+@instacart_app.command("sign-in")
+def instacart_sign_in() -> None:
+    """Sign Castle Chef in to Instacart's website for checkout (a browser opens on
+    this machine; the session is saved to SSM). `make instacart-login` runs it."""
+    try:
+        checkout.sign_in(get_settings().instacart_store)
+    except CheckoutError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    typer.echo("Signed in: checkout will use this session.")
 
 
 @instacart_app.command("cart")

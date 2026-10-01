@@ -17,6 +17,7 @@ function placed(number: number, delivery: string, next: string, placedAt = '2026
     placed_at: placedAt,
     placed_by: { user_id: 'sam', name: 'Sam' },
     delivery_date: delivery,
+    delivery_by: null,
     next_delivery_date: next,
     shopping_list: [],
     meals: [],
@@ -52,11 +53,15 @@ function draft(number: number, jobs: Job[]): GroceryOrder {
     reminders_start_date: null,
     earliest_delivery_date: '2026-09-25',
     delivery_date: null,
+    delivery_by: null,
     next_delivery_date: null,
     jobs,
     picks: [],
     lock: null,
     shopping_list: null,
+    quote: null,
+    best_window: null,
+    fallback_window: null,
   }
 }
 

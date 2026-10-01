@@ -34,13 +34,17 @@ api = [
     "tzdata>=2026.4",
     "uvicorn>=0.53.0",
 ]
+# The worker's AWS calls (the Instacart session in SSM).
+worker = [
+    "boto3>=1.43.101",
+]
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.8",
 ]
 
 [tool.uv]
-default-groups = ["api", "dev"]
+default-groups = ["api", "worker", "dev"]
 
 [tool.uv.workspace]
 # The agent's commands: installed on their own for the agent (docker/Dockerfile).

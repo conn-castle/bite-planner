@@ -1,6 +1,10 @@
 /* The final review (not in the mockup: designed in review). */
-.notice {
-  margin-top: 14px;
+
+/* Why the total wasn't read, under the wait's orb (as on the list step). */
+.problem {
+  width: 100%;
+  margin-top: 16px;
+  text-align: left;
 }
 
 /* The card and groups sit at the tab screens' inset, not the flow's text inset. */

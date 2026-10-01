@@ -5,7 +5,9 @@ followed by the Grok arguments the worker appends. Like Grok, it starts the MCP
 server the job directory's `.grok/config.toml` names and uses its tools: MEALS meals
 with `add_meal` (or, given a shopping list prompt, MEALS items sharing its lines with
 `add_item`, and salt with `add_staple`; or, given a list to shop, each item's first
-search result, with the second as its alternative), then `done`. It takes SECONDS and prints
+search result, with the second as its alternative), then `done`; or, given checkout
+to read, checkout on the stand-in pages the prompt's tools open, reporting it (MEALS 0:
+finding it signed out). It takes SECONDS and prints
 Grok-style JSON. Settings are arguments because the worker gives the agent a minimal
 environment.
 """
@@ -56,7 +58,53 @@ async def use_tools() -> None:
             if check and getattr(result, "is_error", False):
                 raise SystemExit(f"{tool} failed: {result}")
 
-        if prompt.startswith("Choose what to buy at"):
+        async def page_after(tool: str, arguments: dict[str, Any]) -> str:
+            result = await session.call_tool(tool, arguments)
+            if getattr(result, "is_error", False):
+                raise SystemExit(f"{tool} failed: {result}")
+            return result.content[0].text
+
+        def ref(page: str, pattern: str) -> str:
+            match = re.search(rf"{pattern}[^\n]*\[ref=(\w+)\]|\[ref=(\w+)\]: {pattern}", page)
+            if match is None:
+                raise SystemExit(f"No {pattern!r} on the page.")
+            return match.group(1) or match.group(2)
+
+        if "at checkout on Instacart" in prompt and meal_count == "0":
+            # Signed out: Instacart shows its sign-in control instead of the store.
+            page = await page_after("open_page", {"path": "/store/sign-in"})
+            await call("signed_out", {"ref": ref(page, 'button "Log in')})
+        elif "at checkout on Instacart" in prompt:
+            # As the prompt says: the cart's settings, checkout, a scheduled
+            # window, the rule's tip, then the report.
+            store = re.search(r"Open `(/store/[^`]+)`", prompt).group(1)
+            page = await page_after("open_page", {"path": store})
+            page = await page_after("click", {"ref": ref(page, 'button "View cart')})
+            settings = re.findall(r'button "Replace with[^"]*" \[ref=(\w+)\]', page)
+            await call("record_replacements", {"refs": settings})
+            page = await page_after("click", {"ref": ref(page, 'button "Go to checkout')})
+            page = await page_after("click", {"ref": ref(page, 'button "Schedule')})
+            page = await page_after("click", {"ref": ref(page, 'button "4pm')})
+            tip = await page_after("tip", {"items": ref(page, r"\d+ items")})
+            amount = re.search(r"type ([\d.]+)", tip).group(1)
+            page = await page_after("click", {"ref": ref(page, 'button "Other"')})
+            page = await page_after(
+                "type_text", {"ref": ref(page, 'textbox "Other amount"'), "text": amount}
+            )
+            page = await page_after("click", {"ref": ref(page, 'button "Save Tip"')})
+            await call(
+                "report",
+                {
+                    "items": ref(page, r"\d+ items"),
+                    "lines": [ref(page, "Delivery with"), ref(page, "Service fee")],
+                    "tip": ref(page, re.escape("$" + amount)),
+                    "total": ref(page, "Total"),
+                    "delivery": ref(page, 'button "Tomorrow'),
+                    "address": ref(page, 'button "1 Main Street'),
+                    "card": ref(page, r'button "\*4242'),
+                },
+            )
+        elif prompt.startswith("Choose what to buy at"):
             # Each item: search for it, then choose the first result (one of it) with
             # the second as its alternative.
             for number, name in re.findall(r"^(\d+)\. (.+?)(?::[^(]*)? \(", prompt, re.MULTILINE):
@@ -91,7 +139,8 @@ async def use_tools() -> None:
         else:
             for index in range(int(meal_count)):
                 await call("add_meal", {"meal": MEAL | {"name": f"{MEAL['name']} {index}"}})
-        await call("done", {}, check=False)
+        if "at checkout on Instacart" not in prompt:
+            await call("done", {}, check=False)
 
 
 asyncio.run(use_tools())

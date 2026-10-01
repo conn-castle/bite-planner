@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<!-- A stand-in for a store's front page on Instacart's website (tests only): the
+     cart, as its drawer shows it, and the way to checkout. -->
+<head><meta charset="utf-8"><title>Wegmans</title></head>
+<body>
+<main>
+  <h1>Wegmans</h1>
+  <button type="button" onclick="document.getElementById('cart').hidden = false">View cart</button>
+  <div id="cart" role="dialog" aria-label="Cart" hidden>
+    <h2>Family Cart</h2>
+    <div role="group" aria-label="Wegmans Onions, Yellow (2 lb)">
+      <h3>Wegmans Onions, Yellow (2 lb)</h3>
+      <span>$2.29</span>
+      <button type="button">Replace with best match</button>
+    </div>
+    <div role="group" aria-label="Sweet Onions">
+      <h3>Sweet Onions</h3>
+      <span>$17.30</span>
+      <button type="button">Replace with best match</button>
+    </div>
+    <button type="button" onclick="location.href = '/store/checkout_v4'">Go to checkout</button>
+  </div>
+</main>
+</body>
+</html>

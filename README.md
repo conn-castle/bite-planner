@@ -65,13 +65,13 @@ To try the app against a deployed API instead of the local one: `cd apps/mobile 
 
 ## Backend
 
-`backend/.env` (gitignored, written by `make env`; `make` ignores a `DATABASE_URL` in your shell) holds `DATABASE_URL`, the direct owner-role connection string for the Neon `dev` branch, the Neon ids for `household` commands, `CASTLE_CHEF_NEON_AUTH_URL` (`dev`'s Neon Auth), and `CASTLE_CHEF_JOB_DISPATCH=local` (see [Development](#development)). It is generated from SSM ([Secrets](#secrets)); credentials for `main` are never in your checkout. Every setting is in `src/castle_chef/settings.py`.
+`backend/.env` (gitignored, written by `make env`; `make` ignores a `DATABASE_URL` in your shell) holds `DATABASE_URL`, the direct owner-role connection string for the Neon `dev` branch, the Neon ids for `household` commands, `CASTLE_CHEF_NEON_AUTH_URL` (`dev`'s Neon Auth), and `CASTLE_CHEF_JOB_DISPATCH=local` (see [Development](#development)). It is generated from SSM ([Secrets](docs/operations/aws.md#secrets)); credentials for `main` are never in your checkout. Every setting is in `src/castle_chef/settings.py`.
 
 The worker's packages are the project's dependencies; the API's extra packages (FastAPI, boto3, PyJWT, uvicorn) are the `api` dependency group, installed by default locally and left out of the worker image.
 
 ### Tests
 
-Tests run against a local Postgres (Docker, port 54329), never Neon:
+Tests run against a local Postgres (Docker, port 54329), never Neon, and the checkout tools' tests drive a headless Chromium on stand-ins for Instacart's pages (`make deps` installs it):
 
 ```sh
 make test      # starts the local Postgres, then backend, app, and infra tests
@@ -112,6 +112,8 @@ Three kinds of job: `generate_meals` (a batch of meal ideas, saved with `castle-
 
 **Instacart** is reached through its own tools in the ChatGPT apps: Codex's app-server (`/opt/codex` in the image, OpenAI's release package, pinned) calls them directly, with no model, signed in to the household's ChatGPT account with the Instacart app connected (`CASTLE_CHEF_CODEX_HOME`; `castle_chef_agent.instacart`). A search gives each product's size, price (per pound and per package for weighed items), picture, and whether the household has bought it before (Instacart's "Buy it again"), split into matches and related products (no matches: the store doesn't carry it); the cart can be read and its quantities set (0 takes a product out; weighed items count packages). The replies' widget data is all that's read: the rest holds the widget's own Instacart token and is never kept or logged. One app-server at a time uses the login (a lock file next to it), since two refreshing it at once can invalidate it. To check the store from the worker image: `scripts/worker-docker.sh instacart search "yellow onions"` or `… instacart cart` (read-only).
 
+**Checkout** is Instacart's website, which the agent works through in a headless Chromium in the worker image (Playwright's Chrome Headless Shell, pinned by checksum, with its libraries from Debian's dated snapshot), signed in with the household's Instacart website session (SSM, see [Secrets](docs/operations/aws.md#secrets)). A `quote` job, for the final review: the worker sets the household's own cart items aside and fills the cart with the order's products through Instacart's cart tool (`castle_chef.cart`; a run that stops midway is undone by the next, from the household's cart ledger), then Grok reads checkout with the checkout tools (`castle_chef_agent.checkout`, prompt `prompts/checkout_quote.md`): it sees the page as its accessibility tree (just the dialog, when one is open), finds elements by their text, clicks, and types, then reports by pointing at the elements that show each amount, which the tools read and check themselves (it must add up, the tip must follow the household's rule, and the delivery can't be Priority). No page's layout is in the code; the tools refuse Place order and anything off Instacart's site. The session goes to the job directory for the tools and comes back with the report; the worker saves the renewed one to SSM and removes both copies. When Instacart signs the session out, the review says so: `make instacart-login` opens a browser on this machine (its own profile, in `~/.local/state/castle-chef/instacart-browser`), the owner signs in to the household's account, and the session goes to SSM.
+
 Each job gets a directory (in the container `/tmp/jobs/<job-id>/`) with the prompt, `job.json`, the MCP config (`.grok/config.toml`), what the agent's tools saved, Grok's JSON output, and its stderr.
 
 To run a job the way Fargate does (the worker image, read-only root filesystem, an empty `/tmp`, the task's capabilities, CPU and memory, Grok's version, and the agent as uid 65532), use Docker: `make worker-image` builds the image from the working tree, `make worker-login` signs its agent in to Grok once (a device code; the login stays in the Docker volume `castle-chef-grok-login`, separate from this machine's), `make worker-login AGENT=codex` connects Instacart once (the volume `castle-chef-codex-login`; see [AWS](#aws)), and `make worker-job JOB=<job-id>` runs one pending job against Neon dev, then copies its directory and Grok's session files to `~/.local/state/castle-chef/docker-jobs/<job-id>/`.
@@ -134,56 +136,16 @@ Everything logs structured JSON, one object per line: `{"ts", "level", "logger",
 - Failure handler: `job.worker_stopped` and `job.never_started` (both errors).
 - App: each entry is `{"ts", "level", "event", "launch", ...fields}`. Entries at info and above wait in an outbox on the device (1,000 entries; overflow drops the oldest and reports `logs.dropped`) and are uploaded automatically, every minute while the app is open and as soon as it goes to the background, for signed-in household members (`src/lib/logUpload.ts`). The API writes a `client.batch` line (sender, device) and one `client.log` line per entry, at the entry's level, to its log group (logger `castle_chef.client`). The app logs `error` only for defects (a crash, an uncaught exception), so only those email an alarm; expected failures (offline, a refused request) are warnings.
 
-Every line at level `error` or `critical` emails an alarm ([AWS](#aws)).
+Every line at level `error` or `critical` emails an alarm ([AWS](docs/operations/aws.md)).
 
 ```sh
 tail -f ~/.local/state/castle-chef/logs/castle-chef.jsonl | jq -c '{ts, event, job_id}'
 ```
 
+
 ## AWS
 
-Account `123456789012` (profile `conn`), region `us-east-1`, defined in `infra/` (CDK, Python). Releases deploy it ([Releases](#releases)); nothing needs a manual deploy. Stacks:
-
-- `CastleChefRepositories`: ECR repositories `castle-chef-api` and `castle-chef-worker` (immutable tags; the last 30 released images `commit-<sha>` and 5 development pushes `dev-…` are kept), and the role `castle-chef-github-deploy`, which only this repository's `main` branch can assume (GitHub OIDC).
-- `CastleChef` (stage `prod`, Neon `main`): a VPC with public subnets only (no NAT), the API, failure-handler, and Reminders Lambdas, the jobs queue and its dead-letter queue, the Pipe, the ECS cluster and worker task definition, EFS for the agent logins (Grok's and Codex's), the reminder schedule group and the role its schedules run as, log groups, and alarms. Its outputs name the API URL, cluster, task definition, subnets, security group, log group, Pipe, and Reminders function. `CastleChef-dev` (stage `dev`, Neon `dev`) is the same stack for trying infrastructure changes; it is not deployed now.
-
-Costs: nothing runs while idle; EFS, ECR, and alarms are well under $1 a month, a job is a fraction of a cent of Fargate, and Grok is the subscription. Lambda and the Pipe scale to zero.
-
-Secrets never sit in configuration: the Lambdas read `DATABASE_URL` (and Reminders the APNs key) from SSM at startup (`CASTLE_CHEF_SSM_PARAMETERS`), and ECS injects them into the worker from SSM. Both use Neon's pooled endpoint.
-
-**Notifications** (push, iPhone only) go straight to Apple's push service with the APNs key (`backend/src/castle_chef/push.py`); the phones' tokens are in `push_device`, registered by the app for whoever is signed in. "Your meal ideas are ready" is sent by the worker when a batch succeeds, to whoever started it. The daily reminders (`reminders.py`): each member with a known time zone has an EventBridge Scheduler schedule `reminder-<user id>` in the group `CastleChef-reminders`, at their notification time in their zone, which invokes the `CastleChef-Reminders` Lambda; it checks the database (the member's "Daily reminders" switch is on, the next order isn't placed, reminders have started, none sent today) and sends. The API creates and updates a member's schedule when their time or zone changes; every deploy rebuilds them all from the database (the deploy's "Rebuild the reminder schedules" step), and a firing that doesn't match the database rebuilds that one. Scheduler skips a time in the hour lost when clocks go forward (that day has no reminder at it) and runs a repeated time once. To check push end to end for someone: `castle-chef household notify-test <email>` with `CASTLE_CHEF_PUSH=apns` and `CASTLE_CHEF_SSM_PARAMETERS='{"DATABASE_URL": "/castle-chef/production/database-url-pooled", "CASTLE_CHEF_APNS_KEY": "/castle-chef/shared/apns-key-base64", "CASTLE_CHEF_APNS_KEY_ID": "/castle-chef/shared/apns-key-id"}'` (AWS profile `conn`); each phone's result is in the log.
-
-**Alarms** email `operator@example.com` (SNS topic "Castle Chef alarms"; the subscription must be confirmed from the first email): any error-level log line, Lambda errors, Pipe failures, and reminder schedules that couldn't invoke Reminders. A request that fails because of the agent (bad output, timeout, an expired login) also logs at error level, so it emails too.
-
-**Failures** mark jobs failed without polling: a message the Pipe can't start a task for goes to the dead-letter queue after 3 tries, and a worker task that stops with a non-zero exit (crash, out of memory, image pull or EFS failure, the 40-minute cap) sends an ECS event; the failure handler fails its job either way, and the shopping its task went on to. As a backstop, the API fails a person's jobs that stayed pending for 10 minutes or running for 20.
-
-**Agent login.** The worker's agent signs in to its subscription (Grok) once, with a device code; the login lives on EFS and the agent refreshes it. To sign in again (e.g. after `job.failed` with an authentication error), run a one-off worker task with the command `agent-login grok` and approve the code it prints:
-
-```sh
-out() { aws cloudformation describe-stacks --profile conn --region us-east-1 --stack-name CastleChef \
-  --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
-aws ecs run-task --profile conn --region us-east-1 --launch-type FARGATE \
-  --cluster "$(out ClusterNameOutput)" --task-definition "$(out WorkerTaskDefinitionOutput)" \
-  --network-configuration "awsvpcConfiguration={subnets=[$(out WorkerSubnetsOutput)],securityGroups=[$(out WorkerSecurityGroupOutput)],assignPublicIp=ENABLED}" \
-  --overrides '{"containerOverrides":[{"name":"worker","command":["agent-login","grok"]}]}'
-aws logs tail "$(out WorkerLogGroupOutput)" --follow --profile conn --region us-east-1   # the link and code
-```
-
-The task ends when you approve (`agent.login_finished`) or the code expires. The login is shared by every job; this is one of the two credentials not in SSM, because the agent rewrites it as it refreshes.
-
-**Instacart connection.** The same way, with the command `agent-login codex`: Codex signs in to the household's ChatGPT account with a device code (skipped if it's signed in), then installs the Instacart app and prints its connect link. Open the link signed in to **the same** ChatGPT account and connect the household's Instacart account; the task waits until Instacart answers (`instacart.connected`, "Instacart is connected: …"), up to 15 minutes for both steps together. The login is on EFS next to Grok's (`/codex`), and Codex refreshes it itself.
-
-**Deploying by hand** (not needed normally; e.g. the first deploy of a new account or of `CastleChef-dev`), with AWS credentials from the `conn` profile:
-
-```sh
-cd infra && uv sync
-eval "$(aws configure export-credentials --profile conn --format env)"
-npx aws-cdk@2.1143.0 deploy CastleChefRepositories -c repositoriesOnly=true
-# Push images first (tags dev-<sha>-<time>), then:
-npx aws-cdk@2.1143.0 deploy CastleChef-dev -c stage=dev -c apiImageDigest=sha256:… -c workerImageDigest=sha256:…
-```
-
-A new stack has its own EFS, so run both logins for it once. `cd infra && uv run pytest` checks what the stacks must guarantee (CI runs it).
+AWS (the stacks, signing in, notifications, alarms, the agent and Instacart logins, deploying by hand) and every secret (SSM is the source of truth) are in [docs/operations/aws.md](docs/operations/aws.md). Local sign-in always uses a device code: `aws sso login --profile conn --use-device-code`.
 
 ## App
 
@@ -228,7 +190,7 @@ Set up (team `EXAMP12345`):
 - Bundle id `com.conncastle.castlechef` ("Castle Chef"), registered through the App Store Connect API.
 - Distribution certificate `EXAMP12345` (expires 2027-09-24) and the profile `match AppStore com.conncastle.castlechef`, created by the `certificates` lane. The app ID has Push Notifications on, and the profile includes it (`aps-environment` production; regenerated 2026-09-26). To renew, or after the app ID gains a capability (which invalidates the profile), run the lane with write access to the certificates repository, as Nick (it's done with him, not by automation): on a Mac, `cd apps/mobile && bundle exec fastlane certificates` with the `APP_STORE_CONNECT_*` and `MATCH_PASSWORD` values from SSM, `MATCH_GIT_BASIC_AUTHORIZATION` (base64 of `nicholasjconn:$(gh auth token)`), and `MATCH_FORCE=true` (to recreate a profile after a capability change) in the environment. On Linux it also works in a `ruby` container, provided `FastlaneCore::ProvisioningProfile.install` is stubbed out (it needs Xcode) and git has an author identity.
 - The app record in App Store Connect (**My Apps → + → New App**: iOS, name "Castle Chef", bundle id `com.conncastle.castlechef`, SKU `castle-chef`); Apple's API can't create it.
-- Repository secrets `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY_BASE64` (base64 of the `.p8`), `MATCH_PASSWORD`, `CASTLE_CHEF_APP_CLIENT_ID`, and `CASTLE_CHEF_APP_PRIVATE_KEY`, copied from SSM ([Secrets](#secrets)).
+- Repository secrets `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY_BASE64` (base64 of the `.p8`), `MATCH_PASSWORD`, `CASTLE_CHEF_APP_CLIENT_ID`, and `CASTLE_CHEF_APP_PRIVATE_KEY`, copied from SSM ([Secrets](docs/operations/aws.md#secrets)).
 
 `Info.plist` declares `ITSAppUsesNonExemptEncryption = false` (the app uses only standard HTTPS), so builds don't wait for an export-compliance answer.
 
@@ -249,7 +211,7 @@ If CI, the images, the migration, or its checks fail, nothing is deployed: AWS k
 
 Re-run a failed release from the Actions tab, or release the current `main` with `gh workflow run release.yml` (add `-f force_ios=true` to upload the app again). A run never deploys a commit older than the latest release, and only runs from `main`.
 
-Repository secrets: `NEON_API_KEY`, `MIGRATION_DATABASE_URL` (direct owner connection to `main`), plus the [TestFlight](#testflight) secrets, all copied from SSM ([Secrets](#secrets)). AWS access needs no secret.
+Repository secrets: `NEON_API_KEY`, `MIGRATION_DATABASE_URL` (direct owner connection to `main`), plus the [TestFlight](#testflight) secrets, all copied from SSM ([Secrets](docs/operations/aws.md#secrets)). AWS access needs no secret.
 
 ### Rollback
 
@@ -264,55 +226,11 @@ Repository secrets: `NEON_API_KEY`, `MIGRATION_DATABASE_URL` (direct owner conne
 
 A code rollback was rehearsed on 2026-09-24 (r8 to r7). The database restore has not been exercised (Neon doesn't allow a test root branch in this project); it also assumes the restored branch keeps `main`'s endpoints, so check sign-in and a request afterwards.
 
-## Secrets
-
-**AWS SSM Parameter Store is the source of truth for every secret** (profile `conn`, region `us-east-1`, `SecureString`). GitHub secrets and `.env` files are copies generated from it. The agent manages all of them: creating, storing, copying, rotating, and revoking. Add or rotate a secret in SSM first, then update its copies and this table.
-
-| SSM parameter | Used by | Status |
-| --- | --- | --- |
-| `/castle-chef/production/database-url` (direct) | GitHub `MIGRATION_DATABASE_URL`; `household` commands for production ([Households](#households-invite-only)) | set |
-| `/castle-chef/production/database-url-pooled` | the `CastleChef` stack: API and failure handler (read at startup), worker (injected by ECS) | set |
-| `/castle-chef/development/database-url` (direct) | your checkout's `backend/.env` `DATABASE_URL` | set |
-| `/castle-chef/development/database-url-pooled` | the `CastleChef-dev` stack, when deployed | set |
-| `/castle-chef/shared/neon-api-key` (Neon key `castle-chef-release`, limited to this project) | GitHub `NEON_API_KEY` | set |
-| `/castle-chef/shared/github-app-private-key` (Castle Chef Bot GitHub App) | GitHub `CASTLE_CHEF_APP_PRIVATE_KEY` | set |
-| `/castle-chef/shared/github-app-client-id` (not secret) | GitHub `CASTLE_CHEF_APP_CLIENT_ID` | set |
-| `/castle-chef/shared/app-store-connect-key-id` (`EXAMP12345`) | GitHub `APP_STORE_CONNECT_KEY_ID` | set |
-| `/castle-chef/shared/app-store-connect-issuer-id` | GitHub `APP_STORE_CONNECT_ISSUER_ID` | set |
-| `/castle-chef/shared/app-store-connect-api-key-base64` (the `.p8`, base64) | GitHub `APP_STORE_CONNECT_API_KEY_BASE64` | set |
-| `/castle-chef/shared/match-password` (encrypts `conn-castle-apple-certs`) | GitHub `MATCH_PASSWORD` | set |
-| `/castle-chef/shared/apns-key-base64` (APNs auth key `EXAMP12345`, `.p8` base64; Production, topic `com.conncastle.castlechef` only) | the Reminders Lambda (read at startup) and the worker (ECS secret) | set |
-| `/castle-chef/shared/apns-key-id` (`EXAMP12345`, not secret) | the Reminders Lambda and the worker | set |
-| `/castle-chef/shared/instacart-session` (the household's Instacart website session: its instacart.com cookies, gzip then base64) | the worker's browser for checkout (read, and written back as Instacart renews it), from piece 9 part 2 | set |
-
-The two credentials not in SSM are the worker's subscription logins on the stack's EFS: Grok's, and Codex's (the household's ChatGPT sign-in, with Instacart connected). Each refreshes itself, so a copy would go stale. `castle-chef agent-login grok` and `agent-login codex` write them ([AWS](#aws)). AWS access from GitHub uses OIDC, so there are no AWS keys.
-
-**Castle Chef Bot** is this repository's own GitHub App (one app per repository): private, read-only access to repository contents, installed on `castle-chef` and `conn-castle-apple-certs`, settings at https://github.com/settings/apps. Nothing stores a GitHub token: the release workflow mints a one-hour token from its key that can read only `conn-castle-apple-certs`, for fastlane match.
-
-The release builds iOS only when all six TestFlight secrets are in GitHub (they are).
-
-Copy a secret to GitHub (the value never appears in the terminal):
-
-```sh
-aws ssm get-parameter --profile conn --region us-east-1 --with-decryption \
-  --name /castle-chef/shared/neon-api-key --query Parameter.Value --output text |
-  gh secret set NEON_API_KEY -R nicholasjconn/castle-chef
-```
-
-Store a value you have (typed without echo, never pasted into chat or a command line):
-
-```sh
-read -rs VALUE && printf %s "$VALUE" | aws ssm put-parameter --profile conn --region us-east-1 \
-  --type SecureString --name /castle-chef/... --value file:///dev/stdin && unset VALUE
-```
-
-For a file such as the App Store Connect `.p8`: `base64 -i AuthKey_EXAMP12345.p8 | tr -d '\n' | aws ssm put-parameter ... --value file:///dev/stdin`.
-
 ## Development
 
 Development uses the Neon branch `dev` (`example-development-branch`), a copy of `main` with its own Neon Auth (users and keys copied when the branch was made, then independent). Test in the browser with [local development](#local-development); iOS-only behavior (native sign-in in `src/lib/auth/neonAuth.ts`, the persisted cache across relaunches) still needs a TestFlight build.
 
-`make env` writes `backend/.env` for `dev`: `DATABASE_URL` from SSM `/castle-chef/development/database-url` ([Secrets](#secrets)), the Neon project and `dev` branch ids (`Makefile`), `CASTLE_CHEF_NEON_AUTH_URL` (from `apps/mobile/.env.development`), and `CASTLE_CHEF_JOB_DISPATCH=local`. The database and the Neon ids must all point at `dev`, or `household invite` creates the account on one branch and the membership on the other.
+`make env` writes `backend/.env` for `dev`: `DATABASE_URL` from SSM `/castle-chef/development/database-url` ([Secrets](docs/operations/aws.md#secrets)), the Neon project and `dev` branch ids (`Makefile`), `CASTLE_CHEF_NEON_AUTH_URL` (from `apps/mobile/.env.development`), and `CASTLE_CHEF_JOB_DISPATCH=local`. The database and the Neon ids must all point at `dev`, or `household invite` creates the account on one branch and the membership on the other.
 
 `make dev-reset` (it asks first) replaces `dev` with a copy of production as it is now, then applies this checkout's migrations. It discards everything on `dev`, including its Neon Auth state (users and sessions become production's, so sign in again). Connection details stay the same, so `backend/.env` still works. The copy is the family's real data: keep it on this machine.
 

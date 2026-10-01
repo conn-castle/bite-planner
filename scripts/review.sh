@@ -14,6 +14,9 @@ readonly REVIEW_TOOL=.agent-layer/skills-imported/request-html-comments/scripts/
 
 [[ -f backend/.env ]] || { echo "Missing backend/.env: run make env" >&2; exit 1; }
 [[ -f $REVIEW_TOOL ]] || { echo "Missing $REVIEW_TOOL: run al skills pull" >&2; exit 1; }
+# The final review's total reads the Instacart session from SSM (scripts/worker-docker.sh).
+aws sts get-caller-identity --profile conn >/dev/null 2>&1 \
+  || { echo "Sign in to AWS first: aws sso login --profile conn --use-device-code" >&2; exit 1; }
 
 # The address other devices reach this machine at (the default route's source).
 lan_ip=$(ip -4 route get 1.1.1.1 | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')

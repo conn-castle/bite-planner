@@ -37,21 +37,28 @@ export type HouseholdChange = Partial<HouseholdSettings & Pick<Household, 'name'
  */
 export type PersonalChange = { notification_time: ClockTime } | { reminders_on: boolean }
 
-const HOUSEHOLD_SETTINGS: readonly (keyof HouseholdSettings)[] = [
-  'decide_by_offset_days',
-  'reminder_lead_days',
-  'default_servings',
-]
+// "08:00" or "08:00:00".
+const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/
+
+// Each household setting, and what its value must be.
+const HOUSEHOLD_SETTINGS: Record<keyof HouseholdSettings | 'name', (value: unknown) => boolean> = {
+  name: (value) => typeof value === 'string',
+  decide_by_offset_days: (value) => typeof value === 'number',
+  reminder_lead_days: (value) => typeof value === 'number',
+  default_servings: (value) => typeof value === 'number',
+  delivery_time: (value) => typeof value === 'string' && CLOCK_TIME.test(value),
+  tip_percent: (value) => typeof value === 'number',
+  tip_max_cents: (value) => typeof value === 'number',
+  product_gone: (value) => value === 'use_alternative' || value === 'ask',
+}
+
+const isSettingName = (key: string): key is keyof typeof HOUSEHOLD_SETTINGS => Object.hasOwn(HOUSEHOLD_SETTINGS, key)
 
 /** Whether a pending mutation's variables are a household change (they are stored untyped). */
 function isHouseholdChange(value: unknown): value is HouseholdChange {
   return (
     isRecord(value) &&
-    Object.entries(value).every(([key, setting]) =>
-      key === 'name'
-        ? typeof setting === 'string'
-        : HOUSEHOLD_SETTINGS.some((name) => name === key) && typeof setting === 'number',
-    )
+    Object.entries(value).every(([key, setting]) => isSettingName(key) && HOUSEHOLD_SETTINGS[key](setting))
   )
 }
 
@@ -67,7 +74,7 @@ function isNameChange(value: unknown): value is NameChange {
 function isPersonalChange(value: unknown): value is PersonalChange {
   if (!isRecord(value)) return false
   if ('reminders_on' in value) return typeof value.reminders_on === 'boolean'
-  return typeof value.notification_time === 'string' && /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(value.notification_time)
+  return typeof value.notification_time === 'string' && CLOCK_TIME.test(value.notification_time)
 }
 
 export const householdQuery = queryOptions({

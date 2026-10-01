@@ -1,9 +1,5 @@
 /* The pick step (spec/mockup.html: .pick-note, .pgrid, .pc, .more). */
 
-.notice {
-  margin-top: 14px;
-}
-
 .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

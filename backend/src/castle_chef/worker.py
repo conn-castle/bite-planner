@@ -12,24 +12,36 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
+from typing import Any
 from uuid import UUID, uuid4
 
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
+from castle_chef_agent.checkout import RENEWED_SESSION_FILE, SESSION_FILE, CheckoutJob
+from castle_chef_agent.checkout import load_state as load_checkout_state
+from castle_chef_agent.instacart import InstacartError
 from castle_chef_agent.jobfiles import write_context
 from castle_chef_agent.meals import MealInput, MealsJob, load_meals, meal_problems
 from castle_chef_agent.products import ItemChoice
 from castle_chef_agent.server import Tools
 from pydantic import BaseModel, ValidationError
-from sqlmodel import Session, select
+from sqlalchemy import update
+from sqlmodel import Session, col, select
 
-from castle_chef import instacart, products, push, ratings, shopping
+from castle_chef import cart, instacart, products, push, quotes, ratings, shopping
+from castle_chef.checkout import (
+    SIGNED_OUT_ERROR,
+    CheckoutError,
+    Quote,
+    SessionStore,
+    session_store,
+)
 from castle_chef.db import get_engine, get_session
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, create_shop, finish_job
 from castle_chef.meals import add_meals
@@ -105,7 +117,7 @@ class Products:
     choices: dict[int, ItemChoice]
 
 
-type JobResult = Meals | ListItems | Products
+type JobResult = Meals | ListItems | Products | Quote
 
 
 def run_job(job_id: UUID) -> None:
@@ -133,7 +145,16 @@ def run_job(job_id: UUID) -> None:
     except JobDiscarded:
         log.info("job.discarded", extra=fields)
         return
-    except (AgentRunError, ValidationError, InvalidList, InvalidProducts) as error:
+    except (
+        AgentRunError,
+        ValidationError,
+        InvalidList,
+        InvalidProducts,
+        InstacartError,
+        cart.CartMismatch,
+        cart.CartNotPutBack,
+        CheckoutError,
+    ) as error:
         log.error("job.failed", extra=fields | {"error": str(error)})
         _finish(job_id, error=str(error))
         _notify_failed(job)
@@ -143,11 +164,12 @@ def run_job(job_id: UUID) -> None:
         _finish(job_id, error=f"Unexpected worker error: {error!r}")
         _notify_failed(job)
         return
-    counts = (
-        {"meal_count": len(result.meals)}
-        if isinstance(result, Meals)
-        else {"item_count": len(result.items)}
-    )
+    if isinstance(result, Meals):
+        counts = {"meal_count": len(result.meals)}
+    elif isinstance(result, Quote):
+        counts = {"blocked": result.blocked_because is not None}
+    else:
+        counts = {"item_count": len(result.items)}
     shop_id: UUID | None = None
     try:
         with get_session() as session:
@@ -161,6 +183,8 @@ def run_job(job_id: UUID) -> None:
             # by a newer list, meanwhile).
             if isinstance(result, Meals):
                 add_meals(session, job_id, result.meals)
+            elif isinstance(result, Quote):
+                session.execute(update(Job).where(col(Job.id) == job_id).values(quote=result))
             elif isinstance(result, Products):
                 newest = shopping.newest_build(session, job.grocery_order_id)
                 if (
@@ -195,7 +219,9 @@ def run_job(job_id: UUID) -> None:
     if shop_id is not None:
         run_job(shop_id)
         return
-    _notify_requester(job_id)
+    # A quote's member waits for it on screen (the final review): nothing to send.
+    if job.kind != JobKind.QUOTE:
+        _notify_requester(job_id)
 
 
 def _notify_requester(job_id: UUID) -> None:
@@ -317,6 +343,8 @@ def current_release() -> dict[str, str]:
 def process_job(job: Job) -> JobResult:
     settings = get_settings()
     job_dir = settings.jobs_dir / str(job.id)
+    if job.kind == JobKind.QUOTE:
+        return process_quote(job)
     if job.kind == JobKind.SHOP:
         if settings.codex_home is None:
             raise AgentRunError(
@@ -358,6 +386,83 @@ def process_job(job: Job) -> JobResult:
     if problems := meal_problems(job_dir, count):
         raise AgentRunError(f"The agent didn't finish: {' '.join(problems)}")
     return Meals(meals=load_meals(job_dir))
+
+
+def process_quote(job: Job) -> Quote:
+    """Fill the household's cart with the order's products (its own items set
+    aside meanwhile), and have the agent read what checkout shows, in a browser
+    signed in with the household's Instacart session."""
+    request = job.quote_request
+    if request is None:
+        raise AgentRunError(f"Quote job {job.id} has nothing to price.")
+    with get_session() as session:
+        order = session.get(GroceryOrder, job.grocery_order_id)
+        if order is None:
+            raise JobDiscarded
+        household_id = order.household_id
+        names = quotes.product_names(session, order.id)
+    settings = get_settings()
+    sessions = session_store()
+    job_dir = settings.jobs_dir / str(job.id)
+    # The session goes in a directory of its own for the tools: the job directory
+    # is kept after the job (copied out, locally), the session never is.
+    session_dir = settings.jobs_dir.parent / f"session-{job.id}"
+    # The agent's lock before the Codex login's (the cart), the order shopping takes
+    # them in (its tools reach Instacart while its agent runs), so they can't deadlock.
+    with agent_lock(job_id=str(job.id)), cart.filled(household_id, request.lines) as filled:
+        cart.check(filled, request.lines, names)
+        if filled.below_minimum:
+            return Quote(blocked_because=filled.blocked_because)
+        if not filled.can_check_out:
+            # Not something more groceries would fix: said as it is.
+            raise CheckoutError(f"Instacart won't check this cart out: {filled.blocked_because}")
+        context = CheckoutJob(
+            site=settings.instacart_site,
+            store=settings.instacart_store,
+            tip_percent=request.tip_percent,
+            tip_max_cents=request.tip_max_cents,
+            cart_items=len(request.lines),
+            session_dir=session_dir,
+        )
+        prompt = Template(PROMPTS_DIR.joinpath("checkout_quote.md").read_text()).substitute(
+            store=settings.instacart_store, slug=settings.instacart_store.lower()
+        )
+        try:
+            # Read under the locks: a quote before this one may have renewed it.
+            _hand_over_session(session_dir, sessions.load())
+            run_agent(job_dir, prompt, Tools.CHECKOUT, context, agent_locked=True)
+        finally:
+            _take_back_session(job_dir, session_dir, sessions)
+    read = load_checkout_state(job_dir)
+    if read.signed_out:
+        raise CheckoutError(SIGNED_OUT_ERROR)
+    if read.checkout is None:
+        raise AgentRunError(f"The agent didn't report checkout; see {job_dir}.")
+    return Quote(checkout=read.checkout)
+
+
+def _hand_over_session(session_dir: Path, state: dict[str, Any]) -> None:
+    """Put the session where the checkout tools read it, for the agent's user only."""
+    session_dir.mkdir(mode=0o700, parents=True)
+    path = session_dir / SESSION_FILE
+    path.write_text(json.dumps(state))
+    path.chmod(0o600)
+    uid = get_settings().agent_uid
+    if uid is not None:
+        for owned in (session_dir, path):
+            os.chown(owned, uid, uid)
+
+
+def _take_back_session(job_dir: Path, session_dir: Path, sessions: SessionStore) -> None:
+    """Save the session the tools handed back with their report (Instacart renews
+    it), and remove the session's directory."""
+    renewed = session_dir / RENEWED_SESSION_FILE
+    try:
+        if renewed.exists() and not load_checkout_state(job_dir).signed_out:
+            sessions.save(json.loads(renewed.read_text())["cookies"])
+            log.info("instacart.session_saved", extra={"job_id": job_dir.name})
+    finally:
+        shutil.rmtree(session_dir, ignore_errors=True)
 
 
 def generate_meals_prompt(session: Session, job: Job, count: int) -> str:
@@ -475,13 +580,19 @@ def agent_lock(**fields: str) -> Iterator[None]:
 
 
 def run_agent(
-    job_dir: Path, prompt: str, tools: Tools, context: BaseModel, tool_args: list[str] | None = None
+    job_dir: Path,
+    prompt: str,
+    tools: Tools,
+    context: BaseModel,
+    tool_args: list[str] | None = None,
+    agent_locked: bool = False,
 ) -> None:
     """Run the agent on the prompt in a new job directory, with the job's tools (and
-    their server's extra arguments) and the context they check against."""
+    their server's extra arguments) and the context they check against. It holds
+    the agent's lock while it runs, unless the caller already does (`agent_locked`)."""
     settings = get_settings()
     agent_command = required_agent_command()
-    job_dir.mkdir(parents=True)
+    job_dir.mkdir(mode=0o700, parents=True)
     prompt_path = job_dir / "prompt.md"
     prompt_path.write_text(prompt)
     write_context(job_dir, context)
@@ -520,7 +631,7 @@ def run_agent(
     stderr_path = job_dir / "agent-stderr.log"
     # The job directory is named after the job, which ties these events to it.
     with (
-        agent_lock(job_id=job_dir.name),
+        nullcontext() if agent_locked else agent_lock(job_id=job_dir.name),
         stdout_path.open("w") as stdout,
         stderr_path.open("w") as stderr,
     ):

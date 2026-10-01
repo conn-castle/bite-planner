@@ -22,11 +22,15 @@ const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   reminders_start_date: null,
   earliest_delivery_date: '2026-09-25',
   delivery_date: null,
+  delivery_by: null,
   next_delivery_date: null,
   jobs: [batch],
   picks: [{ meal_id: 'tacos', servings: 4 }],
   lock: null,
   shopping_list: null,
+  quote: null,
+  best_window: null,
+  fallback_window: null,
   ...fields,
 })
 const list = (current: boolean) => ({

@@ -290,11 +290,15 @@ describe('what a tap leads to', () => {
     reminders_start_date: '2026-09-25',
     earliest_delivery_date: '2026-09-25',
     delivery_date: null,
+    delivery_by: null,
     next_delivery_date: null,
     jobs: [],
     picks: [],
     lock: null,
     shopping_list: null,
+    quote: null,
+    best_window: null,
+    fallback_window: null,
   })
   const next = (number: number, current: GroceryOrder | null): NextOrder => ({
     number,

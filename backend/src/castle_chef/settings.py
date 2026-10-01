@@ -101,6 +101,12 @@ class Settings(BaseSettings):
     codex_lock_file: Path | None = None
     codex_command: str = "codex"
     instacart_store: str = "Wegmans"
+    # The household's Instacart website session (browser cookies, for checkout:
+    # castle_chef.checkout): the SSM SecureString parameter it's kept in, read and
+    # written back by the worker. None: checkout can't be reached.
+    instacart_session_parameter: str | None = None
+    # Instacart's website (tests serve stand-in pages at another address).
+    instacart_site: str = "https://www.instacart.com"
     # Neon project and branch for managing Neon Auth accounts (`castle-chef household`).
     neon_project_id: str | None = None
     neon_branch_id: str | None = None

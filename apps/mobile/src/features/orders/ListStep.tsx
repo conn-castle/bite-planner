@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import type { GroceryOrder, ShoppingItem } from '../../lib/api/types'
 import { haptics } from '../../lib/haptics'
 import { useNow } from '../../lib/useNow'
@@ -15,6 +15,7 @@ import { Stats } from '../../ui/Stats'
 import { useNotifiedOfJob } from '../notifications/notifications'
 import { pickedMeals } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
+import { FlowNotice } from './flowNotice'
 import { elapsed, plural } from './format'
 import { forMeals, type ListState, listState, productTotals, splitList, totalShown, undecided } from './list'
 import styles from './ListStep.module.css'
@@ -98,6 +99,8 @@ function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClos
   const working = state !== 'failed' && state !== 'shopFailed'
   const running = state === 'building' || state === 'shopping'
   const notified = useNotifiedOfJob(running && job ? job.requested_by.user_id : null)
+  // One problem on screen: the flow's own (the order couldn't be refreshed) comes first.
+  const flowProblem = useContext(FlowNotice)
   const meals = pickedMeals(order).length
   const store = list?.store ?? 'the store'
 
@@ -152,7 +155,7 @@ function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClos
             : `Combining what your ${plural(meals, 'meal')} need into one list, then shopping it at ${store}. This can take several minutes.`
         }
       >
-        {(state === 'failed' || state === 'shopFailed') && (
+        {!flowProblem && !startFailed && (state === 'failed' || state === 'shopFailed') && (
           <div className={styles.problem}>
             <RetryNotice
               message={
@@ -165,7 +168,7 @@ function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClos
             />
           </div>
         )}
-        {startFailed && (
+        {!flowProblem && startFailed && (
           <div className={styles.problem}>
             <RetryNotice message={`Couldn't start it: ${startFailed}`} onRetry={onRetry} busy={retrying} />
           </div>
@@ -212,6 +215,7 @@ function ListReview({ order, onOpenProduct, onBack, onNext, onClose }: ListRevie
       step={stepIndex('list')}
       onBack={onBack}
       onClose={onClose}
+      notice={setItemError && <Notice>Couldn't save that: {setItemError.message}</Notice>}
       title="Shopping list"
       lede={`${store} products for your ${plural(meals.length, 'meal')}. Tap one for its alternatives.`}
       footer={
@@ -230,11 +234,6 @@ function ListReview({ order, onOpenProduct, onBack, onNext, onClose }: ListRevie
         </>
       }
     >
-      {setItemError && (
-        <div className={styles.problem}>
-          <Notice>Couldn't save that: {setItemError.message}</Notice>
-        </div>
-      )}
       <Stats
         stats={[
           { value: totals.count, label: totals.count === 1 ? 'product' : 'products' },

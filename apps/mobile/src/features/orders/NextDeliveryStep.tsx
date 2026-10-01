@@ -14,7 +14,6 @@ import { defaultNextDeliveryDate, followingDates, nextDeliveryBar, nextDeliveryW
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { useOrderSession } from './lock'
 import { useEditsPending, useSetDates } from './orders'
-import styles from './Steps.module.css'
 import { stepIndex } from './steps'
 
 // How often the step checks the time, so "today" moves on at midnight.
@@ -43,7 +42,7 @@ export function NextDeliveryStep({ order, delivery, onBack, onNext, onClose }: N
 
   function choose(date: ISODate) {
     haptics.tap()
-    setDates.mutate({ orderId: order.id, dates: { delivery_date: delivery, next_delivery_date: date }, session })
+    setDates.mutate({ orderId: order.id, dates: { delivery_date: delivery, delivery_by: order.delivery_by, next_delivery_date: date }, session })
   }
 
   return (
@@ -51,6 +50,7 @@ export function NextDeliveryStep({ order, delivery, onBack, onNext, onClose }: N
       step={stepIndex('next')}
       onBack={onBack}
       onClose={onClose}
+      notice={setDates.isError && <Notice>Couldn't save that: {setDates.error.message}</Notice>}
       title="Next delivery"
       lede={`This order's meals cover you from ${formatDate(delivery, 'medium')} until the next delivery. When should Order ${following} arrive?`}
       footer={
@@ -69,11 +69,6 @@ export function NextDeliveryStep({ order, delivery, onBack, onNext, onClose }: N
         </>
       }
     >
-      {setDates.isError && (
-        <div className={styles.notice}>
-          <Notice>Couldn't save that: {setDates.error.message}</Notice>
-        </div>
-      )}
       <ChoiceCard
         suggested={next === recommended}
         label={next === recommended ? 'Recommended' : 'Your pick'}

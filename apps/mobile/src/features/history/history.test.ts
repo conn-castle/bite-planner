@@ -20,6 +20,7 @@ const order = (number: number, delivery: string, meals: MealSummary[]): PlacedOr
   placed_at: `${delivery}T09:00:00Z`,
   placed_by: { user_id: 'sam', name: 'Sam' },
   delivery_date: delivery,
+  delivery_by: null,
   next_delivery_date: delivery,
   shopping_list: [],
   meals: meals.map((meal) => ({ ...meal, servings: 4 })),

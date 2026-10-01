@@ -12,7 +12,7 @@ unexport DATABASE_URL
 # Like CI: fail rather than update a stale uv.lock.
 export UV_LOCKED := 1
 
-.PHONY: help setup deps env dev review dev-reset migrate migration db db-stop worker-image worker-login worker-job test lint format check build ios
+.PHONY: help setup deps env dev review dev-reset migrate migration db db-stop worker-image instacart-login worker-login worker-job test lint format check build ios
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
@@ -22,6 +22,8 @@ setup: deps ## Install dependencies and write backend/.env
 
 deps:
 	cd backend && uv sync
+	# The browser the checkout tools' tests drive (the build uv.lock's Playwright expects).
+	cd backend && uv run playwright install --only-shell chromium
 	cd infra && uv sync
 	cd apps/mobile && pnpm install --frozen-lockfile
 
@@ -58,6 +60,11 @@ db-stop: ## Stop the local Postgres (its data is kept)
 
 worker-image: ## Build the worker image (Fargate's) from the working tree
 	scripts/worker-docker.sh build
+
+instacart-login: ## Sign Castle Chef in to Instacart's website for checkout (a browser opens here; saved to SSM)
+	cd backend && AWS_PROFILE=conn AWS_REGION=us-east-1 \
+	  CASTLE_CHEF_INSTACART_SESSION_PARAMETER=/castle-chef/shared/instacart-session \
+	  uv run castle-chef instacart sign-in
 
 worker-login: ## Sign the local worker image in: Grok, or AGENT=codex to connect Instacart (once)
 	scripts/worker-docker.sh login $(or $(AGENT),grok)

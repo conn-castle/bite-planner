@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useContext, useState } from 'react'
 import type { GroceryOrder, Job, MealSummary } from '../../lib/api/types'
 import { haptics } from '../../lib/haptics'
 import { errorFields, logger } from '../../lib/log'
@@ -16,6 +16,7 @@ import { formatMinutes } from '../meals/facts'
 import { householdQuery } from '../settings/settings'
 import { newestBatchState, suggestions } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
+import { FlowNotice } from './flowNotice'
 import { elapsed, plural } from './format'
 import { useEditsPending, useGenerateMeals, useSetMeal, useSetNotForUs } from './orders'
 import { useOrderSession } from './lock'
@@ -81,6 +82,13 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
     <FlowFrame
       step={0}
       onClose={onClose}
+      notice={
+        pickProblem ? (
+          <Notice>Couldn't add that meal: {pickProblem}</Notice>
+        ) : failed ? (
+          <Notice>Couldn't save that change: {failed.message}</Notice>
+        ) : null
+      }
       title="Pick meals"
       lede={`Add the meals you want in Order ${order.number}. Tap ✕ on anything you don't want: Chef stops suggesting meals like it to your household.`}
       footer={
@@ -96,17 +104,6 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
       }
     >
       <Note icon="users">Your picks are saved for the household as you go.</Note>
-      {pickProblem ? (
-        <div className={styles.notice}>
-          <Notice>Couldn't add that meal: {pickProblem}</Notice>
-        </div>
-      ) : (
-        failed && (
-          <div className={styles.notice}>
-            <Notice>Couldn't save that change: {failed.message}</Notice>
-          </div>
-        )
-      )}
       <div className={styles.grid}>
         {suggestions(order).map((meal) => (
           <MealCard
@@ -192,17 +189,19 @@ function MoreMeals({ order }: { order: GroceryOrder }) {
   const session = useOrderSession()
   const generate = useGenerateMeals()
   const batch = newestBatchState(order)
+  // One problem on screen: the flow's own (the order couldn't be refreshed) comes first.
+  const flowProblem = useContext(FlowNotice)
   const start = () => generate.mutate({ orderId: order.id, jobId: crypto.randomUUID(), session })
 
   if (batch.status === 'running') return <MoreRunning job={batch.job} />
   return (
     <div className={styles.more}>
-      {batch.status === 'failed' && (
+      {!flowProblem && !generate.isError && batch.status === 'failed' && (
         <Notice action={<button onClick={start} disabled={generate.isPending}>Try again</button>}>
           Couldn't come up with more meals: {batch.job.error ?? 'the batch failed.'}
         </Notice>
       )}
-      {generate.isError && (
+      {!flowProblem && generate.isError && (
         <Notice>Couldn't start more meals: {generate.error.message}</Notice>
       )}
       {batch.status !== 'failed' && (

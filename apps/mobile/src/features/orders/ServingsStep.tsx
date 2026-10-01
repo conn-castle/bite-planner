@@ -35,6 +35,7 @@ export function ServingsStep({ order, onOpenMeal, onBack, onNext, onClose }: Ser
       step={stepIndex('servings')}
       onBack={onBack}
       onClose={onClose}
+      notice={setServings.isError && <Notice>Couldn't save that: {setServings.error.message}</Notice>}
       title="Servings"
       lede={`How much of each meal to make for Order ${order.number}.`}
       footer={
@@ -49,11 +50,6 @@ export function ServingsStep({ order, onOpenMeal, onBack, onNext, onClose }: Ser
         </>
       }
     >
-      {setServings.isError && (
-        <div className={styles.notice}>
-          <Notice>Couldn't save that: {setServings.error.message}</Notice>
-        </div>
-      )}
       <div className={styles.groups}>
         <Group footerIcon="users" footer="Servings start at the household's default, in Settings.">
           {meals.map(({ meal, servings: count }) => (

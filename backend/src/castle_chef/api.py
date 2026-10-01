@@ -29,10 +29,11 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
-from castle_chef import failures, orders, push, ratings, reminders, shopping
+from castle_chef import failures, orders, push, quotes, ratings, reminders, shopping, windows
 from castle_chef import household as households
 from castle_chef import log as logging_config
 from castle_chef.auth import AuthError, AuthUnavailable, AuthVerifier, NeonAuthVerifier, Principal
+from castle_chef.checkout import SIGNED_OUT_ERROR, Checkout
 from castle_chef.db import get_request_session
 from castle_chef.dispatch import DispatchError, JobDispatcher, get_dispatcher
 from castle_chef.jobs import (
@@ -52,6 +53,8 @@ from castle_chef.models import (
     DECIDE_BY_OFFSET_DAYS,
     REMINDER_LEAD_DAYS,
     SERVINGS,
+    TIP_MAX_CENTS,
+    TIP_PERCENT,
     Aisle,
     AppUser,
     GroceryOrder,
@@ -63,6 +66,7 @@ from castle_chef.models import (
     Meal,
     MealRating,
     OrderStep,
+    ProductGone,
     ShoppingListItem,
 )
 from castle_chef.settings import get_settings, load_ssm_parameters
@@ -202,6 +206,22 @@ class OrderLockOut(BaseModel):
     expires_at: datetime
 
 
+class QuoteOut(BaseModel):
+    """What the order would cost at the store, for the final review: its newest
+    quote (the cart filled with its products, and checkout read)."""
+
+    job: JobOut
+    # For the order's products, counts, and tip rule now (else a new one is due).
+    current: bool
+    # It failed because Castle Chef is signed out of Instacart's website (someone
+    # signs it in again before trying again).
+    signed_out: bool
+    # Once it succeeds: why Instacart won't check the cart out (below the store's
+    # minimum), or what checkout showed.
+    blocked_because: str | None
+    checkout: Checkout | None
+
+
 class GroceryOrderOut(BaseModel):
     id: UUID
     number: int
@@ -216,6 +236,14 @@ class GroceryOrderOut(BaseModel):
     reminders_start_date: date | None
     earliest_delivery_date: date
     delivery_date: date | None
+    # The latest time it should arrive by, in the store's time zone; null until chosen.
+    delivery_by: time | None
+    # For that time (or, until one is chosen, the household's delivery time): the
+    # window booking picks when every window is open (null: none ends by it or
+    # includes it, so it can't be booked), and the one it may use that ends after
+    # the time if nothing ending by it is left ("or 2-4 PM"; null if none).
+    best_window: windows.Window | None
+    fallback_window: windows.Window | None
     next_delivery_date: date | None
     # Its jobs, oldest first: the suggestions are their meals.
     jobs: list[JobOut]
@@ -225,6 +253,8 @@ class GroceryOrderOut(BaseModel):
     lock: OrderLockOut | None
     # Its shopping list; null until one is started.
     shopping_list: ShoppingListOut | None
+    # What it would cost: its newest quote; null until one is started.
+    quote: QuoteOut | None
 
 
 class PlacedOrderOut(BaseModel):
@@ -235,6 +265,8 @@ class PlacedOrderOut(BaseModel):
     placed_at: datetime
     placed_by: MemberOut
     delivery_date: date
+    # The latest time it should arrive by; null for orders placed before there was one.
+    delivery_by: time | None
     next_delivery_date: date
     # The picked meals, in the order they were suggested.
     meals: list[PlacedMealOut]
@@ -290,6 +322,13 @@ class HouseholdOut(BaseModel):
     decide_by_offset_days: int
     reminder_lead_days: int
     default_servings: int
+    # The latest time deliveries should arrive by, in the store's time zone.
+    delivery_time: time
+    # The tip: a percentage of the items' total, never more than the maximum.
+    tip_percent: int
+    tip_max_cents: int
+    # When an approved product is gone at booking.
+    product_gone: ProductGone
     # In the order they were invited.
     members: list[HouseholdMemberOut]
 
@@ -312,6 +351,13 @@ class MeOut(BaseModel):
     household: HouseholdRefOut | None
     # None when not in a household.
     settings: PersonalSettingsOut | None
+
+
+def clock_minute(value: time | None) -> time | None:
+    """A clock time is hours and minutes, with no time zone."""
+    if value is not None and (value.second or value.microsecond or value.tzinfo):
+        raise ValueError("A time is hours and minutes, with no time zone.")
+    return value
 
 
 def zone(name: str) -> ZoneInfo:
@@ -353,6 +399,12 @@ class HouseholdSettingsIn(PartialUpdate):
         default=None, ge=REMINDER_LEAD_DAYS.low, le=REMINDER_LEAD_DAYS.high
     )
     default_servings: int | None = Field(default=None, ge=SERVINGS.low, le=SERVINGS.high)
+    delivery_time: time | None = None
+    tip_percent: int | None = Field(default=None, ge=TIP_PERCENT.low, le=TIP_PERCENT.high)
+    tip_max_cents: int | None = Field(default=None, ge=TIP_MAX_CENTS.low, le=TIP_MAX_CENTS.high)
+    product_gone: ProductGone | None = None
+
+    _minute = field_validator("delivery_time")(clock_minute)
 
 
 class PersonalSettingsIn(PartialUpdate):
@@ -360,12 +412,7 @@ class PersonalSettingsIn(PartialUpdate):
     time_zone: str | None = None
     reminders_on: bool | None = None
 
-    @field_validator("notification_time")
-    @classmethod
-    def clock_minute(cls, value: time | None) -> time | None:
-        if value is not None and (value.second or value.microsecond or value.tzinfo):
-            raise ValueError("A notification time is hours and minutes, with no time zone.")
-        return value
+    _minute = field_validator("notification_time")(clock_minute)
 
     @field_validator("time_zone")
     @classmethod
@@ -390,16 +437,25 @@ class DatesIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     delivery_date: date | None
+    # The latest time it should arrive by, in the store's time zone.
+    delivery_by: time | None
     next_delivery_date: date | None
+
+    _minute = field_validator("delivery_by")(clock_minute)
 
 
 class PlaceIn(BaseModel):
-    """The dates the member saw when placing, saved with it."""
+    """The dates and time the member saw when placing, saved with it, and the
+    quote (the estimated total) they saw, which must be the order's current one."""
 
     model_config = ConfigDict(extra="forbid")
 
     delivery_date: date
+    delivery_by: time
     next_delivery_date: date
+    quote_id: UUID
+
+    _minute = field_validator("delivery_by")(clock_minute)
 
 
 class LockIn(BaseModel):
@@ -553,10 +609,11 @@ def lock_out(
 
 
 def own_lock(session: Session, order: GroceryOrder, user_id: UUID) -> OrderLockOut:
-    """The lock the user's session just took or renewed."""
+    """The lock the user's session just took or renewed. Gone already: the flow
+    closed (releasing it) while the request was on its way, so it isn't open here."""
     lock = lock_out(order, user_id, names(session, {user_id}))
-    if lock is None:  # just taken or renewed, so live
-        raise RuntimeError(f"Order {order.id}'s lock isn't live just after taking it.")
+    if lock is None:
+        raise orders.OrderLocked("This order isn't open here any more. Open it again.")
     return lock
 
 
@@ -602,6 +659,26 @@ def shopping_list_out(
     )
 
 
+def quote_out(
+    session: Session,
+    order: GroceryOrder,
+    people: dict[UUID, str | None],
+) -> QuoteOut | None:
+    """The order's newest quote, and whether it's for the order as it is now."""
+    newest = quotes.newest_quote(session, order.id)
+    if newest is None:
+        return None
+    current = quotes.current(session, order)
+    result = newest.quote
+    return QuoteOut(
+        job=job_out(newest, [], people, {}),
+        current=current is not None and current.id == newest.id,
+        signed_out=newest.status == JobStatus.FAILED and newest.error == SIGNED_OUT_ERROR,
+        blocked_because=result.blocked_because if result else None,
+        checkout=result.checkout if result else None,
+    )
+
+
 def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) -> GroceryOrderOut:
     """An order as `viewer`, a member of its household, sees it."""
     jobs = orders.jobs(session, order.id)
@@ -614,6 +691,7 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
 
     target = orders.target_date(session, order)
     decide_by = orders.decide_by_date(session, order.household_id, target)
+    by = order.delivery_by or session.get_one(Household, order.household_id).delivery_time
     return GroceryOrderOut(
         id=order.id,
         number=orders.number(session, order),
@@ -625,6 +703,9 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
         reminders_start_date=orders.reminders_start_date(session, order.household_id, decide_by),
         earliest_delivery_date=orders.earliest_delivery_date(today),
         delivery_date=order.delivery_date,
+        delivery_by=order.delivery_by,
+        best_window=windows.choose(windows.DAY, by),
+        fallback_window=windows.fallback(by),
         next_delivery_date=order.next_delivery_date,
         jobs=[job_out(job, meals[job.id], people, rated) for job in jobs],
         picks=[
@@ -633,6 +714,7 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
         ],
         lock=lock_out(order, viewer, people),
         shopping_list=shopping_list_out(session, order, people, rated),
+        quote=quote_out(session, order, people),
     )
 
 
@@ -656,6 +738,7 @@ def placed_order_out(
         placed_at=placed_at,
         placed_by=MemberOut(user_id=placed_by, name=people[placed_by]),
         delivery_date=delivery,
+        delivery_by=order.delivery_by,
         next_delivery_date=next_delivery,
         meals=[
             PlacedMealOut(**meal_summary(pick.meal, rated).model_dump(), servings=pick.servings)
@@ -678,6 +761,7 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     orders.ItemNotFound: status.HTTP_404_NOT_FOUND,
     orders.NoAmount: status.HTTP_409_CONFLICT,
     orders.NoSuchProduct: status.HTTP_409_CONFLICT,
+    quotes.NothingToQuote: status.HTTP_409_CONFLICT,
     ListNotReady: status.HTTP_409_CONFLICT,
     NothingToList: status.HTTP_409_CONFLICT,
     orders.NotForUs: status.HTTP_409_CONFLICT,
@@ -787,6 +871,10 @@ def household_out(session: Session, household: Household) -> HouseholdOut:
         decide_by_offset_days=household.decide_by_offset_days,
         reminder_lead_days=household.reminder_lead_days,
         default_servings=household.default_servings,
+        delivery_time=household.delivery_time,
+        tip_percent=household.tip_percent,
+        tip_max_cents=household.tip_max_cents,
+        product_gone=household.product_gone,
         members=[
             HouseholdMemberOut(user_id=person.user_id, name=person.name, email=person.email)
             for person in households.members_of(session, household.id)
@@ -949,6 +1037,14 @@ def create_app() -> FastAPI:
             household.reminder_lead_days = body.reminder_lead_days
         if body.default_servings is not None:
             household.default_servings = body.default_servings
+        if body.delivery_time is not None:
+            household.delivery_time = body.delivery_time
+        if body.tip_percent is not None:
+            household.tip_percent = body.tip_percent
+        if body.tip_max_cents is not None:
+            household.tip_max_cents = body.tip_max_cents
+        if body.product_gone is not None:
+            household.product_gone = body.product_gone
         try:
             session.commit()
         except IntegrityError as error:
@@ -1196,6 +1292,38 @@ def create_app() -> FastAPI:
                 ) from error
         return job_out(job, [], names(session, {job.requested_by}), {})
 
+    @api.post("/v1/grocery-orders/{order_id}/quote", status_code=status.HTTP_201_CREATED)
+    def quote_order(
+        order_id: UUID,
+        body: JobIn,
+        response: Response,
+        caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        session: Annotated[Session, Depends(db)],
+        dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
+    ) -> JobOut:
+        """Find out what the draft would cost at the store now (its final review):
+        the cart is filled and checkout read. A quote waiting, running, or done for
+        the same products, counts, and tip rule is returned instead (200)."""
+        draft = orders.lock_draft(session, caller.household_id, order_id, by)
+        if (problem := orders.shopped_problem(session, draft.id)) is not None:
+            session.rollback()
+            raise orders.NotReady(problem)
+        job, created = quotes.submit_quote(
+            session, draft, caller.user_id, body.job_id, stale_after()
+        )
+        if not created:
+            response.status_code = status.HTTP_200_OK
+        else:
+            try:
+                dispatcher.dispatch(job.id)
+            except DispatchError as error:
+                log.error("job.dispatch_failed", extra={"job_id": str(job.id), "error": str(error)})
+                message = "The total could not be started. Try again."
+                fail_job(session, job.id, message)
+                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, message) from error
+        return job_out(job, [], names(session, {job.requested_by}), {})
+
     @api.patch("/v1/grocery-orders/{order_id}/list/items/{item_id}")
     def change_list_item(
         order_id: UUID,
@@ -1276,6 +1404,7 @@ def create_app() -> FastAPI:
             caller.household_id,
             order_id,
             body.delivery_date,
+            body.delivery_by,
             body.next_delivery_date,
             day,
             by,
@@ -1298,7 +1427,9 @@ def create_app() -> FastAPI:
             order_id,
             by,
             body.delivery_date,
+            body.delivery_by,
             body.next_delivery_date,
+            body.quote_id,
             day,
         )
         return order_out(session, placed, day, caller.user_id)

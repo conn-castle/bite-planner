@@ -18,6 +18,7 @@ from sqlmodel import Session, col, select
 from typer.testing import CliRunner
 
 from castle_chef import orders, push, shopping, worker
+from castle_chef.checkout import SIGNED_OUT_ERROR, CartLine, Quote, QuoteRequest
 from castle_chef.cli import app
 from castle_chef.db import get_engine
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, fail_job, submit_build_list
@@ -836,3 +837,185 @@ def test_whoever_is_waiting_hears_when_shopping_fails(
         "Couldn't shop your list",
         "Shopping Order 1's list at Wegmans stopped. Open it to try again.",
     )
+
+
+# Quotes: the order's total, read at checkout by the agent, in a browser (on
+# stand-ins for Instacart's pages: fixtures/checkout).
+
+SESSION = {"cookies": [], "origins": []}
+
+
+class RecordingSessions:
+    """The household's Instacart session, in place of SSM."""
+
+    def __init__(self) -> None:
+        self.saved: list[list[dict[str, Any]]] = []
+
+    def load(self) -> dict[str, Any]:
+        return SESSION
+
+    def save(self, cookies: list[dict[str, Any]]) -> None:
+        self.saved.append(list(cookies))
+
+
+@pytest.fixture
+def sessions(monkeypatch: pytest.MonkeyPatch) -> RecordingSessions:
+    recording = RecordingSessions()
+    monkeypatch.setattr(worker, "session_store", lambda: recording)
+    return recording
+
+
+def quote_job(session: Session, draft: GroceryOrder, *lines: tuple[str, float]) -> Job:
+    request = QuoteRequest(
+        lines=[CartLine(product_id=pid, quantity=quantity) for pid, quantity in lines],
+        tip_percent=10,
+        tip_max_cents=1500,
+    )
+    pending = Job(
+        id=uuid4(),
+        grocery_order_id=draft.id,
+        kind=JobKind.QUOTE,
+        requested_by=draft.created_by,
+        quote_request=request,
+    )
+    session.add(pending)
+    session.commit()
+    session.refresh(pending)
+    return pending
+
+
+def start_cart(codex_home: Path, items: dict[str, float], **config: Any) -> None:
+    lines = [{"product_id": pid, "quantity": quantity} for pid, quantity in items.items()]
+    (codex_home / "fake.json").write_text(json.dumps({"cart": lines, **config}))
+
+
+def cart_updates(codex_home: Path) -> list[list[dict[str, Any]]]:
+    """Each change the worker made to the cart, in order."""
+    return [
+        request["params"]["arguments"]["item_updates"]
+        for request in map(json.loads, (codex_home / "requests.jsonl").read_text().splitlines())
+        if request.get("method") == "mcpServer/tool/call"
+        and "item_updates" in request["params"]["arguments"]
+    ]
+
+
+def test_the_agent_reads_checkout_for_the_orders_products_with_the_households_items_set_aside(
+    session: Session,
+    draft: GroceryOrder,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    start_cart(codex_home, {"17499438": 1})  # the household's own onions
+    quote = quote_job(session, draft, ("3371870", 5), ("777", 2))
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(quote)
+
+    done = reload(session, quote)
+    assert done.status == JobStatus.SUCCEEDED, done.error
+    assert done.quote is not None and done.quote.checkout is not None
+    read = done.quote.checkout
+    # The stand-in checkout: $19.59 of items, $2.49 service, and the rule's tip (10%).
+    assert (read.items_cents, read.tip_cents, read.total_cents) == (1959, 196, 2404)
+    assert (read.card, read.replacements) == ("Visa ending 4242", ["Replace with best match"])
+    prompt = (tmp_path / "jobs" / str(quote.id) / "fake-agent-prompt.md").read_text()
+    assert "Open `/store/wegmans/storefront`" in prompt
+    # The household's onions out, the order's products in, then all put back.
+    assert cart_updates(codex_home) == [
+        [
+            {"product_id": "17499438", "quantity": 0},
+            {"product_id": "3371870", "quantity": 5},
+            {"product_id": "777", "quantity": 2},
+        ],
+        [
+            {"product_id": "3371870", "quantity": 0},
+            {"product_id": "777", "quantity": 0},
+            {"product_id": "17499438", "quantity": 1},
+        ],
+    ]
+    # The renewed session is saved, and no copy of it stays anywhere.
+    assert len(sessions.saved) == 1
+    assert not (tmp_path / f"session-{quote.id}").exists()
+    assert not list((tmp_path / "jobs" / str(quote.id)).glob("session*"))
+
+
+def test_a_cart_below_the_stores_minimum_is_a_quote_that_says_so(
+    session: Session,
+    draft: GroceryOrder,
+    codex_home: Path,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    quote = quote_job(session, draft, ("17499438", 1))  # $2.29
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(quote)
+
+    done = reload(session, quote)
+    assert (done.status, done.quote) == (
+        JobStatus.SUCCEEDED,
+        Quote(blocked_because="$10 Min. to checkout"),
+    )
+    assert sessions.saved == []  # checkout isn't opened
+
+
+def test_a_cart_instacart_wont_check_out_for_another_reason_fails_the_quote_with_it(
+    session: Session,
+    draft: GroceryOrder,
+    codex_home: Path,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {}, refuse_checkout="Store is closed")
+    quote = quote_job(session, draft, ("3371870", 10))
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(quote)
+
+    failed = reload(session, quote)
+    assert (failed.status, failed.quote) == (JobStatus.FAILED, None)
+    assert failed.error == "Instacart won't check this cart out: Store is closed"
+
+
+def test_a_signed_out_session_fails_the_quote_saying_so_and_isnt_saved(
+    session: Session,
+    draft: GroceryOrder,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    quote = quote_job(session, draft, ("3371870", 5))
+    use_fake_agent(monkeypatch, meals=0)  # finds Instacart asking to sign in
+
+    run_job(quote)
+
+    failed = reload(session, quote)
+    assert (failed.status, failed.error) == (JobStatus.FAILED, SIGNED_OUT_ERROR)
+    assert sessions.saved == []
+    assert json.loads((codex_home / "cart-state.json").read_text()) == {}
+
+
+def test_an_agent_that_doesnt_report_checkout_fails_the_quote(
+    session: Session,
+    draft: GroceryOrder,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {"17499438": 1})
+    quote = quote_job(session, draft, ("3371870", 5), ("777", 2))
+    use_fake_agent(monkeypatch, meals=1, stop_reason="max_turns")
+
+    run_job(quote)
+
+    failed = reload(session, quote)
+    assert failed.status == JobStatus.FAILED
+    assert failed.error is not None and "max_turns" in failed.error
+    assert json.loads((codex_home / "cart-state.json").read_text()) == {"17499438": 1}

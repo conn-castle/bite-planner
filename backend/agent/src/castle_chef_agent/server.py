@@ -3,6 +3,8 @@ the job: the job's tools are all the agent gets. Each tool is the matching
 `castle-chef` command's function, so the checks are the same."""
 
 import shlex
+from collections.abc import AsyncIterator, Awaitable
+from contextlib import asynccontextmanager
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -11,7 +13,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field, ValidationError
 
-from castle_chef_agent import products, shopping
+from castle_chef_agent import checkout, products, shopping
 from castle_chef_agent.instacart import Instacart, InstacartError, connect, describe
 from castle_chef_agent.jobfiles import read_context
 from castle_chef_agent.meals import MealInput, MealRefused, MealsJob, meal_problems, save_meal
@@ -24,6 +26,7 @@ class Tools(StrEnum):
     MEALS = "meals"
     SHOPPING_LIST = "shopping-list"
     PRODUCTS = "products"
+    CHECKOUT = "checkout"
 
 
 class InstacartSettings(BaseModel):
@@ -244,6 +247,138 @@ def products_server(job_dir: Path, instacart: Instacart) -> MCPServer:
     return server
 
 
+Ref = Annotated[str, Field(description="An element's ref from the page, e.g. e12.")]
+
+
+def checkout_server(job_dir: Path) -> MCPServer:
+    """The browser tools: the browser starts with the server and closes with it."""
+    opened: list[checkout.Browser] = []
+
+    @asynccontextmanager
+    async def lifespan(_: MCPServer) -> AsyncIterator[None]:
+        async with checkout.browser(job_dir) as browser:
+            opened.append(browser)
+            yield
+
+    server = MCPServer("castle-chef", lifespan=lifespan)
+
+    async def act[T](action: Awaitable[T]) -> T:
+        """Run a browser action; what went wrong goes back to the agent to handle."""
+        from playwright.async_api import Error as PlaywrightError
+
+        try:
+            return await action
+        except checkout.CheckoutRefused as error:
+            raise ToolError(str(error)) from error
+        except PlaywrightError as error:
+            first = str(error).splitlines()[0] if str(error) else type(error).__name__
+            raise ToolError(f"The browser couldn't do that: {first}") from error
+
+    @server.tool()
+    async def look(
+        ref: Annotated[
+            str | None,
+            Field(description="Just this element and what's in it; the whole page if left out."),
+        ] = None,
+    ) -> str:
+        """Show what's on screen now: the page's path, and the elements (role, name,
+        and ref) of the dialog that's open, or else of the page."""
+        return await act(opened[0].snapshot(ref))
+
+    @server.tool()
+    async def find(
+        text: Annotated[
+            str, Field(min_length=2, description="Text the element shows or is named.")
+        ],
+    ) -> str:
+        """Find elements anywhere on the page (dialogs and all) by their text: each
+        matching element's line, with its ref."""
+        return await act(opened[0].find(text))
+
+    @server.tool()
+    async def open_page(
+        path: Annotated[
+            str, Field(description="A path on Instacart's site, e.g. /store/wegmans/storefront.")
+        ],
+    ) -> str:
+        """Go to a page on Instacart's site. Returns the page."""
+        return await act(opened[0].open(path))
+
+    @server.tool()
+    async def click(ref: Ref) -> str:
+        """Click an element (never Place order: refused). Returns the page after."""
+        return await act(opened[0].click(ref))
+
+    @server.tool()
+    async def type_text(ref: Ref, text: Annotated[str, Field(description="What to type.")]) -> str:
+        """Replace a text field's contents with `text`. Returns the page after."""
+        return await act(opened[0].type(ref, text))
+
+    @server.tool()
+    async def tip(
+        items: Annotated[str, Field(description="The ref of the items' total line.")],
+    ) -> str:
+        """The tip to set, by the household's rule, from the items' total shown there."""
+
+        async def amount() -> str:
+            job = opened[0].job
+            items_cents = checkout.money(await opened[0].element_text(items))
+            cents = checkout.tip_cents(items_cents, job.tip_percent, job.tip_max_cents)
+            return f"Set the tip to {checkout.cents_text(cents)} (type {cents / 100:.2f})."
+
+        return await act(amount())
+
+    @server.tool()
+    async def record_replacements(
+        refs: Annotated[
+            list[Ref],
+            Field(
+                min_length=1,
+                description="The ref of each cart item's out-of-stock (replacement) setting.",
+            ),
+        ],
+    ) -> str:
+        """Record what Instacart does when each cart item is out of stock, from the cart."""
+        settings = await act(checkout.record_replacements(job_dir, opened[0], refs))
+        return f"Recorded: {', '.join(settings)}."
+
+    @server.tool()
+    async def report(
+        items: Annotated[str, Field(description="The ref of the items' total line.")],
+        lines: Annotated[
+            list[Ref],
+            Field(
+                description="The refs of every other summary line (delivery, fees, taxes, "
+                "...), not the tip or total."
+            ),
+        ],
+        tip: Annotated[str, Field(description="The ref of the element showing the tip amount.")],
+        total: Annotated[str, Field(description="The ref of the total line.")],
+        delivery: Annotated[
+            str,
+            Field(description="The ref of the delivery option chosen (its day and time window)."),
+        ],
+        address: Annotated[str, Field(description="The ref of the delivery address.")],
+        card: Annotated[str, Field(description="The ref of the default payment card.")],
+    ) -> str:
+        """Report checkout: each part is read from the element you point at (each a
+        different one), and checked: it must add up, the tip must be the rule's, and
+        the delivery must be a scheduled day and window. Says what's wrong, or done."""
+        refs = checkout.ReportRefs(items, lines, tip, total, delivery, address, card)
+        read = await act(checkout.report(job_dir, opened[0], refs))
+        return f"Done: total {checkout.cents_text(read.total_cents)}."
+
+    @server.tool()
+    async def signed_out(
+        ref: Annotated[str, Field(description="The ref of the sign-in control Instacart shows.")],
+    ) -> str:
+        """Instacart asks to sign in: record it and stop (someone signs it in again)."""
+        await act(checkout.mark_signed_out(job_dir, opened[0], ref))
+        return "Recorded: signed out. Stop here."
+
+    return server
+
+
 def serve(tools: Tools, job_dir: Path, instacart: InstacartSettings | None = None) -> None:
     """Serve the job's tools over stdio until the harness closes it."""
     if tools == Tools.PRODUCTS:
@@ -257,6 +392,9 @@ def serve(tools: Tools, job_dir: Path, instacart: InstacartSettings | None = Non
             command=shlex.split(instacart.command),
         ) as store:
             products_server(job_dir, store).run("stdio")
+        return
+    if tools == Tools.CHECKOUT:
+        checkout_server(job_dir).run("stdio")
         return
     server = meals_server(job_dir) if tools == Tools.MEALS else shopping_list_server(job_dir)
     server.run("stdio")

@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from botocore.stub import Stubber
+from castle_chef_agent.checkout import Checkout, QuoteLine
 from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import IngredientInput, MealInput
 from castle_chef_agent.products import ItemChoice, ProductCount
@@ -27,6 +28,7 @@ from castle_chef import api as api_module
 from castle_chef import orders, products
 from castle_chef.api import app, create_app
 from castle_chef.auth import AuthError, AuthUnavailable, Principal
+from castle_chef.checkout import SIGNED_OUT_ERROR, Quote
 from castle_chef.db import get_engine
 from castle_chef.dispatch import DispatchError, LocalDispatcher, SqsDispatcher, get_dispatcher
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, create_shop, fail_job, finish_job
@@ -266,12 +268,14 @@ def put_dates(
     next_delivery: date | None,
     user: UUID = MOM,
     zone: str = ZONE,
+    by: str | None = "18:00",
 ) -> Response:
     return client.put(
         f"/v1/grocery-orders/{order_id}/dates",
         headers=as_user(user, zone),
         json={
             "delivery_date": delivery.isoformat() if delivery else None,
+            "delivery_by": by,
             "next_delivery_date": next_delivery.isoformat() if next_delivery else None,
         },
     )
@@ -382,6 +386,44 @@ def ready_list(client: TestClient, order_id: str, user: UUID = MOM) -> dict[str,
     return get_order(client, order_id, user)["shopping_list"]
 
 
+CHECKOUT = Checkout(
+    items_cents=2290,
+    fees=[QuoteLine(label="Service fee", cents=249)],
+    tip_cents=229,
+    total_cents=2768,
+    address="1 Main St Rochester, NY 14604",
+    card="Visa ending 4242",
+    replacements=["Replace with best match"],
+)
+
+
+def request_quote(
+    client: TestClient, order_id: str, user: UUID = MOM, job_id: UUID | None = None
+) -> Response:
+    return client.post(
+        f"/v1/grocery-orders/{order_id}/quote",
+        headers=as_user(user),
+        json={"job_id": str(job_id or uuid4())},
+    )
+
+
+def finish_quote(job_id: str, quote: Quote | None = None) -> None:
+    """What the worker does with a quote job: checkout read (CHECKOUT by default)."""
+    with Session(get_engine()) as worker_session:
+        claim_job(worker_session, UUID(job_id))
+        job = worker_session.get_one(Job, UUID(job_id))
+        job.quote = quote or Quote(checkout=CHECKOUT)
+        worker_session.add(job)
+        assert finish_job(worker_session, UUID(job_id))
+
+
+def ready_quote(client: TestClient, order_id: str, user: UUID = MOM) -> str:
+    """The draft's current quote, read (as the final review waits for); its id."""
+    job = ok(request_quote(client, order_id, user), 201)
+    finish_quote(job["id"])
+    return str(job["id"])
+
+
 def place(
     client: TestClient,
     order_id: str,
@@ -395,16 +437,27 @@ def place(
     its list is built for its picks (as the flow does), unless `with_list` is
     False or it has no picks to list."""
     shown = client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(user, zone))
-    if with_list and shown.status_code == 200:
+    quote_id = str(uuid4())  # none it could be: refused for another reason first
+    if shown.status_code == 200 and shown.json()["status"] == "draft":
         order = shown.json()
         listed = order["shopping_list"]
-        if order["status"] == "draft" and order["picks"] and not (listed and listed["current"]):
+        if with_list and order["picks"] and not (listed and listed["current"]):
             ready_list(client, order_id, user)
+        # Its total, as the final review waits for (when it can have one).
+        quoted = get_order(client, order_id, user)["quote"]
+        if quoted and quoted["current"] and quoted["job"]["status"] == "succeeded":
+            quote_id = quoted["job"]["id"]
+        else:
+            requested = request_quote(client, order_id, user)
+            if requested.status_code == 201:
+                finish_quote(requested.json()["id"])
+                quote_id = requested.json()["id"]
     if dates is None and shown.status_code == 200:
         body = {key: shown.json()[key] for key in ("delivery_date", "next_delivery_date")}
     else:
         dates = dates or (tomorrow(), tomorrow() + timedelta(days=1))
         body = {"delivery_date": dates[0].isoformat(), "next_delivery_date": dates[1].isoformat()}
+    body |= {"delivery_by": "18:00", "quote_id": quote_id}
     return client.post(
         f"/v1/grocery-orders/{order_id}/place", headers=as_user(user, zone), json=body
     )
@@ -591,11 +644,16 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "reminders_start_date": None,
         "earliest_delivery_date": tomorrow().isoformat(),
         "delivery_date": None,
+        "delivery_by": None,
+        # The household's delivery time (6:00 PM) until one is chosen.
+        "best_window": {"start": "16:00:00", "end": "18:00:00"},
+        "fallback_window": {"start": "17:00:00", "end": "19:00:00"},
         "next_delivery_date": None,
         "jobs": [],
         "picks": [],
         "lock": draft["lock"],
         "shopping_list": None,
+        "quote": None,
     }
     # Opening it takes its lock for Mom's phone.
     assert draft["lock"] | {"since": None, "expires_at": None} == {
@@ -660,8 +718,8 @@ def test_households_see_and_change_only_their_own_orders(
     assert discard.status_code == gone.status_code
 
     assert get_order(client, order_id) == moms
-    # The placed order's batch and list, and this draft's batch.
-    assert len(dispatcher.dispatched) == 3
+    # The placed order's batch, list, and total, and this draft's batch.
+    assert len(dispatcher.dispatched) == 4
     # The neighbor's household gets its own draft: its first order.
     neighbors = open_draft(client, NEIGHBOR)
     assert (neighbors["id"] != order_id, neighbors["number"]) == (True, 1)
@@ -910,14 +968,15 @@ def test_another_households_job_id_is_rejected(
 
 def test_a_job_id_from_a_previous_order_is_rejected(client: TestClient) -> None:
     first = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
-    [old_batch, old_list, old_shop] = first["jobs"]
-    assert [job["kind"] for job in first["jobs"]] == ["generate_meals", "build_list", "shop"]
+    [old_batch, old_list, old_shop, old_quote] = first["jobs"]
+    kinds = [job["kind"] for job in first["jobs"]]
+    assert kinds == ["generate_meals", "build_list", "shop", "quote"]
     draft = open_draft(client)["id"]
 
     detail(request_batch(client, draft, MOM, UUID(old_batch["id"])), 409)
 
     assert get_order(client, draft)["jobs"] == []
-    assert get_order(client, first["id"])["jobs"] == [old_batch, old_list, old_shop]
+    assert get_order(client, first["id"])["jobs"] == [old_batch, old_list, old_shop, old_quote]
 
 
 def test_one_batch_at_a_time(client: TestClient) -> None:
@@ -1213,7 +1272,7 @@ def test_a_placed_order_cannot_be_changed(
     detail(client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(DAD)), 409)
 
     assert get_order(client, order_id) == placed
-    assert len(dispatcher.dispatched) == 2  # its batch and its list
+    assert len(dispatcher.dispatched) == 3  # its batch, its list, and its total
 
 
 # Servings.
@@ -1390,6 +1449,10 @@ def test_a_household_starts_with_the_default_settings_and_lists_its_members(
         "decide_by_offset_days": 1,
         "reminder_lead_days": 2,
         "default_servings": 4,
+        "delivery_time": "18:00:00",
+        "tip_percent": 10,
+        "tip_max_cents": 1500,
+        "product_gone": "use_alternative",
         "members": [
             {"user_id": str(DAD), "name": "Dad", "email": "dad@example.com"},
             {"user_id": str(MOM), "name": "Mom", "email": "mom@example.com"},
@@ -1427,6 +1490,13 @@ def test_household_settings_are_shared_and_only_those_sent_change(client: TestCl
         {"reminder_lead_days": 8},
         {"default_servings": 0},
         {"default_servings": 13},
+        {"tip_percent": -1},
+        {"tip_percent": 31},
+        {"tip_max_cents": -1},
+        {"tip_max_cents": 10_001},
+        {"delivery_time": "18:00:30"},
+        {"delivery_time": "18:00-04:00"},
+        {"product_gone": "skip_it"},
         {"id": "00000000-0000-0000-0000-000000000000"},
     ],
     ids=[
@@ -1438,6 +1508,13 @@ def test_household_settings_are_shared_and_only_those_sent_change(client: TestCl
         "lead 8",
         "servings 0",
         "servings 13",
+        "tip -1%",
+        "tip 31%",
+        "max tip -1",
+        "max tip over $100",
+        "time with seconds",
+        "time with a zone",
+        "unknown product-gone choice",
         "not a setting",
     ],
 )
@@ -1449,6 +1526,22 @@ def test_household_settings_out_of_range_are_refused(
     detail(patch_household(client, body), 422)
 
     assert household_settings(client) == before
+
+
+def test_the_delivery_time_tip_and_product_gone_choice_are_household_settings(
+    client: TestClient,
+) -> None:
+    body = {
+        "delivery_time": "15:30",
+        "tip_percent": 15,
+        "tip_max_cents": 2000,
+        "product_gone": "ask",
+    }
+
+    changed = ok(patch_household(client, body, DAD))
+
+    assert {key: changed[key] for key in body} == body | {"delivery_time": "15:30:00"}
+    assert household_settings(client) == changed
 
 
 def test_members_rename_their_household(client: TestClient) -> None:
@@ -1553,6 +1646,7 @@ def test_placed_orders_are_listed_from_the_day_they_cover(client: TestClient) ->
         "placed_at": None,
         "placed_by": {"user_id": str(DAD), "name": "Dad"},
         "delivery_date": second["delivery_date"],
+        "delivery_by": "18:00:00",
         "next_delivery_date": second["next_delivery_date"],
         "meals": [meal | {"servings": 4}],
         "shopping_list": second["shopping_list"]["items"],
@@ -2234,16 +2328,24 @@ def test_a_placed_order_keeps_its_list(client: TestClient) -> None:
     order_id, [tacos, _] = with_suggestions(client)
     ok(pick(client, order_id, tacos))
     ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=2)))
-    items = ready_list(client, order_id)["items"]
-    [tortillas] = [item for item in items if not item["on_hand"]]
+    job = ok(request_list(client, order_id), 201)
+    finish_list(
+        job["id"],
+        [
+            ListEntry(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=[1]),
+            ListEntry(name="cotija", quantity=4, unit="oz", aisle=Aisle.DAIRY_EGGS, meals=[1]),
+        ],
+    )
+    items = get_order(client, order_id)["shopping_list"]["items"]
+    [tortillas] = [item for item in items if item["name"] == "tortillas"]
     ok(change_item(client, order_id, tortillas["id"], {"removed": True}))
     ok(place(client, order_id))
 
     [placed] = placed_orders(client)
 
     assert [(item["name"], item["removed"]) for item in placed["shopping_list"]] == [
+        ("cotija", False),
         ("tortillas", True),
-        ("salt", False),
     ]
     detail(change_item(client, order_id, tortillas["id"], {"removed": False}), 409)
     detail(request_list(client, order_id), 409)
@@ -2603,3 +2705,186 @@ def test_secrets_are_loaded_from_ssm_where_not_injected(monkeypatch: pytest.Monk
 
     assert os.environ["CASTLE_CHEF_TEST_SECRET"] == "s3cret"
     monkeypatch.delenv("CASTLE_CHEF_TEST_SECRET")
+
+
+# The final review's total: a quote (stage 3).
+
+
+def test_the_delivery_date_and_its_latest_time_are_saved_together(client: TestClient) -> None:
+    order_id = open_draft(client)["id"]
+
+    saved = ok(put_dates(client, order_id, tomorrow(), None, by="15:00"))
+
+    assert (saved["delivery_date"], saved["delivery_by"]) == (tomorrow().isoformat(), "15:00:00")
+    assert (saved["best_window"], saved["fallback_window"]) == (
+        {"start": "13:00:00", "end": "15:00:00"},
+        {"start": "14:00:00", "end": "16:00:00"},
+    )
+    # No window ends by 6:00 AM or includes it: nothing to book.
+    early = ok(put_dates(client, order_id, tomorrow(), None, by="06:00"))
+    assert (early["best_window"], early["fallback_window"]) == (None, None)
+    # Not chosen yet: the app shows the household's delivery time.
+    cleared = ok(put_dates(client, order_id, tomorrow(), None, by=None))
+    assert cleared["delivery_by"] is None
+    detail(put_dates(client, order_id, tomorrow(), None, by="15:00:30"), 422)
+
+
+def test_a_quote_needs_the_list_shopped_and_decided(client: TestClient) -> None:
+    unshopped, _ = shopped_draft(client, shop=False)
+    assert "isn't shopped" in detail(request_quote(client, unshopped), 409)
+    close_flow(client, unshopped)
+    no_content(client.delete(f"/v1/grocery-orders/{unshopped}", headers=as_user(MOM)))
+
+    undecided, _ = shopped_draft(client, missing=frozenset({"cotija"}))
+    assert "Decide on what Wegmans doesn't have: cotija" in detail(
+        request_quote(client, undecided), 409
+    )
+
+
+def test_a_quote_prices_the_lists_products_and_counts_with_the_households_tip(
+    client: TestClient, session: Session, dispatcher: RecordingDispatcher
+) -> None:
+    order_id, _ = shopped_draft(client)
+    ok(patch_household(client, {"tip_percent": 12, "tip_max_cents": 900}))
+
+    job = ok(request_quote(client, order_id), 201)
+
+    stored = session.get_one(Job, UUID(job["id"]))
+    assert stored.quote_request is not None
+    # Both items were shopped as the same onions: the cart holds them once.
+    assert [(line.product_id, line.quantity) for line in stored.quote_request.lines] == [
+        (ONIONS.product_id, 2)
+    ]
+    assert (stored.quote_request.tip_percent, stored.quote_request.tip_max_cents) == (12, 900)
+    assert dispatcher.dispatched[-1] == UUID(job["id"])
+    shown = get_order(client, order_id)["quote"]
+    assert (shown["job"]["id"], shown["job"]["kind"], shown["current"]) == (
+        job["id"],
+        "quote",
+        True,
+    )
+    assert (shown["checkout"], shown["blocked_because"]) == (None, None)
+
+
+def test_a_quote_for_the_same_products_is_reused_and_a_change_needs_a_new_one(
+    client: TestClient,
+) -> None:
+    order_id, _ = shopped_draft(client)
+    first = ok(request_quote(client, order_id), 201)
+    finish_quote(first["id"])
+
+    again = ok(request_quote(client, order_id), 200)
+    assert again["id"] == first["id"]
+    shown = get_order(client, order_id)["quote"]
+    assert (shown["current"], shown["checkout"]) == (True, CHECKOUT.model_dump(mode="json"))
+
+    # One more tortilla product: the total read is no longer the order's.
+    tortillas = item_named(get_order(client, order_id), "tortillas")
+    ok(change_item(client, order_id, tortillas["id"], {"count": 2}))
+    assert get_order(client, order_id)["quote"]["current"] is False
+    # So is a new tip rule.
+    second = ok(request_quote(client, order_id), 201)
+    finish_quote(second["id"])
+    ok(patch_household(client, {"tip_percent": 20}))
+    assert get_order(client, order_id)["quote"]["current"] is False
+
+
+def test_placing_needs_the_current_quote(client: TestClient, grocer: list[UUID]) -> None:
+    order_id, _ = shopped_draft(client)
+    first = ok(request_quote(client, order_id), 201)
+    finish_quote(first["id"])
+    dates = {
+        "delivery_date": tomorrow().isoformat(),
+        "delivery_by": "15:00",
+        "next_delivery_date": (tomorrow() + timedelta(days=2)).isoformat(),
+    }
+
+    def place_on(quote_id: str) -> Response:
+        return client.post(
+            f"/v1/grocery-orders/{order_id}/place",
+            headers=as_user(MOM),
+            json=dates | {"quote_id": quote_id},
+        )
+
+    tortillas = item_named(get_order(client, order_id), "tortillas")
+    ok(change_item(client, order_id, tortillas["id"], {"count": 2}))
+    assert "total changed" in detail(place_on(first["id"]), 409)
+    second = ok(request_quote(client, order_id), 201)
+    assert "isn't ready" in detail(place_on(second["id"]), 409)
+    finish_quote(second["id"])
+
+    placed = ok(place_on(second["id"]))
+
+    assert (placed["status"], placed["delivery_by"]) == ("placed", "15:00:00")
+    assert grocer == [UUID(order_id)]
+
+
+def test_an_order_below_the_stores_minimum_cant_be_placed(
+    client: TestClient, grocer: list[UUID]
+) -> None:
+    order_id, _ = shopped_draft(client)
+    job = ok(request_quote(client, order_id), 201)
+    finish_quote(job["id"], Quote(blocked_because="$10 Min. to checkout"))
+
+    shown = get_order(client, order_id)["quote"]
+    assert (shown["blocked_because"], shown["checkout"]) == ("$10 Min. to checkout", None)
+    assert detail(place(client, order_id), 409) == "$10 Min. to checkout"
+    assert grocer == []
+
+
+def test_a_quote_that_cant_be_started_fails_visibly(client: TestClient) -> None:
+    order_id, _ = shopped_draft(client)
+    app.dependency_overrides[get_dispatcher] = lambda: RecordingDispatcher(fail=True)
+
+    detail(request_quote(client, order_id), 503)
+
+    shown = get_order(client, order_id)["quote"]
+    assert (shown["job"]["status"], shown["job"]["error"]) == (
+        "failed",
+        "The total could not be started. Try again.",
+    )
+
+
+def test_a_quote_that_failed_because_instacart_signed_out_says_so(client: TestClient) -> None:
+    order_id, _ = shopped_draft(client)
+    job = ok(request_quote(client, order_id), 201)
+    with Session(get_engine()) as worker_session:
+        claim_job(worker_session, UUID(job["id"]))
+        assert finish_job(worker_session, UUID(job["id"]), error=SIGNED_OUT_ERROR)
+
+    shown = get_order(client, order_id)["quote"]
+
+    assert (shown["job"]["status"], shown["signed_out"]) == ("failed", True)
+    # Any other failure isn't that.
+    tortillas = item_named(get_order(client, order_id), "tortillas")
+    ok(change_item(client, order_id, tortillas["id"], {"count": 3}))
+    other = ok(request_quote(client, order_id), 201)
+    with Session(get_engine()) as worker_session:
+        claim_job(worker_session, UUID(other["id"]))
+        assert finish_job(worker_session, UUID(other["id"]), error="Checkout changed.")
+    assert get_order(client, order_id)["quote"]["signed_out"] is False
+
+
+def test_a_renewal_whose_lock_was_released_meanwhile_says_the_order_isnt_open_here(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order_id = open_draft(client)["id"]
+    renew = orders.renew_lock
+
+    def renewed_then_closed(
+        session: Session, household_id: UUID, order_id: UUID, by: orders.Orderer, step: Any
+    ) -> GroceryOrder:
+        # The flow closes (releasing the lock) just as the renewal commits.
+        order = renew(session, household_id, order_id, by, step)
+        with Session(get_engine()) as other:
+            orders.release_lock(other, household_id, order_id, by.session)
+        session.refresh(order)
+        return order
+
+    monkeypatch.setattr(api_module.orders, "renew_lock", renewed_then_closed)
+
+    response = client.put(
+        f"/v1/grocery-orders/{order_id}/lock", headers=as_user(MOM), json={"step": "pick"}
+    )
+
+    assert "isn't open here any more" in detail(response, 423)

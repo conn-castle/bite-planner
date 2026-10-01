@@ -27,6 +27,7 @@ const placed: PlacedOrder = {
   placed_at: '2026-09-18T09:00:00Z',
   placed_by: { user_id: 'sam', name: 'Sam' },
   delivery_date: '2026-09-20',
+  delivery_by: null,
   next_delivery_date: '2026-09-25',
   shopping_list: [],
   meals: [summary('fajitas'), summary('curry')].map((meal) => ({ ...meal, servings: 4 })),

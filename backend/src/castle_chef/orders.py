@@ -10,7 +10,7 @@ has it."""
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, text, tuple_
@@ -18,7 +18,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, func, select
 
-from castle_chef import products, ratings, shopping
+from castle_chef import products, quotes, ratings, shopping
 from castle_chef.jobs import shop_of
 from castle_chef.models import (
     GroceryOrder,
@@ -396,10 +396,13 @@ def set_dates(
     household_id: UUID,
     order_id: UUID,
     delivery: date | None,
+    delivery_by: time | None,
     next_delivery: date | None,
     today: date,
     orderer: Orderer,
 ) -> None:
+    """Save the delivery date, the latest time it should arrive by that day, and
+    the next delivery date."""
     order = lock_draft(session, household_id, order_id, orderer)
     try:
         check_dates(delivery, next_delivery, today)
@@ -407,6 +410,7 @@ def set_dates(
         session.rollback()
         raise
     order.delivery_date, order.next_delivery_date = delivery, next_delivery
+    order.delivery_by = delivery_by
     session.add(order)
     session.commit()
 
@@ -417,10 +421,13 @@ def place(
     order_id: UUID,
     orderer: Orderer,
     delivery: date,
+    delivery_by: time,
     next_delivery: date,
+    quote_id: UUID,
     today: date,
 ) -> GroceryOrder:
-    """Place a draft with the dates the member saw: save them, check the draft,
+    """Place a draft with the dates, time, and quote (its estimated total) the
+    member saw: save them, check the draft and that the quote is its current one,
     send it to the grocery service, and mark it placed by the user, now, releasing
     its lock; all under the draft's row lock, so another change can't land in
     between. Only the session with the order lock can place it. Placing an order
@@ -434,11 +441,14 @@ def place(
         session.rollback()
         return order
     _check_session(session, order, orderer)
-    missing = _not_ready(session, order, delivery, next_delivery, today)
+    missing = _not_ready(session, order, delivery, next_delivery, today) or _quote_problem(
+        session, order, quote_id
+    )
     if missing is not None:
         session.rollback()
         raise NotReady(missing)
     order.delivery_date, order.next_delivery_date = delivery, next_delivery
+    order.delivery_by = delivery_by
     place_with_grocer(order)
     order.status = GroceryOrderStatus.PLACED
     order.placed_at = utc_now()
@@ -462,6 +472,24 @@ def _not_ready(
         check_dates(delivery, next_delivery, today)
     except InvalidDates as error:
         return str(error)
+    return None
+
+
+def _quote_problem(session: Session, order: GroceryOrder, quote_id: UUID) -> str | None:
+    """Why the member's quote isn't one to place the order on: not the current
+    one (the list or the tip changed since), not read, or below the store's minimum.
+    The household's row is locked first, so its tip rule can't change until the
+    order is placed."""
+    session.exec(
+        select(Household).where(Household.id == order.household_id).with_for_update()
+    ).one()
+    quote = quotes.current(session, order)
+    if quote is None or quote.id != quote_id:
+        return "The total changed; check the new one."
+    if quote.status != JobStatus.SUCCEEDED or quote.quote is None:
+        return "The total isn't ready yet."
+    if quote.quote.blocked_because is not None:
+        return quote.quote.blocked_because
     return None
 
 

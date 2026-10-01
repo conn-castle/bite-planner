@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<!-- A stand-in for Instacart's checkout (tests only), as recorded 2026-09-28:
+     Priority is chosen until Schedule and a window are; the tip starts at $2.00
+     and takes another amount in its own dialog; the total adds everything up. -->
+<head><meta charset="utf-8"><title>Checkout</title></head>
+<body>
+<main>
+  <h1>Checkout</h1>
+  <h2>Deliver to</h2>
+  <button type="button">1 Main Street Rochester, NY 14604 Leave at the door</button>
+  <h2>When</h2>
+  <ul>
+    <li><button type="button">Priority Today, 6pm–7pm $1</button></li>
+    <li><button type="button" id="schedule" onclick="document.getElementById('windows').hidden = false">Schedule As soon as 7am tomorrow $0</button></li>
+  </ul>
+  <div id="windows" role="dialog" aria-label="Schedule" hidden>
+    <h2>Schedule a time</h2>
+    <button type="button" onclick="scheduled()">4pm–6pm $0</button>
+  </div>
+  <h2>Pay with</h2>
+  <button type="button">*0005 Amex</button>
+  <button type="button">*4242 Visa Default</button>
+  <section aria-label="Summary">
+    <h2>Summary</h2>
+    <h3>Delivery Tip</h3>
+    <p id="tip">$2.00</p>
+    <button type="button" onclick="document.getElementById('tipper').hidden = false">Other</button>
+    <div id="tipper" role="dialog" aria-label="Say thanks with a tip" hidden>
+      <label>Other amount <input id="amount" type="text"></label>
+      <button type="button" onclick="saveTip()">Save Tip</button>
+    </div>
+    <ul>
+      <li id="items">2 items (loyalty applied) $19.59</li>
+      <li>Delivery with Instacart+ original price $7.99, your price $0.00</li>
+      <li>Service fee $2.49</li>
+      <li id="priority">Priority fee $1.00</li>
+      <li id="total"></li>
+    </ul>
+    <button type="button">Place order</button>
+  </section>
+  <h2>Help</h2>
+  <button type="button" onclick="location.href = location.href.replace('127.0.0.1', 'localhost')">Help center</button>
+  <button type="button" onclick="window.open('/store/wegmans/storefront')">Keep shopping in a new tab</button>
+  <button type="button" aria-label="Place order">Pay $25.08 now</button>
+  <input type="submit" value="Place order">
+</main>
+<script>
+  let tip = 200, priority = 100
+  function show() {
+    document.getElementById('tip').textContent = '$' + (tip / 100).toFixed(2)
+    document.getElementById('priority').hidden = priority === 0
+    document.getElementById('total').textContent = 'Total $' + ((1959 + 249 + priority + tip) / 100).toFixed(2)
+  }
+  function scheduled() {
+    priority = 0
+    document.getElementById('windows').hidden = true
+    document.getElementById('schedule').textContent = 'Tomorrow, 4pm–6pm More times available $0'
+    show()
+  }
+  function saveTip() {
+    tip = Math.round(parseFloat(document.getElementById('amount').value) * 100)
+    document.getElementById('tipper').hidden = true
+    show()
+  }
+  show()
+</script>
+</body>
+</html>

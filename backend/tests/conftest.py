@@ -1,7 +1,10 @@
 import os
 import subprocess
 import sys
+import threading
 from collections.abc import Iterator
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -122,3 +125,39 @@ def codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(instacart, "POLL_SECONDS", 0)
     get_settings.cache_clear()
     return home
+
+
+CHECKOUT_PAGES = Path(__file__).parent / "fixtures" / "checkout"
+
+
+STAND_IN_PAGES = {
+    "/store/wegmans/storefront": "storefront.html",
+    "/store/checkout_v4": "checkout.html",
+    "/store/sign-in": "sign-in.html",
+}
+
+
+class _StandIns(SimpleHTTPRequestHandler):
+    """Instacart's pages, as stand-ins: the store's front page and checkout."""
+
+    def translate_path(self, path: str) -> str:
+        return str(CHECKOUT_PAGES / STAND_IN_PAGES.get(path.split("?")[0], "missing"))
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+@pytest.fixture
+def instacart_site(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """Stand-ins for Instacart's store front and checkout pages, served here; the
+    worker's settings point at them."""
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), partial(_StandIns, directory=str(CHECKOUT_PAGES))
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    site = f"http://127.0.0.1:{server.server_address[1]}"
+    monkeypatch.setenv("CASTLE_CHEF_INSTACART_SITE", site)
+    get_settings.cache_clear()
+    yield site
+    server.shutdown()

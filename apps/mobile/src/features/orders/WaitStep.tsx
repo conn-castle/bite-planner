@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import type { GroceryOrder } from '../../lib/api/types'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
@@ -12,6 +12,7 @@ import { useNotifiedOfJob } from '../notifications/notifications'
 import { useSession } from '../session/session'
 import { newestBatchState } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
+import { FlowNotice } from './flowNotice'
 import { elapsed } from './format'
 import { useGenerateMeals } from './orders'
 import { useOrderSession } from './lock'
@@ -38,6 +39,8 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
   // Who started the batch being made (this member, when it was just asked for here).
   const startedBy = batch.status === 'running' ? batch.job.requested_by.user_id : generate.isPending ? userId : null
   const notified = useNotifiedOfJob(running ? startedBy : null)
+  // One problem on screen: the flow's own (the order couldn't be refreshed) comes first.
+  const flowProblem = useContext(FlowNotice)
   // What went wrong is for the logs (the screen says it plainly): once per failed batch.
   const failedId = batch.status === 'failed' ? batch.job.id : undefined
   const failedError = batch.status === 'failed' ? batch.job.error : null
@@ -85,7 +88,7 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
             <RatePrompt />
           </div>
         )}
-        {!running && batch.status === 'failed' && (
+        {!flowProblem && !generate.isError && !running && batch.status === 'failed' && (
           <div className={styles.problem}>
             <RetryNotice
               message="We couldn't come up with meal ideas this time."
@@ -99,7 +102,7 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
             <Button onClick={start}>Get meal ideas</Button>
           </div>
         )}
-        {generate.isError && (
+        {!flowProblem && generate.isError && (
           <div className={styles.problem}>
             <RetryNotice message={`Couldn't start it: ${generate.error.message}`} onRetry={start} busy={generate.isPending} />
           </div>
