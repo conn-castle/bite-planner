@@ -313,7 +313,7 @@ interface OrderStepProps {
   order: GroceryOrder
   /** The step the member is at; undefined until known (the furthest the order's flow has reached shows). */
   step: Step | undefined
-  setStep: (step: Step) => void
+  setStep: (step: Step | undefined) => void
   onClose: () => void
   onOpenMeal: OpenMeal
   onOpenProduct: OpenProduct
@@ -324,7 +324,7 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenProduct }:
   const session = useOrderSession()
   const { mutate: startList } = useStartList()
   const household = useHousehold().shown
-  if (order.status === 'placed') return <PlacedStep order={order} onClose={onClose} />
+  if (order.status === 'placed') return <PlacedStep order={order} onChanged={setStep} onClose={onClose} />
   if (suggestions(order).length === 0) return <WaitStep order={order} onClose={onClose} />
 
   const shown = stepShown(order, step)

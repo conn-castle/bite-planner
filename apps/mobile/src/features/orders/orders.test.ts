@@ -23,6 +23,10 @@ vi.mock('../../lib/log', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error:
 const request = vi.mocked(apiRequest)
 
 const draft = (mealIds: string[]): GroceryOrder => ({
+  book_state: null,
+  book_on: null,
+  booking: null,
+  book_issue: null,
   id: 'draft',
   number: 4,
   status: 'draft',

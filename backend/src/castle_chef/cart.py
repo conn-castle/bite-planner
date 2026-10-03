@@ -9,7 +9,7 @@ Only one run uses the cart at a time: the whole run holds the Codex login's lock
 (castle_chef.instacart.store)."""
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from uuid import UUID
 
@@ -70,6 +70,44 @@ def put_back(store: Instacart, ledger: CartLedger) -> list[str]:
     return missing + stuck
 
 
+class FilledCart:
+    """The household's cart while a run has it filled: as Instacart has it, and
+    a way to swap a product it didn't take for an alternative (booking)."""
+
+    def __init__(self, store: Instacart, household_id: UUID, ledger: CartLedger, cart: Cart):
+        self._store, self._household_id, self._ledger = store, household_id, ledger
+        self.cart = cart
+
+    def missing(self, lines: list[CartLine]) -> list[CartLine]:
+        """The lines the cart doesn't hold as asked (gone, or not that many)."""
+        held = {item.product.product_id: item.quantity for item in self.cart.items}
+        return [line for line in lines if held.get(line.product_id) != line.quantity]
+
+    def swap(self, gone: CartLine, alternatives: Sequence[CartLine]) -> CartLine | None:
+        """Take the gone product out and put in the first of the alternatives the
+        cart takes (one already in it for something else is passed over); None
+        if it takes none of them."""
+        for alternative in alternatives:
+            held = {item.product.product_id for item in self.cart.items}
+            if alternative.product_id in held:
+                continue
+            # On the ledger first: whatever happens next, it's taken out after.
+            self._ledger.added.append(alternative.product_id)
+            _save_ledger(self._household_id, self._ledger)
+            self.cart = self._store.update_cart(
+                [
+                    CartUpdate(product_id=gone.product_id, quantity=0),
+                    CartUpdate(product_id=alternative.product_id, quantity=alternative.quantity),
+                ]
+            )
+            if not self.missing([alternative]):
+                log.info(
+                    "cart.swapped", extra={"gone": gone.product_id, "for": alternative.product_id}
+                )
+                return alternative
+        return None
+
+
 def check(cart: Cart, lines: list[CartLine], names: dict[str, str]) -> None:
     """CartMismatch unless the cart holds exactly these products and counts
     (`names`: each product's name, for the message)."""
@@ -88,7 +126,7 @@ def check(cart: Cart, lines: list[CartLine], names: dict[str, str]) -> None:
 
 
 @contextmanager
-def filled(household_id: UUID, lines: list[CartLine]) -> Iterator[Cart]:
+def filled(household_id: UUID, lines: list[CartLine]) -> Iterator[FilledCart]:
     """The household's cart with just these products and counts, for the length
     of the block; its own items are set aside until then. Yields the cart as
     Instacart has it after filling (the caller checks it)."""
@@ -126,7 +164,7 @@ def filled(household_id: UUID, lines: list[CartLine]) -> Iterator[Cart]:
                 ]
                 + [CartUpdate(product_id=line.product_id, quantity=line.quantity) for line in lines]
             )
-            yield cart
+            yield FilledCart(store, household_id, ledger, cart)
         finally:
             if problems := put_back(store, ledger):
                 # Kept on the ledger: the next run tries again.

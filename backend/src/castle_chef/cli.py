@@ -12,7 +12,7 @@ from castle_chef_agent.cli import mcp_serve, meal_app, shopping_list_app
 from castle_chef_agent.instacart import InstacartError, Product, describe
 from sqlmodel import Session
 
-from castle_chef import checkout, household, instacart, push, worker
+from castle_chef import checkout, household, instacart, push, reminders, worker
 from castle_chef import log as logging_config
 from castle_chef.checkout import CheckoutError
 from castle_chef.db import get_session
@@ -76,6 +76,14 @@ def job_run(
         log.error("schema.behind", extra={"error": str(error)})
         typer.echo(str(error), err=True)
         raise typer.Exit(worker.SCHEMA_BEHIND_EXIT_CODE) from error
+
+
+@job_app.command("book-due")
+def job_book_due() -> None:
+    """Run the daily booking run now: start booking the approved orders that are
+    due (in AWS, the 9:00 AM schedule does this)."""
+    queued = reminders.book_due()
+    typer.echo(f"Started booking {len(queued)} order(s).")
 
 
 @app.command("agent-login")

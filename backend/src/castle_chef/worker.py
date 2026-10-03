@@ -10,10 +10,11 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from string import Template
 from typing import Any
@@ -23,10 +24,20 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
-from castle_chef_agent.checkout import RENEWED_SESSION_FILE, SESSION_FILE, CheckoutJob
+from castle_chef_agent import windows
+from castle_chef_agent.checkout import (
+    CLICK_ANSWER_FILE,
+    CLICK_REQUEST_FILE,
+    RENEWED_SESSION_FILE,
+    SESSION_FILE,
+    BookTarget,
+    CheckoutJob,
+    ClickAnswer,
+    ClickReply,
+)
 from castle_chef_agent.checkout import load_state as load_checkout_state
 from castle_chef_agent.instacart import InstacartError
-from castle_chef_agent.jobfiles import write_context
+from castle_chef_agent.jobfiles import replace_file, write_context
 from castle_chef_agent.meals import MealInput, MealsJob, load_meals, meal_problems
 from castle_chef_agent.products import ItemChoice
 from castle_chef_agent.server import Tools
@@ -34,19 +45,42 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import update
 from sqlmodel import Session, col, select
 
-from castle_chef import cart, instacart, products, push, quotes, ratings, shopping
+from castle_chef import (
+    booking,
+    cart,
+    instacart,
+    orders,
+    products,
+    push,
+    quotes,
+    ratings,
+    shopping,
+)
 from castle_chef.checkout import (
     SIGNED_OUT_ERROR,
+    Booking,
+    BookIssue,
+    CartLine,
     CheckoutError,
     Quote,
     SessionStore,
+    Swap,
     session_store,
 )
 from castle_chef.db import get_engine, get_session
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, create_shop, finish_job
 from castle_chef.meals import add_meals
-from castle_chef.models import GroceryOrder, Job, JobKind, ListSource
-from castle_chef.notifications import ideas_ready, list_failed, list_ready
+from castle_chef.models import (
+    BookState,
+    GroceryOrder,
+    Household,
+    Job,
+    JobKind,
+    ListSource,
+    ProductGone,
+    ShoppingListItem,
+)
+from castle_chef.notifications import ideas_ready, list_failed, list_ready, notify_booking
 from castle_chef.products import InvalidProducts
 from castle_chef.settings import REPO_ROOT, get_settings
 from castle_chef.shopping import InvalidList, ListEntry
@@ -117,7 +151,19 @@ class Products:
     choices: dict[int, ItemChoice]
 
 
-type JobResult = Meals | ListItems | Products | Quote
+@dataclass(frozen=True)
+class Booked:
+    """A book job's result: how booking the order went, and the list items whose
+    product was gone and swapped for an alternative (item id: the alternative's
+    product id), which the list keeps once it's booked."""
+
+    state: BookState
+    booking: Booking | None = None
+    issue: BookIssue | None = None
+    swapped: dict[UUID, str] = field(default_factory=dict)
+
+
+type JobResult = Meals | ListItems | Products | Quote | Booked
 
 
 def run_job(job_id: UUID) -> None:
@@ -157,17 +203,19 @@ def run_job(job_id: UUID) -> None:
     ) as error:
         log.error("job.failed", extra=fields | {"error": str(error)})
         _finish(job_id, error=str(error))
-        _notify_failed(job)
+        _notify_failed(job, str(error))
         return
     except Exception as error:
         log.exception("job.crashed", extra=fields)
         _finish(job_id, error=f"Unexpected worker error: {error!r}")
-        _notify_failed(job)
+        _notify_failed(job, "Booking stopped with an unexpected error.")
         return
     if isinstance(result, Meals):
         counts = {"meal_count": len(result.meals)}
     elif isinstance(result, Quote):
         counts = {"blocked": result.blocked_because is not None}
+    elif isinstance(result, Booked):
+        counts = {"book_state": result.state.value}
     else:
         counts = {"item_count": len(result.items)}
     shop_id: UUID | None = None
@@ -185,6 +233,14 @@ def run_job(job_id: UUID) -> None:
                 add_meals(session, job_id, result.meals)
             elif isinstance(result, Quote):
                 session.execute(update(Job).where(col(Job.id) == job_id).values(quote=result))
+            elif isinstance(result, Booked):
+                if result.state == BookState.BOOKED:
+                    # What was bought instead stays on the order's list.
+                    for item_id, product_id in result.swapped.items():
+                        item = session.get_one(ShoppingListItem, item_id)
+                        orders.use_alternative(item, product_id)
+                        session.add(item)
+                booking.finish(session, job_id, result.state, result.booking, result.issue)
             elif isinstance(result, Products):
                 newest = shopping.newest_build(session, job.grocery_order_id)
                 if (
@@ -214,13 +270,18 @@ def run_job(job_id: UUID) -> None:
         # the job is no longer running and this changes nothing.
         log.exception("job.save_failed", extra=fields)
         _finish(job_id, error=f"Could not save the result: {error!r}")
+        # A booking whose outcome couldn't be saved is settled now (checked on
+        # Instacart once it was clicked), not left booking.
+        _notify_failed(job, "Booking stopped before its result was saved.")
         return
     log.info("job.succeeded", extra=fields | counts)
     if shop_id is not None:
         run_job(shop_id)
         return
+    if job.kind == JobKind.BOOK:
+        notify_booking(job.grocery_order_id)
     # A quote's member waits for it on screen (the final review): nothing to send.
-    if job.kind != JobKind.QUOTE:
+    elif job.kind != JobKind.QUOTE:
         _notify_requester(job_id)
 
 
@@ -254,10 +315,21 @@ def _notify_requester(job_id: UUID) -> None:
         log.exception("job.notify_failed", extra={"job_id": str(job_id)})
 
 
-def _notify_failed(job: Job) -> None:
+def _notify_failed(job: Job, error: str) -> None:
     """ "Couldn't shop your list", to whoever is waiting for it, while it's still the
-    list for the order's picks (a failed batch or build shows in the app). A
-    failure here is logged as an error."""
+    list for the order's picks (a failed batch or build shows in the app); a
+    failed booking settles its order (not booked, or check Instacart once it was
+    clicked) and says so. A failure here is logged as an error."""
+    if job.kind == JobKind.BOOK:
+        try:
+            with get_session() as session:
+                order = booking.job_failed(session, job.id, error)
+        except Exception:
+            log.exception("booking.settle_failed", extra={"job_id": str(job.id)})
+            return
+        if order is not None:
+            notify_booking(order.id)
+        return
     if job.kind != JobKind.SHOP or job.build_id is None:
         return
     try:
@@ -345,6 +417,8 @@ def process_job(job: Job) -> JobResult:
     job_dir = settings.jobs_dir / str(job.id)
     if job.kind == JobKind.QUOTE:
         return process_quote(job)
+    if job.kind == JobKind.BOOK:
+        return process_book(job)
     if job.kind == JobKind.SHOP:
         if settings.codex_home is None:
             raise AgentRunError(
@@ -410,12 +484,14 @@ def process_quote(job: Job) -> Quote:
     # The agent's lock before the Codex login's (the cart), the order shopping takes
     # them in (its tools reach Instacart while its agent runs), so they can't deadlock.
     with agent_lock(job_id=str(job.id)), cart.filled(household_id, request.lines) as filled:
-        cart.check(filled, request.lines, names)
-        if filled.below_minimum:
-            return Quote(blocked_because=filled.blocked_because)
-        if not filled.can_check_out:
+        cart.check(filled.cart, request.lines, names)
+        if filled.cart.below_minimum:
+            return Quote(blocked_because=filled.cart.blocked_because)
+        if not filled.cart.can_check_out:
             # Not something more groceries would fix: said as it is.
-            raise CheckoutError(f"Instacart won't check this cart out: {filled.blocked_because}")
+            raise CheckoutError(
+                f"Instacart won't check this cart out: {filled.cart.blocked_because}"
+            )
         context = CheckoutJob(
             site=settings.instacart_site,
             store=settings.instacart_store,
@@ -439,6 +515,290 @@ def process_quote(job: Job) -> Quote:
     if read.checkout is None:
         raise AgentRunError(f"The agent didn't report checkout; see {job_dir}.")
     return Quote(checkout=read.checkout)
+
+
+@dataclass(frozen=True)
+class _ToBook:
+    """What a book job books, read from its order as it starts."""
+
+    household_id: UUID
+    lines: list[CartLine]
+    tip_percent: int
+    tip_max_cents: int
+    target: BookTarget
+    product_gone: ProductGone
+    # Each product's name, the list items that buy it, and its alternatives.
+    names: dict[str, str]
+    items: dict[str, list[ShoppingListItem]]
+    alternatives: dict[str, list[CartLine]]
+
+
+def _to_book(job: Job) -> _ToBook:
+    """What the job books: its order's list as approved (it can't change while
+    approved), the household's tip rule and setting for a product that's gone,
+    and the address and card the approved total showed."""
+    with get_session() as session:
+        order = session.get(GroceryOrder, job.grocery_order_id)
+        if order is None:  # cancelled, with its jobs
+            raise JobDiscarded
+        if order.book_job_id != job.id or order.book_state != BookState.BOOKING:
+            raise CheckoutError(f"Order {order.id} isn't being booked by this job.")
+        household = session.get_one(Household, order.household_id)
+        approved = session.get(Job, order.quote_id) if order.quote_id else None
+        if approved is None or approved.quote is None or approved.quote.checkout is None:
+            raise CheckoutError("The order has no approved total to book it by.")
+        if order.delivery_date is None:
+            raise CheckoutError("The order has no delivery date.")
+        try:
+            request = quotes.request_for(session, order)
+        except quotes.NothingToQuote as error:
+            raise CheckoutError(str(error)) from error
+        build = shopping.newest_build(session, order.id)
+        bought = products.items_to_buy(session, build.id) if build else []
+        items: dict[str, list[ShoppingListItem]] = {}
+        alternatives: dict[str, list[CartLine]] = {}
+        names: dict[str, str] = {}
+        for item in bought:
+            if item.product is None:
+                continue
+            product_id = item.product.product.product_id
+            names[product_id] = item.product.product.name
+            items.setdefault(product_id, []).append(item)
+            alternatives.setdefault(product_id, []).extend(
+                CartLine(product_id=a.product.product_id, quantity=a.count)
+                for a in item.alternatives
+            )
+            for alternative in item.alternatives:
+                names.setdefault(alternative.product.product_id, alternative.product.name)
+        return _ToBook(
+            household_id=order.household_id,
+            lines=request.lines,
+            tip_percent=household.tip_percent,
+            tip_max_cents=household.tip_max_cents,
+            target=BookTarget(
+                day=order.delivery_date,
+                by=order.delivery_by or household.delivery_time,
+                address=approved.quote.checkout.address,
+                card=approved.quote.checkout.card,
+            ),
+            product_gone=household.product_gone,
+            names=names,
+            items=items,
+            alternatives=alternatives,
+        )
+
+
+def process_book(job: Job) -> Booked:
+    """Book an approved order: fill the household's cart with its products (a
+    product that's gone swapped for an alternative, if the household says so),
+    and have the agent choose the window, read checkout, and place it, in a
+    browser signed in with the household's Instacart session. Place order is
+    pressed only after the worker records the click (answer_clicks)."""
+    to_book = _to_book(job)
+    settings = get_settings()
+    store = settings.instacart_store
+    outcome: Booked | None = None
+    try:
+        with (
+            agent_lock(job_id=str(job.id)),
+            cart.filled(to_book.household_id, to_book.lines) as filled,
+        ):
+            outcome = _book_filled(job, to_book, filled)
+    except cart.CartNotPutBack:
+        # Once it's ordered, the cart not being put back mustn't hide that (the
+        # ledger stays, and the next run puts it back).
+        if outcome is None or outcome.state not in (BookState.BOOKED, BookState.CHECK_INSTACART):
+            raise
+        log.error("booking.cart_not_put_back", extra={"job_id": str(job.id)})
+    if outcome is None:
+        raise AgentRunError(f"Booking at {store} didn't finish.")
+    return outcome
+
+
+def _book_filled(job: Job, to_book: _ToBook, filled: cart.FilledCart) -> Booked:
+    settings = get_settings()
+    store = settings.instacart_store
+    swaps: dict[str, CartLine] = {}
+    gone: list[CartLine] = []
+    for line in filled.missing(to_book.lines):
+        # Bought for more than one item, the alternatives' counts can't stand in
+        # for it: someone chooses.
+        use = (
+            to_book.product_gone == ProductGone.USE_ALTERNATIVE
+            and len(to_book.items.get(line.product_id, [])) == 1
+        )
+        alternative = (
+            filled.swap(line, to_book.alternatives.get(line.product_id, [])) if use else None
+        )
+        if alternative is None:
+            gone.append(line)
+        else:
+            swaps[line.product_id] = alternative
+    if gone:
+        names = [to_book.names.get(line.product_id, line.product_id) for line in gone]
+        left = (
+            " (none of its alternatives is left)"
+            if to_book.product_gone == ProductGone.USE_ALTERNATIVE
+            else ""
+        )
+        return Booked(
+            state=BookState.NEEDS_PRODUCT,
+            issue=BookIssue(
+                message=f"{store} doesn't have {', '.join(names)} any more{left}.",
+                item_ids=[
+                    item.id for line in gone for item in to_book.items.get(line.product_id, [])
+                ],
+            ),
+        )
+    lines = [swaps.get(line.product_id, line) for line in to_book.lines]
+    cart.check(filled.cart, lines, to_book.names)
+    if filled.cart.below_minimum:
+        return Booked(
+            state=BookState.NOT_BOOKED,
+            issue=BookIssue(message=f"{store} won't take it: {filled.cart.blocked_because}."),
+        )
+    if not filled.cart.can_check_out:
+        raise CheckoutError(f"Instacart won't check this cart out: {filled.cart.blocked_because}")
+
+    job_dir = settings.jobs_dir / str(job.id)
+    session_dir = settings.jobs_dir.parent / f"session-{job.id}"
+    sessions = session_store()
+    target = to_book.target
+    context = CheckoutJob(
+        site=settings.instacart_site,
+        store=store,
+        tip_percent=to_book.tip_percent,
+        tip_max_cents=to_book.tip_max_cents,
+        cart_items=len(lines),
+        session_dir=session_dir,
+        book=target,
+    )
+    prompt = Template(PROMPTS_DIR.joinpath("checkout_book.md").read_text()).substitute(
+        store=store,
+        slug=store.lower(),
+        day=f"{target.day:%A, %b} {target.day.day}",
+        by=windows.time_label(target.by),
+    )
+    try:
+        _hand_over_session(session_dir, sessions.load())
+        with answering_clicks(job_dir, job.id):
+            try:
+                run_agent(job_dir, prompt, Tools.CHECKOUT, context, agent_locked=True)
+            except AgentRunError as error:
+                # Once Place order was pressed, what the tools recorded says how it went.
+                if not load_checkout_state(job_dir).clicked:
+                    raise
+                log.error(
+                    "booking.agent_failed_after_click",
+                    extra={"job_id": str(job.id), "error": str(error)},
+                )
+    finally:
+        _take_back_session(job_dir, session_dir, sessions)
+    return _outcome(job_dir, to_book, swaps)
+
+
+def _outcome(job_dir: Path, to_book: _ToBook, swaps: dict[str, CartLine]) -> Booked:
+    """How the booking went, from what the tools recorded: once Place order was
+    pressed, it's booked only if Instacart confirmed it."""
+    read = load_checkout_state(job_dir)
+    swapped = {
+        item.id: alternative.product_id
+        for gone, alternative in swaps.items()
+        for item in to_book.items.get(gone, [])
+    }
+    swap_names = [
+        Swap(
+            item=item.name,
+            gone=to_book.names.get(gone, gone),
+            bought=to_book.names.get(alternative.product_id, alternative.product_id),
+        )
+        for gone, alternative in swaps.items()
+        for item in to_book.items.get(gone, [])[:1]
+    ]
+    if read.clicked:
+        if read.confirmation is None:
+            return Booked(
+                state=BookState.CHECK_INSTACART,
+                issue=BookIssue(
+                    message="Place order was pressed, but Instacart didn't confirm it."
+                ),
+            )
+        confirmed = read.confirmation
+        return Booked(
+            state=BookState.BOOKED,
+            booking=Booking(
+                order_number=confirmed.order_number,
+                window=confirmed.window,
+                total_cents=confirmed.total_cents,
+                swaps=swap_names,
+            ),
+            swapped=swapped,
+        )
+    if read.click == ClickAnswer.DRY_RUN and read.checkout is not None:
+        return Booked(
+            state=BookState.BOOKED,
+            booking=Booking(
+                order_number=booking.DRY_RUN,
+                window=read.window,
+                total_cents=read.checkout.total_cents,
+                swaps=swap_names,
+            ),
+            swapped=swapped,
+        )
+    if read.click == ClickAnswer.OFF:
+        return Booked(state=BookState.NOT_BOOKED, issue=BookIssue(message=booking.BOOKING_OFF))
+    if read.no_window:
+        day = to_book.target.day
+        return Booked(
+            state=BookState.NEEDS_TIME,
+            issue=BookIssue(
+                message=f"No delivery window is left on {day:%a, %b} {day.day} for the time "
+                "it needs."
+            ),
+        )
+    if read.changed is not None:
+        return Booked(
+            state=BookState.NOT_BOOKED,
+            issue=BookIssue(message=f"{read.changed} Check your Instacart account."),
+        )
+    if read.signed_out:
+        return Booked(state=BookState.NOT_BOOKED, issue=BookIssue(message=SIGNED_OUT_ERROR))
+    raise AgentRunError(f"The agent didn't book the order; see {job_dir}.")
+
+
+@contextmanager
+def answering_clicks(job_dir: Path, job_id: UUID) -> Iterator[None]:
+    """While the agent books, answer its request to press Place order (the
+    checkout tools wait for it): `go` once the click is recorded on the order
+    (booking.claim_click), unless booking isn't live (a dry run, or turned off).
+    No answer (this failed) means no click."""
+    stop = threading.Event()
+    request, answer = job_dir / CLICK_REQUEST_FILE, job_dir / CLICK_ANSWER_FILE
+
+    def answer_once() -> None:
+        while not request.exists():
+            if stop.wait(0.25):
+                return
+        try:
+            mode = get_settings().instacart_booking
+            if mode == "live":
+                with get_session() as session:
+                    claimed = booking.claim_click(session, job_id)
+                reply = ClickAnswer.GO if claimed else ClickAnswer.REFUSED
+            else:
+                reply = ClickAnswer.DRY_RUN if mode == "dry_run" else ClickAnswer.OFF
+            replace_file(answer, ClickReply(answer=reply).model_dump_json())
+            log.info("booking.click_answered", extra={"job_id": str(job_id), "answer": reply})
+        except Exception:
+            log.exception("booking.click_answer_failed", extra={"job_id": str(job_id)})
+
+    thread = threading.Thread(target=answer_once, name=f"clicks-{job_id}", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
 
 
 def _hand_over_session(session_dir: Path, state: dict[str, Any]) -> None:

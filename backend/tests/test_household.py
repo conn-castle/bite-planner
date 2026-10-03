@@ -15,7 +15,14 @@ from typer.testing import CliRunner, Result
 
 from castle_chef import push
 from castle_chef.cli import app
-from castle_chef.models import AppUser, GroceryOrder, GroceryOrderStatus, Household, PushDevice
+from castle_chef.models import (
+    AppUser,
+    BookState,
+    GroceryOrder,
+    GroceryOrderStatus,
+    Household,
+    PushDevice,
+)
 
 runner = CliRunner()
 FAKE_NEONCTL = Path(__file__).parent / "fake_neonctl.py"
@@ -94,6 +101,7 @@ def test_list_counts_each_households_members_and_orders(session: Session) -> Non
             placed_by=member,
             delivery_date=date(2026, 9, 27),
             next_delivery_date=date(2026, 10, 1),
+            book_state=BookState.BOOKED,
         )
     )
     session.add(GroceryOrder(household_id=house, created_by=uuid4()))

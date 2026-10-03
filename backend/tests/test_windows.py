@@ -2,7 +2,7 @@
 
 from datetime import time
 
-from castle_chef.windows import DAY, Window, choose, fallback
+from castle_chef_agent.windows import DAY, Window, choose, fallback
 
 
 def window(start: int, end: int) -> Window:

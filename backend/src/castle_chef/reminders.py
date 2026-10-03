@@ -20,14 +20,16 @@ from typing import Any, Literal, Protocol
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import update
 from sqlmodel import Session, col, select
 
-from castle_chef import push
+from castle_chef import booking, push
 from castle_chef.db import get_session
+from castle_chef.dispatch import DispatchError, get_dispatcher
+from castle_chef.jobs import fail_job
 from castle_chef.models import AppUser
-from castle_chef.notifications import reminder
+from castle_chef.notifications import notify_booking, reminder
 from castle_chef.settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -49,6 +51,14 @@ class ReminderEvent(BaseModel):
 class SyncEvent(BaseModel):
     version: Literal[1]
     sync: Literal[True]
+
+
+class BookDueEvent(BaseModel):
+    """The daily booking schedule's firing (infra: BOOKING_SCHEDULE)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    book_due: dict[str, Any]
 
 
 class SyncResult(BaseModel):
@@ -318,12 +328,37 @@ def _give_back(user_id: UUID, day: date, previous: date | None) -> None:
         session.commit()
 
 
+def book_due() -> list[UUID]:
+    """The daily booking run (castle_chef.booking): start booking the approved
+    orders that are due, and queue their jobs. Returns the jobs queued."""
+    with get_session() as session:
+        started = booking.start_due(session, booking.store_now())
+    queued = []
+    for job_id in started:
+        try:
+            get_dispatcher().dispatch(job_id)
+            queued.append(job_id)
+        except DispatchError as error:
+            log.error("booking.dispatch_failed", extra={"job_id": str(job_id), "error": str(error)})
+            with get_session() as session:
+                fail_job(session, job_id, "Booking couldn't be started.")
+                order = booking.job_failed(session, job_id, "Booking couldn't be started.")
+            if order is not None:
+                notify_booking(order.id)
+    log.info("booking.due_started", extra={"jobs": len(queued)})
+    return queued
+
+
 def handle_event(event: dict[str, Any]) -> dict[str, Any]:
-    """Handle one Lambda event: a member's schedule firing, or the deploy's sync."""
+    """Handle one Lambda event: a member's schedule firing, the daily booking
+    run, or the deploy's sync."""
     try:
         if "sync" in event:
             SyncEvent.model_validate(event)
             return sync().model_dump()
+        if "book_due" in event:
+            BookDueEvent.model_validate(event)
+            return {"queued": [str(job_id) for job_id in book_due()]}
         remind(ReminderEvent.model_validate(event))
         return {"status": "handled"}
     except ValidationError as error:

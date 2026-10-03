@@ -12,6 +12,10 @@ afterEach(() => {
 
 function placed(number: number, delivery: string, next: string, placedAt = '2026-09-10T15:00:00Z'): PlacedOrder {
   return {
+    book_state: 'booked',
+    book_on: '2026-09-20',
+    booking: null,
+    book_issue: null,
     id: `order-${number}`,
     number,
     placed_at: placedAt,
@@ -43,6 +47,10 @@ function nextOrder(
 
 function draft(number: number, jobs: Job[]): GroceryOrder {
   return {
+    book_state: null,
+    book_on: null,
+    booking: null,
+    book_issue: null,
     id: 'draft',
     number,
     status: 'draft',
@@ -140,6 +148,33 @@ describe('homeCards', () => {
     ])
   })
 
+  it('puts an approved order the store could not book above everything: it needs someone', () => {
+    const onHand = placed(3, '2026-09-22', '2026-09-30')
+    const stuck = { ...placed(4, '2026-09-30', '2026-10-03'), book_state: 'needs_time' as const }
+    // Above another member placing the next order, too.
+    const theirs: GroceryOrder = {
+      ...draft(5, []),
+      lock: {
+        member: { user_id: 'sam', name: 'Sam' },
+        session: null,
+        since: '2026-09-24T09:00:00Z',
+        step: 'pick',
+        expires_at: '2026-09-24T09:02:00Z',
+      },
+    }
+    expect(kinds(homeCards([onHand, stuck], nextOrder(5, '2026-10-03', '2026-10-02', theirs), TODAY, ME))).toEqual([
+      'order 4 (top)',
+      'next',
+      'order 3',
+    ])
+    // Even when its meals are on hand already.
+    const late = { ...onHand, book_state: 'check_instacart' as const }
+    expect(kinds(homeCards([late], nextOrder(4, '2026-09-30', '2026-09-29'), TODAY, ME))).toEqual([
+      'order 3 (top)',
+      'next',
+    ])
+  })
+
   it('never makes meals on hand the next step', () => {
     const onHand = placed(3, '2026-09-22', '2026-09-30')
     expect(kinds(homeCards([onHand], nextOrder(4, '2026-09-30', '2026-09-29'), TODAY, ME))).toEqual([
@@ -184,6 +219,12 @@ describe('homeCards', () => {
   it('leaves out orders whose meals are all behind', () => {
     const finished = placed(2, '2026-09-18', '2026-09-22')
     expect(kinds(homeCards([finished], nextOrder(3, '2026-09-22', '2026-09-21'), TODAY, ME))).toEqual(['next (top)'])
+    // Unless the store never booked it: someone still needs to settle it.
+    const unsettled = { ...finished, book_state: 'check_instacart' as const }
+    expect(kinds(homeCards([unsettled], nextOrder(3, '2026-09-22', '2026-09-21'), TODAY, ME))).toEqual([
+      'order 2 (top)',
+      'next',
+    ])
   })
 })
 

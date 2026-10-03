@@ -12,6 +12,10 @@ const meal = (id: string, rating: MealRating | null = null): MealSummary => ({
 })
 
 const order = (number: number, delivery: string, next: string, meals: MealSummary[]): PlacedOrder => ({
+  book_state: 'booked',
+  book_on: '2026-09-20',
+  booking: null,
+  book_issue: null,
   id: `order-${number}`,
   number,
   placed_at: '2026-09-01T09:00:00Z',

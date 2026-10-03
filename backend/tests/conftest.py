@@ -134,6 +134,7 @@ STAND_IN_PAGES = {
     "/store/wegmans/storefront": "storefront.html",
     "/store/checkout_v4": "checkout.html",
     "/store/sign-in": "sign-in.html",
+    "/store/orders/confirmation": "confirmation.html",
 }
 
 

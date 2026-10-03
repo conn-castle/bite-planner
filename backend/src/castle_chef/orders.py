@@ -21,6 +21,7 @@ from sqlmodel import Session, col, func, select
 from castle_chef import products, quotes, ratings, shopping
 from castle_chef.jobs import shop_of
 from castle_chef.models import (
+    BookState,
     GroceryOrder,
     GroceryOrderMeal,
     GroceryOrderStatus,
@@ -161,11 +162,6 @@ def earliest_delivery_date(today: date) -> date:
     """The soonest delivery date a member can choose. Later this asks the grocery
     service for its soonest slot."""
     return today + timedelta(days=1)
-
-
-def place_with_grocer(order: GroceryOrder) -> None:
-    """Place the order with the grocery service. A stub for now: it does nothing."""
-    log.info("grocer.placed_stub", extra={"grocery_order_id": str(order.id)})
 
 
 def get_draft(session: Session, household_id: UUID) -> GroceryOrder | None:
@@ -434,21 +430,23 @@ def place(
     next_delivery: date,
     quote_id: UUID,
     today: date,
-) -> GroceryOrder:
-    """Place a draft with the dates, time, and quote (its estimated total) the
-    member saw: save them, check the draft and that the quote is its current one,
-    send it to the grocery service, and mark it placed by the user, now, releasing
-    its lock; all under the draft's row lock, so another change can't land in
-    between. Only the session with the order lock can place it. Placing an order
-    that's already placed returns it unchanged (its dates, who placed it and when
-    included), so a retry after a lost response is safe."""
+) -> tuple[GroceryOrder, bool]:
+    """Place (approve) a draft with the dates, time, and quote (its estimated
+    total) the member saw: save them, check the draft and that the quote is its
+    current one, and mark it placed by the user, now, waiting to book at the store
+    (castle_chef.booking), releasing its lock; all under the draft's row lock, so
+    another change can't land in between. Only the session with the order lock can
+    place it. Placing an order that's already placed returns it unchanged (its
+    dates, who placed it and when included), so a retry after a lost response is
+    safe. Returns (order, placed now); one placed now is left uncommitted, its
+    row still locked, for the caller to start booking it if it's due, and commit."""
     order = lock_order(session, household_id, order_id)
     if order is None:
         session.rollback()
         raise OrderNotFound("No such order.")
     if order.status == GroceryOrderStatus.PLACED:
         session.rollback()
-        return order
+        return order, False
     _check_session(session, order, orderer)
     missing = _not_ready(session, order, delivery, next_delivery, today) or _quote_problem(
         session, order, quote_id
@@ -458,16 +456,16 @@ def place(
         raise NotReady(missing)
     order.delivery_date, order.next_delivery_date = delivery, next_delivery
     order.delivery_by = delivery_by
-    place_with_grocer(order)
     order.status = GroceryOrderStatus.PLACED
     order.placed_at = utc_now()
     order.placed_by = orderer.user_id
+    order.book_state, order.quote_id = BookState.WAITING, quote_id
+    order.clicked_at, order.booking, order.book_issue = None, None, None
     _clear_lock(order)
     session.add(order)
-    session.commit()
-    session.refresh(order)
+    session.flush()
     log.info("grocery_order.placed", extra={"grocery_order_id": str(order.id)})
-    return order
+    return order, True
 
 
 def _not_ready(
@@ -565,22 +563,12 @@ def change_item(
         raise ListNotCurrent("The list is being shopped; wait for it to finish.")
     if removed is not None:
         item.removed = removed
-    if alternative is not None and (
-        item.product is None or item.product.product.product_id != alternative
-    ):
-        # Switch to one of its alternatives; the product it had becomes one. (Its
-        # product already: a retried request, done.)
-        chosen = next((a for a in item.alternatives if a.product.product_id == alternative), None)
-        if chosen is None:
+    if alternative is not None:
+        try:
+            use_alternative(item, alternative)
+        except NoSuchProduct:
             session.rollback()
-            raise NoSuchProduct("That product isn't one of the item's alternatives.")
-        others = [a for a in item.alternatives if a.product.product_id != alternative]
-        item.alternatives = [*others, item.product] if item.product else others
-        item.product = chosen
-        item.removed = False
-        # Found, then: the member picked what the store has instead.
-        item.not_found = False
-        item.skippable_reason = None
+            raise
     if count is not None:
         if item.product is None:
             session.rollback()
@@ -594,6 +582,23 @@ def change_item(
         item.changed_quantity = None if quantity == item.quantity else quantity
     session.add(item)
     session.commit()
+
+
+def use_alternative(item: ShoppingListItem, product_id: str) -> None:
+    """Switch the item to one of its alternatives (staged; the caller commits); the
+    product it had becomes one. Its product already: nothing to do (a retry)."""
+    if item.product is not None and item.product.product.product_id == product_id:
+        return
+    chosen = next((a for a in item.alternatives if a.product.product_id == product_id), None)
+    if chosen is None:
+        raise NoSuchProduct("That product isn't one of the item's alternatives.")
+    others = [a for a in item.alternatives if a.product.product_id != product_id]
+    item.alternatives = [*others, item.product] if item.product else others
+    item.product = chosen
+    item.removed = False
+    # Found, then: the store has this instead.
+    item.not_found = False
+    item.skippable_reason = None
 
 
 # Computed, not stored.

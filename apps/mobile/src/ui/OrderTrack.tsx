@@ -18,6 +18,8 @@ interface OrderTrackProps {
   day: number
   /** The date under each of the five nodes, in the order's own view. */
   dates?: TrackDate[]
+  /** Booked at the store; until it is, Placed is the step it's at (not checked). */
+  booked?: boolean
 }
 
 const STEPS = ['Meals', 'List', 'Placed', 'Delivery']
@@ -29,8 +31,8 @@ const RING = 2 * Math.PI * RING_RADIUS
  * order card): meals picked, list made, placed, delivered, then a ring that
  * fills as the covered days pass.
  */
-export function OrderTrack({ phase, days, day, dates }: OrderTrackProps) {
-  const current = phase === 'waiting' || phase === 'arriving' ? 3 : phase === 'onhand' ? 4 : 5
+export function OrderTrack({ phase, days, day, dates, booked = true }: OrderTrackProps) {
+  const current = !booked ? 2 : phase === 'waiting' || phase === 'arriving' ? 3 : phase === 'onhand' ? 4 : 5
   const passed = phase === 'onhand' ? day : phase === 'done' ? days : 0
   const arriving = phase === 'arriving'
   return (
@@ -40,7 +42,7 @@ export function OrderTrack({ phase, days, day, dates }: OrderTrackProps) {
       </div>
       {STEPS.map((label, index) => {
         const done = index < current
-        const pulsing = index === 3 && arriving
+        const pulsing = index === 3 && arriving && booked
         const className = [styles.node, done && styles.done, index === current && styles.current, pulsing && styles.pulsing]
           .filter(Boolean)
           .join(' ')

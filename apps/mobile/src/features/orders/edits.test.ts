@@ -16,6 +16,10 @@ const YELLOW: Product = {
 const SWEET: Product = { ...YELLOW, product_id: 'sweet', name: 'Sweet Onions', count: 2 }
 
 const order: GroceryOrder = {
+  book_state: null,
+  book_on: null,
+  booking: null,
+  book_issue: null,
   id: 'order-2',
   number: 2,
   status: 'draft',

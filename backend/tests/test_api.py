@@ -25,7 +25,7 @@ from sqlalchemy import text
 from sqlmodel import Session, col, select
 
 from castle_chef import api as api_module
-from castle_chef import orders, products
+from castle_chef import booking, orders, products
 from castle_chef.api import app, create_app
 from castle_chef.auth import AuthError, AuthUnavailable, Principal
 from castle_chef.checkout import SIGNED_OUT_ERROR, Quote
@@ -90,10 +90,16 @@ def client(dispatcher: RecordingDispatcher) -> Iterator[TestClient]:
 
 @pytest.fixture
 def grocer(monkeypatch: pytest.MonkeyPatch) -> list[UUID]:
-    """The orders sent to the grocery service (a stub that does nothing)."""
-    placed: list[UUID] = []
-    monkeypatch.setattr(orders, "place_with_grocer", lambda order: placed.append(order.id))
-    return placed
+    """The orders whose booking at the store started."""
+    started: list[UUID] = []
+    start = booking.start
+
+    def recorded(session: Session, order: GroceryOrder) -> Job:
+        started.append(order.id)
+        return start(session, order)
+
+    monkeypatch.setattr(booking, "start", recorded)
+    return started
 
 
 @pytest.fixture(autouse=True)
@@ -655,6 +661,10 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "lock": draft["lock"],
         "shopping_list": None,
         "quote": None,
+        "book_state": None,
+        "book_on": None,
+        "booking": None,
+        "book_issue": None,
     }
     # Opening it takes its lock for Mom's phone.
     assert draft["lock"] | {"since": None, "expires_at": None} == {
@@ -719,8 +729,9 @@ def test_households_see_and_change_only_their_own_orders(
     assert discard.status_code == gone.status_code
 
     assert get_order(client, order_id) == moms
-    # The placed order's batch, list, and total, and this draft's batch.
-    assert len(dispatcher.dispatched) == 4
+    # The placed order's batch, list, total, and booking (it's due: delivery is
+    # tomorrow), and this draft's batch.
+    assert len(dispatcher.dispatched) == 5
     # The neighbor's household gets its own draft: its first order.
     neighbors = open_draft(client, NEIGHBOR)
     assert (neighbors["id"] != order_id, neighbors["number"]) == (True, 1)
@@ -969,15 +980,21 @@ def test_another_households_job_id_is_rejected(
 
 def test_a_job_id_from_a_previous_order_is_rejected(client: TestClient) -> None:
     first = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
-    [old_batch, old_list, old_shop, old_quote] = first["jobs"]
+    [old_batch, old_list, old_shop, old_quote, old_booking] = first["jobs"]
     kinds = [job["kind"] for job in first["jobs"]]
-    assert kinds == ["generate_meals", "build_list", "shop", "quote"]
+    assert kinds == ["generate_meals", "build_list", "shop", "quote", "book"]
     draft = open_draft(client)["id"]
 
     detail(request_batch(client, draft, MOM, UUID(old_batch["id"])), 409)
 
     assert get_order(client, draft)["jobs"] == []
-    assert get_order(client, first["id"])["jobs"] == [old_batch, old_list, old_shop, old_quote]
+    assert get_order(client, first["id"])["jobs"] == [
+        old_batch,
+        old_list,
+        old_shop,
+        old_quote,
+        old_booking,
+    ]
 
 
 def test_one_batch_at_a_time(client: TestClient) -> None:
@@ -1273,7 +1290,8 @@ def test_a_placed_order_cannot_be_changed(
     detail(client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(DAD)), 409)
 
     assert get_order(client, order_id) == placed
-    assert len(dispatcher.dispatched) == 3  # its batch, its list, and its total
+    # Its batch, its list, its total, and its booking (delivery is tomorrow).
+    assert len(dispatcher.dispatched) == 4
 
 
 # Servings.
@@ -1651,6 +1669,11 @@ def test_placed_orders_are_listed_from_the_day_they_cover(client: TestClient) ->
         "next_delivery_date": second["next_delivery_date"],
         "meals": [meal | {"servings": 4}],
         "shopping_list": second["shopping_list"]["items"],
+        # Delivery is within four days: it's booking.
+        "book_state": "booking",
+        "book_on": (start + timedelta(days=3 - 4)).isoformat(),
+        "booking": None,
+        "book_issue": None,
     }
     # An order covers up to the day before its next delivery.
     last_of_first = start + timedelta(days=2)
@@ -2906,3 +2929,136 @@ def test_a_renewal_whose_lock_was_released_meanwhile_says_the_order_isnt_open_he
     )
 
     assert "isn't open here any more" in detail(response, 423)
+
+
+# Booking: an approved order waits to book (four days before delivery), or books
+# now; until it books, it can be changed (back into the draft) or cancelled.
+
+
+def book_state_of(session: Session, order_id: str, state: str, clicked: bool = False) -> None:
+    """The order's booking ended that way (as the worker settles it)."""
+    session.execute(
+        text(
+            "UPDATE grocery_order SET book_state = :state, book_job_id = NULL, "
+            "clicked_at = CASE WHEN :clicked THEN now() END WHERE id = :id"
+        ),
+        {"state": state, "clicked": clicked, "id": order_id},
+    )
+    session.commit()
+
+
+def change(client: TestClient, order_id: str, user: UUID = MOM) -> Response:
+    return client.post(f"/v1/grocery-orders/{order_id}/change", headers=as_user(user))
+
+
+def cancel(client: TestClient, order_id: str, user: UUID = MOM) -> Response:
+    return client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(user))
+
+
+def test_an_order_approved_before_its_day_waits_to_book_and_one_due_books_now(
+    client: TestClient, dispatcher: RecordingDispatcher, grocer: list[UUID]
+) -> None:
+    later = tomorrow() + timedelta(days=5)
+    waiting = placed_order(client, later, later + timedelta(days=3))
+    soon = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3), NEIGHBOR)
+
+    assert (waiting["book_state"], waiting["book_on"]) == (
+        "waiting",
+        (later - timedelta(days=4)).isoformat(),
+    )
+    assert soon["book_state"] == "booking"
+    assert grocer == [UUID(soon["id"])]
+    [book] = [job for job in soon["jobs"] if job["kind"] == "book"]
+    assert book["requested_by"]["user_id"] == str(NEIGHBOR)
+    assert dispatcher.dispatched[-1] == UUID(book["id"])
+    # Approved, it's ordered for the rest of the app: the next order follows it.
+    assert next_order(client)["target_date"] == (later + timedelta(days=3)).isoformat()
+
+
+def test_a_waiting_order_goes_back_into_the_draft_to_change_it_then_is_approved_again(
+    client: TestClient, grocer: list[UUID]
+) -> None:
+    later = tomorrow() + timedelta(days=5)
+    waiting = placed_order(client, later, later + timedelta(days=3))
+
+    reopened = ok(change(client, waiting["id"], DAD))
+
+    assert (reopened["status"], reopened["book_state"], reopened["number"]) == ("draft", None, 1)
+    assert next_order(client)["draft"]["id"] == waiting["id"]
+    assert next_order(client)["target_date"] is None  # nothing approved now
+    open_draft(client)
+    assert ok(place(client, waiting["id"]))["book_state"] == "waiting"
+    assert grocer == []
+
+
+def test_a_waiting_order_can_only_be_cancelled_once_the_next_order_is_started(
+    client: TestClient,
+) -> None:
+    later = tomorrow() + timedelta(days=5)
+    waiting = placed_order(client, later, later + timedelta(days=3))
+    following = open_draft(client)["id"]
+
+    assert detail(change(client, waiting["id"]), 409) == (
+        "The next order has been started, so this one can only be cancelled now."
+    )
+    no_content(cancel(client, waiting["id"], DAD))
+
+    detail(client.get(f"/v1/grocery-orders/{waiting['id']}", headers=as_user(MOM)), 404)
+    # As if it had never been approved: the started draft is the first order again.
+    assert (next_order(client)["number"], next_order(client)["draft"]["id"]) == (1, following)
+
+
+def test_an_order_being_booked_or_booked_cant_be_changed_or_cancelled(
+    client: TestClient, session: Session
+) -> None:
+    booking_now = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))
+    order_id = booking_now["id"]
+
+    for refused in (change(client, order_id), cancel(client, order_id)):
+        assert detail(refused, 409) == "It's being booked at the store right now."
+    book_state_of(session, order_id, "booked")
+    for refused in (change(client, order_id), cancel(client, order_id)):
+        assert detail(refused, 409) == "It's booked at the store: change it in Instacart."
+    book_state_of(session, order_id, "check_instacart", clicked=True)
+    assert detail(cancel(client, order_id), 409) == "Say first whether Instacart has it."
+    assert get_order(client, order_id)["status"] == "placed"
+
+
+def test_an_order_that_wasnt_booked_is_booked_again_on_request(
+    client: TestClient, session: Session, dispatcher: RecordingDispatcher
+) -> None:
+    later = tomorrow() + timedelta(days=5)
+    waiting = placed_order(client, later, later + timedelta(days=3))
+    detail(client.post(f"/v1/grocery-orders/{waiting['id']}/book", headers=as_user(MOM)), 409)
+    book_state_of(session, waiting["id"], "not_booked")
+
+    again = ok(client.post(f"/v1/grocery-orders/{waiting['id']}/book", headers=as_user(DAD)))
+
+    assert again["book_state"] == "booking"
+    [book] = [job for job in again["jobs"] if job["kind"] == "book"]
+    # For whoever approved it, who hears how it goes.
+    assert book["requested_by"]["user_id"] == str(MOM)
+    assert dispatcher.dispatched[-1] == UUID(book["id"])
+
+
+def test_someone_says_whether_instacart_has_an_order_booking_couldnt_confirm(
+    client: TestClient, session: Session
+) -> None:
+    order_id = placed_order(client, tomorrow(), tomorrow() + timedelta(days=3))["id"]
+    book_state_of(session, order_id, "check_instacart", clicked=True)
+    settle = f"/v1/grocery-orders/{order_id}/settle"
+
+    wasnt = ok(client.post(settle, headers=as_user(DAD), json={"placed": False}))
+
+    assert (wasnt["book_state"], wasnt["book_issue"]) == (
+        "not_booked",
+        {"message": "It wasn't placed at Instacart.", "item_ids": []},
+    )
+    # It can be booked again now, and nothing else needs settling.
+    detail(client.post(settle, headers=as_user(DAD), json={"placed": True}), 409)
+    book_state_of(session, order_id, "check_instacart", clicked=True)
+    was = ok(client.post(settle, headers=as_user(MOM), json={"placed": True}))
+    assert (was["book_state"], was["booking"]) == (
+        "booked",
+        {"order_number": None, "window": None, "total_cents": None, "swaps": []},
+    )

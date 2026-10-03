@@ -3,6 +3,7 @@ import { addDays, dateRange, daysBetween, formatDate, localDate, relativeDay } f
 import type { BarDay, DayMark } from '../../ui/DateBar'
 import type { TrackPhase } from '../../ui/OrderTrack'
 import { newestBatchState, suggestions } from '../orders/batches'
+import { needsAttention } from '../orders/booking'
 import { lockedByOther } from '../orders/lock'
 import { memberName, plural } from '../orders/format'
 
@@ -141,8 +142,8 @@ export function dayCaption(
 export type HomeCard = { kind: 'placed'; order: PlacedOrder; top: boolean } | { kind: 'next'; top: boolean }
 
 /**
- * The cards, the next step first: another member placing the next order >
- * suggestions being made > a draft with ideas > the first order > overdue >
+ * The cards, the next step first: an approved order the store couldn't book
+ * (it needs someone) > another member placing the next order > suggestions being made > a draft with ideas > the first order > overdue >
  * due today or tomorrow > reminders started > delivery today > groceries on
  * the way > not due yet. Meals on hand are never the next step; that card sits
  * under the top one. Finished orders leave Home. `userId` is the signed-in member.
@@ -154,17 +155,21 @@ export function homeCards(
   userId: string | undefined,
 ): HomeCard[] {
   const ranked: { card: HomeCard; rank: number; date: ISODate | null }[] = placed
-    .filter((order) => phase(order, today) !== 'done')
+    // Finished orders leave Home, unless the store couldn't book one: it needs someone still.
+    .filter((order) => phase(order, today) !== 'done' || needsAttention(order.book_state))
     .map((order) => ({
       card: { kind: 'placed', order, top: false },
-      rank: { waiting: 9, arriving: 8, onhand: 9.5, done: 99 }[phase(order, today)],
+      // One the store couldn't book needs someone first.
+      rank: needsAttention(order.book_state) ? 0.5 : { waiting: 9, arriving: 8, onhand: 9.5, done: 99 }[phase(order, today)],
       date: order.delivery_date,
     }))
   ranked.push({ card: { kind: 'next', top: false }, rank: nextRank(next, today, userId), date: next.target_date })
   ranked.sort((a, b) => a.rank - b.rank || (a.date ?? '9999').localeCompare(b.date ?? '9999'))
 
   const cards = ranked.map(({ card }) => card)
-  const top = cards.find((card) => card.kind === 'next' || phase(card.order, today) !== 'onhand')
+  const top = cards.find(
+    (card) => card.kind === 'next' || phase(card.order, today) !== 'onhand' || needsAttention(card.order.book_state),
+  )
   return top ? [{ ...top, top: true }, ...cards.filter((card) => card !== top)] : cards
 }
 

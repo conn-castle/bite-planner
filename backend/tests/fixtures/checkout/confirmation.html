@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<!-- A stand-in for Instacart's page after Place order (tests only; the real one
+     hasn't been seen yet): the order's number, when it arrives, and its total. -->
+<head><meta charset="utf-8"><title>Order placed</title></head>
+<body>
+<main>
+  <h1>Thanks! Your order is placed</h1>
+  <p id="number">Order #18234567</p>
+  <p id="when"></p>
+  <p id="total"></p>
+</main>
+<script>
+  const params = new URLSearchParams(location.search)
+  document.getElementById('when').textContent = 'Arrives ' + params.get('when')
+  document.getElementById('total').textContent = params.get('total')
+</script>
+</body>
+</html>

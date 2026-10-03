@@ -10,6 +10,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api/client'
+import { localDate } from '../../lib/dates'
 import { ApiError, isRetryable } from '../../lib/api/errors'
 import type {
   ClockTime,
@@ -44,6 +45,10 @@ import { LOCK_RENEW_MS, withLock } from './lock'
 
 // How often an open order is checked while a batch of suggestions is being made.
 const POLL_MS = 3_000
+// How often an order being booked at the store is checked (it takes a minute or two).
+const BOOKING_POLL_MS = 5_000
+// How often one waiting for today's booking run (9:00 AM, store time) is checked.
+const BOOK_DAY_POLL_MS = 60_000
 
 export const nextQuery = queryOptions({
   queryKey: queryKeys.nextOrder,
@@ -74,9 +79,21 @@ export function useNextOrder(refetchInterval: number | false = false) {
   return useQuery({ ...nextQuery, refetchInterval })
 }
 
-/** The household's placed orders whose meals cover `coveringFrom` or a later day, or all of them. */
+/**
+ * The household's placed orders whose meals cover `coveringFrom` or a later day,
+ * or all of them; checked every few seconds while one is being booked, and every
+ * minute while one waits for its booking day's run.
+ */
 export function usePlacedOrders(coveringFrom?: ISODate) {
-  return useQuery(placedQuery(coveringFrom))
+  return useQuery({
+    ...placedQuery(coveringFrom),
+    refetchInterval: ({ state: { data } }) => {
+      if (data?.some((order) => order.book_state === 'booking')) return BOOKING_POLL_MS
+      const today = localDate(new Date())
+      const due = data?.some((order) => order.book_state === 'waiting' && order.book_on <= today)
+      return due ? BOOK_DAY_POLL_MS : false
+    },
+  })
 }
 
 /**
@@ -100,9 +117,11 @@ export function useOrder(orderId: string | undefined, session?: string) {
     refetchInterval: ({ state: { data } }) =>
       data && hasRunningBatch(data)
         ? POLL_MS
-        : session !== undefined && data?.lock && data.lock.session !== session
-          ? LOCK_RENEW_MS
-          : false,
+        : data?.book_state === 'booking'
+          ? BOOKING_POLL_MS
+          : session !== undefined && data?.lock && data.lock.session !== session
+            ? LOCK_RENEW_MS
+            : false,
     // A 404 (the draft was discarded) won't change on a retry.
     retry: (failureCount, error) => isRetryable(error, failureCount),
   })
@@ -165,6 +184,10 @@ const SET_DATES = ['orders', 'set-dates']
 const SET_NOT_FOR_US = ['orders', 'set-not-for-us']
 const PLACE = ['orders', 'place']
 const DISCARD = ['orders', 'discard']
+const CHANGE = ['orders', 'change']
+const CANCEL = ['orders', 'cancel']
+const BOOK_AGAIN = ['orders', 'book-again']
+const SETTLE = ['orders', 'settle']
 const START_LIST = ['orders', 'start-list']
 const SHOP_LIST = ['orders', 'shop-list']
 const QUOTE = ['orders', 'quote']
@@ -208,6 +231,10 @@ export interface StartList extends InSession {
 }
 export interface OrderAction {
   orderId: string
+}
+/** Whether Instacart has an order booking couldn't confirm. */
+export interface SettleOrder extends OrderAction {
+  placed: boolean
 }
 /** The dates and latest time an order is placed with: all of them set. */
 export interface PlacedDates {
@@ -457,6 +484,42 @@ export function registerOrderMutations(queryClient: QueryClient) {
       ]),
   })
 
+  // An approved order: changed (back into the draft), cancelled, booked again,
+  // or settled ("It was placed"). Each answer can move it on Home and History.
+  queryClient.setMutationDefaults(CHANGE, {
+    mutationFn: ({ orderId }: OrderAction) => apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/change`),
+    onSuccess: async (order: GroceryOrder) => {
+      logger.info('orders.reopened', { orderId: order.id })
+      await storeOrder(queryClient, order)
+      await queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders })
+    },
+    onError: (_error: Error, { orderId }: OrderAction) => refetchAfterPlaced(queryClient, orderId),
+  })
+  queryClient.setMutationDefaults(CANCEL, {
+    mutationFn: ({ orderId }: OrderAction) => apiRequest<void>('DELETE', `/v1/grocery-orders/${orderId}`),
+    onSuccess: async (_result: void, { orderId }: OrderAction) => {
+      logger.info('orders.cancelled', { orderId })
+      await cancelFetches(queryClient, orderId)
+      queryClient.removeQueries({ queryKey: orderKey(orderId) })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: nextQuery.queryKey }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders }),
+      ])
+    },
+    onError: (_error: Error, { orderId }: OrderAction) => refetchAfterPlaced(queryClient, orderId),
+  })
+  queryClient.setMutationDefaults(BOOK_AGAIN, {
+    mutationFn: ({ orderId }: OrderAction) => apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/book`),
+    onSettled: (_order: GroceryOrder | undefined, _error: Error | null, { orderId }: OrderAction) =>
+      refetchAfterPlaced(queryClient, orderId),
+  })
+  queryClient.setMutationDefaults(SETTLE, {
+    mutationFn: ({ orderId, placed }: SettleOrder) =>
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/settle`, { placed }),
+    onSettled: (_order: GroceryOrder | undefined, _error: Error | null, { orderId }: SettleOrder) =>
+      refetchAfterPlaced(queryClient, orderId),
+  })
+
   queryClient.setMutationDefaults(TAKE, {
     mutationFn: ({ orderId, session, step }: TakeLock) => {
       if (closedSessions.has(session)) throw new FlowClosed()
@@ -583,4 +646,24 @@ export function usePlaceOrder() {
 
 export function useDiscardOrder() {
   return useMutation<void, Error, OrderAction>({ mutationKey: DISCARD })
+}
+
+/** Makes an approved order not booked yet the household's draft again, to change it. */
+export function useChangeOrder() {
+  return useMutation<GroceryOrder, Error, OrderAction>({ mutationKey: CHANGE })
+}
+
+/** Cancels an approved order not booked yet. */
+export function useCancelOrder() {
+  return useMutation<void, Error, OrderAction>({ mutationKey: CANCEL })
+}
+
+/** Books an approved order again, after it wasn't booked. */
+export function useBookAgain() {
+  return useMutation<GroceryOrder, Error, OrderAction>({ mutationKey: BOOK_AGAIN })
+}
+
+/** Says whether Instacart has an order booking couldn't confirm. */
+export function useSettleOrder() {
+  return useMutation<GroceryOrder, Error, SettleOrder>({ mutationKey: SETTLE })
 }

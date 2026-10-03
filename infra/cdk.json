@@ -9,12 +9,14 @@
       "dev": {
         "neonAuthUrl": "https://auth.example.test/neondb/auth",
         "databaseUrlParameter": "/castle-chef/development/database-url-pooled",
-        "corsOrigins": ["capacitor://localhost"]
+        "corsOrigins": ["capacitor://localhost"],
+        "instacartBookingParameter": "/castle-chef/development/instacart-booking"
       },
       "prod": {
         "neonAuthUrl": "https://auth.example.test/neondb/auth",
         "databaseUrlParameter": "/castle-chef/production/database-url-pooled",
-        "corsOrigins": ["capacitor://localhost"]
+        "corsOrigins": ["capacitor://localhost"],
+        "instacartBookingParameter": "/castle-chef/production/instacart-booking"
       }
     }
   }

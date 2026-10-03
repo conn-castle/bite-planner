@@ -12,6 +12,7 @@ from typing import Annotated, Any, Self
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from castle_chef_agent import windows
 from castle_chef_agent.products import ProductCount
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -29,11 +30,11 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
-from castle_chef import failures, orders, push, quotes, ratings, reminders, shopping, windows
+from castle_chef import booking, failures, orders, push, quotes, ratings, reminders, shopping
 from castle_chef import household as households
 from castle_chef import log as logging_config
 from castle_chef.auth import AuthError, AuthUnavailable, AuthVerifier, NeonAuthVerifier, Principal
-from castle_chef.checkout import SIGNED_OUT_ERROR, Checkout
+from castle_chef.checkout import SIGNED_OUT_ERROR, Booking, BookIssue, Checkout
 from castle_chef.db import get_request_session
 from castle_chef.dispatch import DispatchError, JobDispatcher, get_dispatcher
 from castle_chef.jobs import (
@@ -57,6 +58,7 @@ from castle_chef.models import (
     TIP_PERCENT,
     Aisle,
     AppUser,
+    BookState,
     GroceryOrder,
     GroceryOrderStatus,
     Household,
@@ -257,6 +259,13 @@ class GroceryOrderOut(BaseModel):
     shopping_list: ShoppingListOut | None
     # What it would cost: its newest quote; null until one is started.
     quote: QuoteOut | None
+    # Once placed (approved), where it is with the store (else null): the day it
+    # books, what Instacart confirmed once booked (null for orders placed before
+    # booking existed), and why it isn't booked.
+    book_state: BookState | None
+    book_on: date | None
+    booking: Booking | None
+    book_issue: BookIssue | None
 
 
 class PlacedOrderOut(BaseModel):
@@ -274,6 +283,11 @@ class PlacedOrderOut(BaseModel):
     meals: list[PlacedMealOut]
     # What was ordered for them, by aisle.
     shopping_list: list[ShoppingItemOut]
+    # Where it is with the store (GroceryOrderOut's).
+    book_state: BookState
+    book_on: date
+    booking: Booking | None
+    book_issue: BookIssue | None
 
 
 class NextOrderOut(BaseModel):
@@ -458,6 +472,14 @@ class PlaceIn(BaseModel):
     quote_id: UUID
 
     _minute = field_validator("delivery_by")(clock_minute)
+
+
+class SettleIn(BaseModel):
+    """Whether Instacart has an order booking couldn't confirm."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    placed: bool
 
 
 class LockIn(BaseModel):
@@ -718,6 +740,12 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
         lock=lock_out(order, viewer, people),
         shopping_list=shopping_list_out(session, order, people, rated),
         quote=quote_out(session, order, people),
+        book_state=order.book_state,
+        book_on=booking.book_on(order.delivery_date)
+        if order.book_state is not None and order.delivery_date is not None
+        else None,
+        booking=order.booking,
+        book_issue=order.book_issue,
     )
 
 
@@ -733,7 +761,13 @@ def placed_order_out(
     placed_at, placed_by = order.placed_at, order.placed_by
     delivery, next_delivery = order.delivery_date, order.next_delivery_date
     # Set when it's placed; the table's checks guarantee it.
-    if placed_at is None or placed_by is None or delivery is None or next_delivery is None:
+    if (
+        placed_at is None
+        or placed_by is None
+        or delivery is None
+        or next_delivery is None
+        or order.book_state is None
+    ):
         raise RuntimeError(f"Placed order {order.id} is missing its placement details or dates.")
     return PlacedOrderOut(
         id=order.id,
@@ -748,6 +782,10 @@ def placed_order_out(
             for pick in picks
         ],
         shopping_list=[item_out(item) for item in items],
+        book_state=order.book_state,
+        book_on=booking.book_on(delivery),
+        booking=order.booking,
+        book_issue=order.book_issue,
     )
 
 
@@ -768,10 +806,23 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     ListNotReady: status.HTTP_409_CONFLICT,
     NothingToList: status.HTTP_409_CONFLICT,
     orders.NotForUs: status.HTTP_409_CONFLICT,
+    booking.NotChangeable: status.HTTP_409_CONFLICT,
     JobIdTaken: status.HTTP_409_CONFLICT,
     orders.InvalidDates: status.HTTP_422_UNPROCESSABLE_CONTENT,
     BatchRunning: status.HTTP_429_TOO_MANY_REQUESTS,
 }
+
+
+def dispatch_booking(session: Session, dispatcher: JobDispatcher, job_id: UUID) -> None:
+    """Start a book job's worker; if it can't be started, the order isn't booked
+    (and says so), but the approval stands."""
+    try:
+        dispatcher.dispatch(job_id)
+    except DispatchError as error:
+        log.error("job.dispatch_failed", extra={"job_id": str(job_id), "error": str(error)})
+        message = "Booking couldn't be started."
+        fail_job(session, job_id, message)
+        booking.job_failed(session, job_id, message)
 
 
 def signed_in(
@@ -1157,8 +1208,52 @@ def create_app() -> FastAPI:
         caller: Annotated[Member, Depends(member)],
         session: Annotated[Session, Depends(db)],
     ) -> None:
-        """Discard the draft, unless another member is placing it."""
-        orders.discard(session, caller.household_id, order_id, caller.user_id)
+        """Discard the draft, unless another member is placing it; or cancel an
+        approved order that isn't booked yet."""
+        order = session.get(GroceryOrder, order_id)
+        if order is not None and order.status == GroceryOrderStatus.PLACED:
+            booking.cancel(session, caller.household_id, order_id)
+        else:
+            orders.discard(session, caller.household_id, order_id, caller.user_id)
+
+    @api.post("/v1/grocery-orders/{order_id}/change")
+    def change_order(
+        order_id: UUID,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        """Make an approved order that isn't booked yet the household's draft
+        again, to change it and approve it again (409 while the next order has a
+        draft)."""
+        order = booking.change(session, caller.household_id, order_id)
+        return order_out(session, order, day, caller.user_id)
+
+    @api.post("/v1/grocery-orders/{order_id}/book")
+    def book_again(
+        order_id: UUID,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+        dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        """Try booking an approved order again, after it wasn't booked."""
+        job = booking.book_again(session, caller.household_id, order_id)
+        dispatch_booking(session, dispatcher, job.id)
+        order = orders.get_order(session, caller.household_id, order_id)
+        return order_out(session, order, day, caller.user_id)
+
+    @api.post("/v1/grocery-orders/{order_id}/settle")
+    def settle_order(
+        order_id: UUID,
+        body: SettleIn,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        """Say whether Instacart has an order booking couldn't confirm."""
+        order = booking.settle(session, caller.household_id, order_id, body.placed)
+        return order_out(session, order, day, caller.user_id)
 
     @api.post("/v1/grocery-orders/{order_id}/lock")
     def take_lock(
@@ -1422,9 +1517,12 @@ def create_app() -> FastAPI:
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
         session: Annotated[Session, Depends(db)],
+        dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
-        placed = orders.place(
+        """Approve the draft: it waits to book at the store, and books now if
+        its day has come (castle_chef.booking)."""
+        placed, now = orders.place(
             session,
             caller.household_id,
             order_id,
@@ -1435,7 +1533,13 @@ def create_app() -> FastAPI:
             body.quote_id,
             day,
         )
-        return order_out(session, placed, day, caller.user_id)
+        if now:
+            job = booking.start_if_due(session, placed, booking.store_now())
+            session.commit()
+            if job is not None:
+                dispatch_booking(session, dispatcher, job.id)
+        order = orders.get_order(session, caller.household_id, order_id)
+        return order_out(session, order, day, caller.user_id)
 
     @api.get("/v1/meals/{meal_id}")
     def get_meal(

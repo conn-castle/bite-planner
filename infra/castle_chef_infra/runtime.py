@@ -4,6 +4,7 @@
          jobs queue ─► EventBridge Pipe ─► one Fargate worker task per job
          failures (jobs DLQ, ECS "task stopped") ─► failure-handler Lambda
   one EventBridge Scheduler schedule per member ─► Reminders Lambda ─► APNs
+  the daily booking schedule (9 AM store time) ─► Reminders Lambda ─► jobs queue
          CloudWatch alarms ─► SNS email
 
 Nothing runs or polls while idle.
@@ -45,6 +46,9 @@ APNS_KEY_ID_PARAMETER = "/castle-chef/shared/apns-key-id"
 # The household's Instacart website session (browser cookies), which the worker
 # reads for checkout and writes back as Instacart renews it.
 INSTACART_SESSION_PARAMETER = "/castle-chef/shared/instacart-session"
+# When booking runs each day (castle_chef.booking): 9:00 AM in the store's time zone.
+BOOKING_SCHEDULE = "cron(0 9 * * ? *)"
+STORE_TIME_ZONE = "America/New_York"
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,9 @@ class RuntimeConfig:
 
     neon_auth_url: str
     database_url_parameter: str  # SSM SecureString: pooled Neon URL
+    # SSM String: whether booking presses Place order (live, dry_run, or off),
+    # set by hand (docs/operations/aws.md), read by each worker task as it starts.
+    instacart_booking_parameter: str
     cors_origins: list[str]
     alarm_email: str
     release: str  # the release version, logged by the services (CASTLE_CHEF_RELEASE)
@@ -88,6 +95,9 @@ class RuntimeStack(Stack):
         )
         apns_key_id = ssm.StringParameter.from_string_parameter_name(
             self, "ApnsKeyId", string_parameter_name=APNS_KEY_ID_PARAMETER
+        )
+        instacart_booking = ssm.StringParameter.from_string_parameter_name(
+            self, "InstacartBooking", string_parameter_name=config.instacart_booking_parameter
         )
 
         # Network: public subnets only, no NAT (nothing to pay for while idle).
@@ -208,6 +218,7 @@ class RuntimeStack(Stack):
                 "DATABASE_URL": ecs.Secret.from_ssm_parameter(database_url),
                 "CASTLE_CHEF_APNS_KEY": ecs.Secret.from_ssm_parameter(apns_key),
                 "CASTLE_CHEF_APNS_KEY_ID": ecs.Secret.from_ssm_parameter(apns_key_id),
+                "CASTLE_CHEF_INSTACART_BOOKING": ecs.Secret.from_ssm_parameter(instacart_booking),
             },
             environment={
                 "CASTLE_CHEF_RELEASE": config.release,
@@ -375,11 +386,21 @@ class RuntimeStack(Stack):
             log_group=failures_logs,
             environment=common_environment
             | {
+                # A booking that stopped tells whoever approved the order.
+                "CASTLE_CHEF_SSM_PARAMETERS": json.dumps(
+                    {
+                        "DATABASE_URL": config.database_url_parameter,
+                        "CASTLE_CHEF_APNS_KEY": APNS_KEY_PARAMETER,
+                        "CASTLE_CHEF_APNS_KEY_ID": APNS_KEY_ID_PARAMETER,
+                    }
+                ),
+                "CASTLE_CHEF_PUSH": "apns",
                 "CASTLE_CHEF_FAILURE_HANDLER": "true",
                 "AWS_LWA_PASS_THROUGH_PATH": "/events",
             },
         )
-        database_url.grant_read(failure_handler)
+        for grant in (database_url, apns_key, apns_key_id):
+            grant.grant_read(failure_handler)
         failure_handler.add_event_source(
             lambda_event_sources.SqsEventSource(dead_letters, batch_size=10)
         )
@@ -467,6 +488,9 @@ class RuntimeStack(Stack):
                 ),
                 "CASTLE_CHEF_REMINDERS_HANDLER": "true",
                 "CASTLE_CHEF_PUSH": "apns",
+                # The daily booking run starts book jobs.
+                "CASTLE_CHEF_JOB_DISPATCH": "sqs",
+                "CASTLE_CHEF_JOBS_QUEUE_URL": jobs.queue_url,
                 "AWS_LWA_PASS_THROUGH_PATH": "/events",
                 # A failed firing fails the invocation, so Lambda retries it (the
                 # adapter otherwise returns the error response as a success).
@@ -475,6 +499,22 @@ class RuntimeStack(Stack):
         )
         for grant in (database_url, apns_key, apns_key_id):
             grant.grant_read(reminders)
+        jobs.grant_send_messages(reminders)
+        # The daily booking run: outside the members' group, which the deploy's
+        # sync keeps to one schedule per member.
+        scheduler.CfnSchedule(
+            self,
+            "BookingSchedule",
+            description="Books approved orders that are due (castle_chef.booking)",
+            schedule_expression=BOOKING_SCHEDULE,
+            schedule_expression_timezone=STORE_TIME_ZONE,
+            flexible_time_window=scheduler.CfnSchedule.FlexibleTimeWindowProperty(mode="OFF"),
+            target=scheduler.CfnSchedule.TargetProperty(
+                arn=reminders_arn,
+                role_arn=scheduler_role.role_arn,
+                input=json.dumps({"book_due": {}}),
+            ),
+        )
         for statement in manage_schedules:
             reminders.add_to_role_policy(statement)
             api.add_to_role_policy(statement)

@@ -96,6 +96,14 @@ export function WeekPage() {
   const tapped = useTapped()
   useEffect(() => {
     if (!tapped || tapped.about.kind === 'test') return
+    if (tapped.about.kind === 'booking') {
+      // How booking went: that order's page says, with what can be done.
+      clearTapped()
+      logger.info('push.tap_opened', { kind: 'booking', open: true })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders })
+      router.push(`/week/orders/${tapped.about.orderId}`)
+      return
+    }
     const about = tapped.about
     let current = true
     const since = (at: number) => Math.round(Date.now() - at)
@@ -140,7 +148,7 @@ export function WeekPage() {
     return () => {
       current = false
     }
-  }, [tapped, queryClient, presentAlert])
+  }, [tapped, queryClient, presentAlert, router])
 
   // Discarding affects everyone in the household, so it asks first.
   function confirmDiscard(order: GroceryOrder) {

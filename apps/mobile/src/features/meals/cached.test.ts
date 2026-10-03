@@ -17,6 +17,10 @@ const meal = (id: string): MealSummary => ({
 })
 
 const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
+  book_state: null,
+  book_on: null,
+  booking: null,
+  book_issue: null,
   id,
   number: 4,
   status: 'draft',
@@ -50,6 +54,10 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
 })
 
 const placed: PlacedOrder = {
+  book_state: 'booked',
+  book_on: '2026-09-20',
+  booking: null,
+  book_issue: null,
   id: 'order-3',
   number: 3,
   placed_at: '2026-09-18T09:00:00Z',

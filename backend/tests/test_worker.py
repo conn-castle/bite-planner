@@ -7,36 +7,55 @@ import os
 import sys
 import threading
 import time
-from datetime import timedelta
+from datetime import date, timedelta
+from datetime import time as clock
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from castle_chef_agent.checkout import Checkout
+from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import IngredientInput, MealInput
+from castle_chef_agent.products import ProductCount
+from castle_chef_agent.shopping import Aisle
+from castle_chef_agent.windows import Window
 from sqlmodel import Session, col, select
 from typer.testing import CliRunner
 
-from castle_chef import orders, push, shopping, worker
-from castle_chef.checkout import SIGNED_OUT_ERROR, CartLine, Quote, QuoteRequest
+from castle_chef import booking, orders, push, shopping, worker
+from castle_chef.checkout import (
+    SIGNED_OUT_ERROR,
+    Booking,
+    BookIssue,
+    CartLine,
+    Quote,
+    QuoteRequest,
+    Swap,
+)
 from castle_chef.cli import app
 from castle_chef.db import get_engine
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, fail_job, submit_build_list
 from castle_chef.meals import add_meals
 from castle_chef.models import (
     AppUser,
+    BookState,
     GroceryOrder,
     GroceryOrderMeal,
+    GroceryOrderStatus,
     Household,
     Job,
     JobKind,
     JobStatus,
     Meal,
     MealRating,
+    ProductGone,
     PushDevice,
     ShoppingListItem,
+    utc_now,
 )
 from castle_chef.push import Notification, NotificationKind, Outcome, Sent
+from castle_chef.settings import get_settings
 
 runner = CliRunner()
 FAKE_AGENT = Path(__file__).parent / "fake_agent.py"
@@ -1019,3 +1038,482 @@ def test_an_agent_that_doesnt_report_checkout_fails_the_quote(
     assert failed.status == JobStatus.FAILED
     assert failed.error is not None and "max_turns" in failed.error
     assert json.loads((codex_home / "cart-state.json").read_text()) == {"17499438": 1}
+
+
+# Booking an approved order: the cart filled with its products, the window the
+# rule chooses, checkout reported and checked, and Place order pressed once (on
+# the stand-in pages; development's dry run unless the test says otherwise).
+
+ADDRESS = "1 Main Street Rochester, NY 14604"
+CARD = "Visa ending 4242"
+
+
+def product(product_id: str, name: str, count: int = 2) -> ProductCount:
+    return ProductCount(
+        product=Product(
+            product_id=product_id,
+            name=name,
+            size=None,
+            price_cents=500,
+            price_per_lb_cents=None,
+            estimated_lb=None,
+            image_url=None,
+            bought_before=False,
+        ),
+        count=count,
+    )
+
+
+def approved(
+    session: Session,
+    draft: GroceryOrder,
+    batch: Job,
+    *,
+    alternatives: list[ProductCount] | None = None,
+    by: clock = clock(16),
+    card: str = CARD,
+) -> Job:
+    """The draft approved, its booking started (as the API does): picked meals,
+    a list buying sweet onions (3371870, five) and chicken (777, two; with these
+    alternatives), its total read for that address and card, delivery in three
+    days by `by`. Returns the book job."""
+    picked(session, batch, 4)
+    build = Job(
+        id=uuid4(),
+        grocery_order_id=draft.id,
+        kind=JobKind.BUILD_LIST,
+        requested_by=draft.created_by,
+        status=JobStatus.SUCCEEDED,
+        list_source=shopping.current_source(session, draft.id),
+    )
+    session.add(build)
+    session.flush()
+    for position, (name, chosen, others) in enumerate(
+        [
+            ("sweet onions", product("3371870", "Sweet Onions", count=5), []),
+            ("chicken thighs", product("777", "Chicken Thighs"), alternatives or []),
+        ]
+    ):
+        session.add(
+            ShoppingListItem(
+                job_id=build.id,
+                position=position,
+                name=name,
+                quantity=2,
+                aisle=Aisle.PRODUCE,
+                meal_ids=[],
+                product=chosen,
+                alternatives=others,
+            )
+        )
+    quote = Job(
+        id=uuid4(),
+        grocery_order_id=draft.id,
+        kind=JobKind.QUOTE,
+        requested_by=draft.created_by,
+        status=JobStatus.SUCCEEDED,
+        quote_request=QuoteRequest(
+            lines=[
+                CartLine(product_id="3371870", quantity=5),
+                CartLine(product_id="777", quantity=2),
+            ],
+            tip_percent=10,
+            tip_max_cents=1500,
+        ),
+        quote=Quote(
+            checkout=Checkout(
+                items_cents=2000,
+                fees=[],
+                tip_cents=200,
+                total_cents=2200,
+                address=ADDRESS,
+                card=card,
+                replacements=["Replace with best match"],
+            )
+        ),
+    )
+    session.add(quote)
+    session.flush()
+    order = session.get_one(GroceryOrder, draft.id)
+    order.status, order.placed_at, order.placed_by = (
+        GroceryOrderStatus.PLACED,
+        utc_now(),
+        draft.created_by,
+    )
+    order.delivery_date = BOOK_DAY
+    order.delivery_by = by
+    order.next_delivery_date = BOOK_DAY + timedelta(days=4)
+    order.quote_id, order.book_state = quote.id, BookState.WAITING
+    session.add(order)
+    session.commit()
+    return booking.start(session, session.get_one(GroceryOrder, draft.id))
+
+
+BOOK_DAY = date.today() + timedelta(days=3)
+
+
+def booked_order(session: Session, book: Job) -> GroceryOrder:
+    session.expire_all()
+    return session.get_one(GroceryOrder, book.grocery_order_id)
+
+
+def use_booking(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    monkeypatch.setenv("CASTLE_CHEF_INSTACART_BOOKING", mode)
+    get_settings.cache_clear()
+
+
+def test_development_books_as_a_dry_run_that_shows_as_booked_and_puts_the_cart_back(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    sender: RecordingSender,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    start_cart(codex_home, {"17499438": 1})  # the household's own onions
+    book = approved(session, draft, job)
+    token = with_phone(session, book)
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(book)
+
+    assert reload(session, book).status == JobStatus.SUCCEEDED
+    order = booked_order(session, book)
+    assert (order.book_state, order.clicked_at, order.book_job_id) == (BookState.BOOKED, None, None)
+    # The window the rule chose (by 4:00 PM: 2-4 PM), and checkout's total.
+    assert order.booking == Booking(
+        order_number="Dry run",
+        window=Window(start=clock(14), end=clock(16)),
+        total_cents=1959 + 249 + 196,
+    )
+    prompt = (tmp_path / "jobs" / str(book.id) / "fake-agent-prompt.md").read_text()
+    assert f"for delivery on {BOOK_DAY:%A, %b} {BOOK_DAY.day} by 4:00 PM" in " ".join(
+        prompt.split()
+    )
+    assert json.loads((codex_home / "cart-state.json").read_text()) == {"17499438": 1}
+    assert len(sessions.saved) == 1
+    [(sent_to, notification)] = sender.sent
+    assert (sent_to, notification.kind, notification.order_id) == (
+        token,
+        NotificationKind.BOOKING,
+        draft.id,
+    )
+    assert notification.title.endswith("is booked (dry run)")
+    assert notification.body.startswith(f"Arrives {BOOK_DAY:%A, %b} {BOOK_DAY.day}, 2–4 PM.")
+
+
+def test_a_live_booking_records_the_click_before_pressing_and_keeps_the_confirmation(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    use_booking(monkeypatch, "live")
+    use_fake_agent(monkeypatch, meals=1)
+    claims: list[GroceryOrder] = []
+    claim = booking.claim_click
+
+    def recorded(db: Session, job_id: UUID) -> bool:
+        claimed = claim(db, job_id)
+        claims.append(booked_order(session, book))
+        return claimed
+
+    monkeypatch.setattr(booking, "claim_click", recorded)
+
+    run_job(book)
+
+    # Recorded (committed) before the tools pressed it.
+    [at_claim] = claims
+    assert at_claim.clicked_at is not None and at_claim.book_state == BookState.BOOKING
+    order = booked_order(session, book)
+    assert order.book_state == BookState.BOOKED
+    assert order.clicked_at == at_claim.clicked_at
+    assert order.booking == Booking(
+        order_number="18234567",
+        window=Window(start=clock(14), end=clock(16)),
+        total_cents=1959 + 249 + 196,
+    )
+
+
+def test_booking_while_its_turned_off_stops_before_place_order_and_isnt_booked(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    use_booking(monkeypatch, "off")
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert (order.book_state, order.clicked_at, order.booking) == (BookState.NOT_BOOKED, None, None)
+    assert order.book_issue == BookIssue(message="Booking at Instacart isn't turned on yet.")
+
+
+def test_a_day_with_no_window_left_for_the_time_needs_another_day_or_time(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job, by=clock(9))  # the stand-in's start at 10 AM
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert order.book_state == BookState.NEEDS_TIME
+    assert order.book_issue == BookIssue(
+        message=f"No delivery window is left on {BOOK_DAY:%a, %b} {BOOK_DAY.day} for the time "
+        "it needs."
+    )
+
+
+def test_a_gone_product_is_swapped_for_its_first_alternative_the_cart_takes(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {}, unavailable=["777", "888"])
+    book = approved(
+        session,
+        draft,
+        job,
+        alternatives=[product("888", "Chicken Breasts"), product("999", "Chicken Legs")],
+    )
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert order.book_state == BookState.BOOKED and order.booking is not None
+    assert order.booking.swaps == [
+        Swap(item="chicken thighs", gone="Chicken Thighs", bought="Chicken Legs")
+    ]
+    # The list keeps what was bought; the one gone is an alternative now.
+    [chicken] = [item for item in list_items_of(session, draft) if item.name == "chicken thighs"]
+    assert chicken.product is not None and chicken.product.product.product_id == "999"
+    assert [a.product.product_id for a in chicken.alternatives] == ["888", "777"]
+    assert json.loads((codex_home / "cart-state.json").read_text()) == {}
+
+
+def test_a_gone_product_with_the_household_asking_needs_one_chosen(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    start_cart(codex_home, {}, unavailable=["777"])
+    household = session.get_one(Household, draft.household_id)
+    household.product_gone = ProductGone.ASK
+    session.add(household)
+    session.commit()
+    book = approved(session, draft, job, alternatives=[product("999", "Chicken Legs")])
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    [chicken] = [item for item in list_items_of(session, draft) if item.name == "chicken thighs"]
+    assert order.book_state == BookState.NEEDS_PRODUCT
+    assert order.book_issue == BookIssue(
+        message="Wegmans doesn't have Chicken Thighs any more.", item_ids=[chicken.id]
+    )
+    # Nothing was opened at checkout.
+    assert not (tmp_path / "jobs" / str(book.id) / "fake-agent-prompt.md").exists()
+    assert json.loads((codex_home / "cart-state.json").read_text()) == {}
+
+
+def test_a_card_changed_since_the_order_was_approved_isnt_booked(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job, card="Amex ending 0005")
+    use_booking(monkeypatch, "live")
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert (order.book_state, order.clicked_at) == (BookState.NOT_BOOKED, None)
+    assert order.book_issue == BookIssue(
+        message="Instacart now charges Visa ending 4242, not Amex ending 0005. "
+        "Check your Instacart account."
+    )
+
+
+def test_a_signed_out_session_isnt_booked_and_says_so(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    use_fake_agent(monkeypatch, meals=0)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert order.book_state == BookState.NOT_BOOKED
+    assert order.book_issue == BookIssue(message=SIGNED_OUT_ERROR)
+    assert sessions.saved == []
+
+
+def test_a_press_with_no_confirmation_needs_someone_to_check_instacart(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    sender: RecordingSender,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    with_phone(session, book)
+    use_booking(monkeypatch, "live")
+    use_fake_agent(monkeypatch, meals=3)  # finds no confirmation
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert order.book_state == BookState.CHECK_INSTACART and order.clicked_at is not None
+    [(_, notification)] = sender.sent
+    assert notification.title.startswith("Check Instacart for Order")
+
+
+def test_once_place_order_was_pressed_an_agent_that_stops_badly_still_books_what_it_confirmed(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    use_booking(monkeypatch, "live")
+    use_fake_agent(monkeypatch, meals=1, stop_reason="max_turns")
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert order.book_state == BookState.BOOKED
+    assert order.booking is not None and order.booking.order_number == "18234567"
+
+
+def test_a_booking_that_fails_before_place_order_isnt_booked(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    use_fake_agent(monkeypatch, meals=1, exit_code=1)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert (order.book_state, order.clicked_at) == (BookState.NOT_BOOKED, None)
+    assert order.book_issue is not None and "Agent exited with code 1" in order.book_issue.message
+
+
+def list_items_of(session: Session, draft: GroceryOrder) -> list[ShoppingListItem]:
+    session.expire_all()
+    build = shopping.newest_build(session, draft.id)
+    assert build is not None
+    return shopping.items_of(session, build.id)
+
+
+def test_a_gone_product_bought_for_more_than_one_item_needs_one_chosen(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {}, unavailable=["777"])
+    book = approved(session, draft, job, alternatives=[product("999", "Chicken Legs")])
+    # The onions' item buys the chicken too: one alternative's count can't stand in for both.
+    [onions] = [item for item in list_items_of(session, draft) if item.name == "sweet onions"]
+    onions.product = product("777", "Chicken Thighs", count=5)
+    session.add(onions)
+    session.commit()
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert order.book_state == BookState.NEEDS_PRODUCT
+    assert order.book_issue is not None
+    assert sorted(order.book_issue.item_ids) == sorted(
+        item.id for item in list_items_of(session, draft)
+    )
+
+
+def test_a_booking_whose_result_cant_be_saved_after_the_press_needs_checking(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    use_booking(monkeypatch, "live")
+    use_fake_agent(monkeypatch, meals=1)
+
+    def unsaved(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("the database went away")
+
+    monkeypatch.setattr(booking, "finish", unsaved)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert (order.book_state, order.book_job_id) == (BookState.CHECK_INSTACART, None)
+    assert reload(session, book).status == JobStatus.FAILED

@@ -14,9 +14,11 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
+from castle_chef import booking
 from castle_chef.db import get_session
 from castle_chef.dispatch import JOB_ID_ENV, JobMessage
 from castle_chef.jobs import fail_job, fail_shops_of
+from castle_chef.notifications import notify_booking
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ def _dead_lettered(record: dict[str, Any]) -> None:
     with get_session() as session:
         changed = fail_job(session, message.job_id, error)
     log.error("job.never_started", extra={"job_id": str(message.job_id), "marked_failed": changed})
+    _booking_stopped(message.job_id, "Booking couldn't be started.")
 
 
 def _task_stopped(detail: dict[str, Any]) -> None:
@@ -73,6 +76,16 @@ def _task_stopped(detail: dict[str, Any]) -> None:
     log.error(
         "job.worker_stopped", extra=fields | {"marked_failed": changed, "shops_failed": shops}
     )
+    _booking_stopped(job_id, "Booking stopped before it finished.")
+
+
+def _booking_stopped(job_id: UUID, error: str) -> None:
+    """If the job was booking an order, settle it (not booked, or check Instacart
+    once Place order was pressed) and say so."""
+    with get_session() as session:
+        order = booking.job_failed(session, job_id, error)
+    if order is not None:
+        notify_booking(order.id)
 
 
 def _job_id(detail: dict[str, Any]) -> UUID | None:

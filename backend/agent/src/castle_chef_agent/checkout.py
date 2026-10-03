@@ -1,14 +1,19 @@
-"""Checkout on Instacart's website, driven by the agent (a `quote` job): a headless
-browser signed in with the household's session, which the agent works through
-tools that see the page as its accessibility tree (elements by role and name,
-each with a ref) and act on those refs. No page's layout is built into the code;
-what is, is the rules around it:
+"""Checkout on Instacart's website, driven by the agent (a `quote` job, and a
+`book` job): a headless browser signed in with the household's session, which
+the agent works through tools that see the page as its accessibility tree
+(elements by role and name, each with a ref) and act on those refs. No page's
+layout is built into the code; what is, is the rules around it:
 
-- the agent never presses Place order (the click tool refuses it);
+- the agent never presses Place order itself (the click tool refuses it); a
+  booking presses it once, through `place_order`, after checkout is reported and
+  checked, and only once the worker has recorded the click (it answers through
+  the job directory, and may say not to: a dry run, or booking turned off);
 - it only goes to Instacart's own pages;
 - what it reports is read from the elements it points at, not taken from it,
   and must add up: the items, each other line, and the tip make the total, the
-  tip follows the household's rule, and the delivery isn't Priority.
+  tip follows the household's rule, and the delivery isn't Priority; a booking's
+  is the window the rule chose (castle_chef_agent.windows) from the ones offered,
+  to the address and card the final review showed.
 
 The session's cookies are secrets: the worker puts them in the job directory for
 the tools, takes the renewed ones back, and removes both; they never reach the
@@ -21,13 +26,17 @@ import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import date, time
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
 
+from castle_chef_agent import windows
 from castle_chef_agent.jobfiles import locked, read_context, replace_file
+from castle_chef_agent.windows import Window
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, BrowserContext, Locator, Page
@@ -38,6 +47,12 @@ SITE = "https://www.instacart.com"
 SESSION_FILE = "session.json"
 RENEWED_SESSION_FILE = "session-renewed.json"
 STATE_FILE = "checkout.json"
+# A booking's Place order: the tools ask (the request), the worker answers.
+CLICK_REQUEST_FILE = "click-request.json"
+CLICK_ANSWER_FILE = "click-answer.json"
+# How long `place_order` waits for the worker's answer, checking this often.
+CLICK_ANSWER_TIMEOUT_S = 60
+CLICK_ANSWER_CHECK_S = 0.25
 # How long a control may take to act, and a page to load.
 TIMEOUT_MS = 30_000
 NAVIGATION_TIMEOUT_MS = 60_000
@@ -58,15 +73,27 @@ class CheckoutRefused(Exception):
     """A tool call breaks a rule; the message says which and what to do."""
 
 
+class BookTarget(BaseModel):
+    """What a booking books: the delivery day and the latest time it should
+    arrive by, to the address and card the final review showed."""
+
+    day: date
+    by: time
+    address: str
+    card: str
+
+
 class CheckoutJob(BaseModel):
     """The worker's context for the tools: the store, the tip rule, how many
-    products the cart holds, and where the session is."""
+    products the cart holds, where the session is, and, for a booking, what it
+    books (None: a quote, which never presses Place order)."""
 
     store: str
     tip_percent: int
     tip_max_cents: int
     cart_items: int
     session_dir: Path
+    book: BookTarget | None = None
     # Instacart's website: the worker passes its setting (tests point it at stand-ins).
     site: str = SITE
 
@@ -96,12 +123,51 @@ class Checkout(BaseModel):
     replacements: list[str]
 
 
+class ClickAnswer(StrEnum):
+    """The worker's answer when a booking asks to press Place order."""
+
+    GO = "go"  # the click is recorded: press it
+    DRY_RUN = "dry_run"  # development: don't
+    OFF = "off"  # booking isn't turned on yet: don't
+    REFUSED = "refused"  # this job mustn't (the order was clicked before, or changed)
+
+
+class ClickRequest(BaseModel):
+    """A booking asking to press Place order, for this checkout."""
+
+    total_cents: int
+
+
+class ClickReply(BaseModel):
+    answer: ClickAnswer
+
+
+class Confirmation(BaseModel):
+    """What Instacart showed after Place order: its order number, the window
+    booked, and the total."""
+
+    order_number: str
+    window: Window
+    total_cents: int
+
+
 class _State(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     replacements: list[str] | None = None
     checkout: Checkout | None = None
     signed_out: bool = False
+    # A booking's: the window the rule chose, or that none that day works.
+    window: Window | None = None
+    no_window: bool = False
+    # The address or card isn't the one the order was approved with.
+    changed: str | None = None
+    # Its Place order: the worker's answer, whether it was pressed, and what
+    # Instacart confirmed (or that the agent found no confirmation).
+    click: ClickAnswer | None = None
+    clicked: bool = False
+    confirmation: Confirmation | None = None
+    not_confirmed: bool = False
 
 
 def load_state(job_dir: Path) -> _State:
@@ -175,6 +241,17 @@ def card_from(text: str) -> str:
     if match is None:
         raise CheckoutRefused("That element shows no card (like *1234 Visa).")
     return f"{match.group(2)} ending {match.group(1)}"
+
+
+def account_changes(checkout: Checkout, book: BookTarget) -> str | None:
+    """What changed in the account since the order was approved (where it's
+    delivered, or the card), as whoever approved it is told; None: nothing."""
+    changes = []
+    if checkout.address != book.address:
+        changes.append(f"Instacart now delivers to {checkout.address}, not {book.address}.")
+    if checkout.card != book.card:
+        changes.append(f"Instacart now charges {checkout.card}, not {book.card}.")
+    return " ".join(changes) or None
 
 
 def check_checkout(checkout: Checkout, job: CheckoutJob) -> list[str]:
@@ -276,18 +353,25 @@ class Browser:
         return element
 
     async def _names(self, ref: str) -> str:
-        """Everything an element is called: its text and each place its accessible
-        name can come from (its label, what labels it, its title, value, or alt)."""
+        """Everything an element is called, and the control it's part of (a click
+        on an icon in a button presses the button): their text and each place an
+        accessible name can come from (a label, what labels it, its title, value,
+        or alt)."""
         element = await self._element(ref)
         names: str = await element.evaluate(
             """element => {
-                const labelledBy = (element.getAttribute('aria-labelledby') || '')
-                    .split(/\\s+/).filter(Boolean)
-                    .map(id => document.getElementById(id)?.textContent || '')
-                const labels = [...(element.labels || [])].map(label => label.textContent)
-                return [element.innerText, element.getAttribute('aria-label'), ...labelledBy,
-                    ...labels, element.title, element.value, element.alt]
-                    .filter(Boolean).join(' ')
+                const named = each => {
+                    const labelledBy = (each.getAttribute('aria-labelledby') || '')
+                        .split(/\\s+/).filter(Boolean)
+                        .map(id => document.getElementById(id)?.textContent || '')
+                    const labels = [...(each.labels || [])].map(label => label.textContent)
+                    return [each.innerText, each.getAttribute('aria-label'), ...labelledBy,
+                        ...labels, each.title, each.value, each.alt]
+                }
+                const control = element.closest(
+                    'button, a, [role=button], [role=link], input[type=submit], input[type=button]')
+                const its = control && control !== element ? named(control) : []
+                return [...named(element), ...its].filter(Boolean).join(' ')
             }"""
         )
         return names
@@ -417,10 +501,15 @@ class ReportRefs:
 async def report(job_dir: Path, opened: Browser, refs: ReportRefs) -> Checkout:
     """Read checkout from the elements the agent points at, check it, and keep it."""
     state = load_state(job_dir)
-    if state.replacements is None:
+    book = opened.job.book
+    if book is None and state.replacements is None:
         raise CheckoutRefused(
             "Record the cart's out-of-stock settings first (`record_replacements`)."
         )
+    if book is not None and state.window is None:
+        raise CheckoutRefused("Choose the delivery window first (`choose_window`).")
+    if state.clicked or state.click is not None:
+        raise CheckoutRefused("Place order was asked for already: don't report again.")
     await opened._stay_on_site()
     if len(set(refs.all())) != len(refs.all()):
         raise CheckoutRefused("Each part is a different element: point at each one once.")
@@ -438,6 +527,16 @@ async def report(job_dir: Path, opened: Browser, refs: ReportRefs) -> Checkout:
             f"The delivery chosen shows {delivery[:60]!r}: choose a scheduled day and time "
             "window (not Priority or Fast), and point at the delivery option that shows it."
         )
+    if (
+        book is not None
+        and state.window is not None
+        and (windows.parse(delivery) != state.window or not _day_named(delivery, book.day))
+    ):
+        problems.append(
+            f"The delivery chosen shows {delivery[:60]!r}, not the window to book "
+            f"({book.day:%a, %b} {book.day.day}, {windows.label(state.window)}): choose that "
+            "one, and point at the option showing it."
+        )
     if problems:
         raise CheckoutRefused(" ".join(problems))
     fees = []
@@ -451,10 +550,17 @@ async def report(job_dir: Path, opened: Browser, refs: ReportRefs) -> Checkout:
         total_cents=money(total),
         address=address_from(await opened.element_text(refs.address)),
         card=card_from(await opened.element_text(refs.card)),
-        replacements=state.replacements,
+        # A booking doesn't read them (the review showed them).
+        replacements=state.replacements or [],
     )
     if problems := check_checkout(checkout, opened.job):
         raise CheckoutRefused(" ".join(problems))
+    if book is not None and (changed := account_changes(checkout, book)):
+        with locked(job_dir):
+            state = load_state(job_dir)
+            state.changed = changed
+            _save(job_dir, state)
+        raise CheckoutRefused(f"{changed} That's recorded, and nothing is ordered: stop here.")
     await opened.save_session()
     with locked(job_dir):
         state = load_state(job_dir)
@@ -473,4 +579,173 @@ async def mark_signed_out(job_dir: Path, opened: Browser, ref: str) -> None:
     with locked(job_dir):
         state = load_state(job_dir)
         state.signed_out = True
+        _save(job_dir, state)
+
+
+# A booking's tools.
+
+
+def _book(opened: Browser) -> BookTarget:
+    if opened.job.book is None:
+        raise CheckoutRefused("This isn't a booking.")
+    return opened.job.book
+
+
+def _names_a_day(text: str) -> bool:
+    """Whether the text names a calendar day ("Oct 6")."""
+    months = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec"
+    return re.search(rf"\b(?:{months})\w*\.?\s+\d{{1,2}}\b", text, re.I) is not None
+
+
+def _day_named(text: str, day: date) -> bool:
+    """Whether the text names the day ("Tue, Oct 6", "October 6")."""
+    return re.search(rf"\b{day:%b}\w*\.?\s+{day.day}\b", text, re.I) is not None
+
+
+async def choose_window(job_dir: Path, opened: Browser, day: str, offered: list[str]) -> str:
+    """Choose the delivery window to book among those Instacart offers on the
+    order's day (the tab `day`, selected), by the rule (windows.choose); or
+    record that none of them works, so the member chooses another day or time."""
+    book = _book(opened)
+    if load_state(job_dir).checkout is not None:
+        raise CheckoutRefused("Checkout is reported: the window is chosen.")
+    tab = await opened._element(day)
+    shown = " ".join((await opened.element_text(day)).split())
+    if not _day_named(shown, book.day):
+        raise CheckoutRefused(
+            f"That's {shown[:40]!r}: point at the tab for {book.day:%a, %b} {book.day.day}."
+        )
+    if await tab.get_attribute("aria-selected") == "false":
+        raise CheckoutRefused("Click that day's tab first, then give its windows.")
+    if len(set(offered)) != len(offered):
+        raise CheckoutRefused("Give each window once.")
+    found: dict[str, Window] = {}
+    for ref in offered:
+        text = " ".join((await opened.element_text(ref)).split())
+        window = windows.parse(text)
+        if window is None:
+            raise CheckoutRefused(f"{text[:40]!r} isn't a delivery window: give only the windows.")
+        found[ref] = window
+    chosen = windows.choose(list(found.values()), book.by)
+    with locked(job_dir):
+        state = load_state(job_dir)
+        state.window, state.no_window = chosen, chosen is None
+        _save(job_dir, state)
+    if chosen is None:
+        return (
+            "None of that day's windows works for the time the order needs: that's recorded, "
+            "and someone chooses another day or time. Stop here."
+        )
+    ref = next(ref for ref, window in found.items() if window == chosen)
+    return f"Book {windows.label(chosen)}: click {ref}, then go on."
+
+
+async def _await_answer(job_dir: Path) -> ClickAnswer | None:
+    """The worker's answer to the click request, or None if it didn't answer in time."""
+    path = job_dir / CLICK_ANSWER_FILE
+    for _ in range(int(CLICK_ANSWER_TIMEOUT_S / CLICK_ANSWER_CHECK_S)):
+        if path.exists():
+            return ClickReply.model_validate_json(path.read_text()).answer
+        await asyncio.sleep(CLICK_ANSWER_CHECK_S)
+    return None
+
+
+async def place_order(job_dir: Path, opened: Browser, ref: str) -> str:
+    """Press Place order, once: after checkout is reported, and only when the
+    worker says to (it records the click first). Returns what to do next."""
+    _book(opened)
+    if load_state(job_dir).checkout is None:
+        raise CheckoutRefused("Report checkout first (`report`); it's checked before ordering.")
+    await opened._stay_on_site()
+    if not PLACE_ORDER.search(await opened._names(ref)):
+        raise CheckoutRefused("That isn't the Place order button.")
+    # Asking is claimed under the lock: of calls made at once, only the one that
+    # asks waits for the answer and may press it.
+    with locked(job_dir):
+        state = load_state(job_dir)
+        request = job_dir / CLICK_REQUEST_FILE
+        if state.click is not None or request.exists() or state.checkout is None:
+            raise CheckoutRefused("Place order was asked for already: it's never asked for twice.")
+        asked = ClickRequest(total_cents=state.checkout.total_cents)
+        replace_file(request, asked.model_dump_json())
+    answer = await _await_answer(job_dir)
+    if answer is None:
+        raise CheckoutRefused("Booking didn't answer, so nothing was ordered. Stop here.")
+    with locked(job_dir):
+        state = load_state(job_dir)
+        state.click = answer
+        _save(job_dir, state)
+    if answer == ClickAnswer.DRY_RUN:
+        return "This is a dry run: Place order wasn't pressed, and nothing was ordered. Stop here."
+    if answer == ClickAnswer.OFF:
+        return "Booking isn't turned on yet: Place order wasn't pressed. Stop here."
+    if answer == ClickAnswer.REFUSED:
+        return "This order mustn't be placed now: Place order wasn't pressed. Stop here."
+    try:
+        await (await opened._element(ref)).click()
+    finally:
+        # Pressed or not, it's never pressed again: what happened is found out next.
+        with locked(job_dir):
+            state = load_state(job_dir)
+            state.clicked = True
+            _save(job_dir, state)
+    await opened._settled_tree()
+    return (
+        "Place order was pressed. Now find Instacart's confirmation, and call `confirmed` "
+        "with the refs of its order number, delivery window, and total; if there's none, "
+        "look in your orders for this one, and if it isn't there either, call `not_confirmed`.\n"
+        + await opened.snapshot()
+    )
+
+
+async def record_confirmation(
+    job_dir: Path, opened: Browser, number: str, window: str, total: str
+) -> Confirmation:
+    """Read what Instacart confirmed from the elements the agent points at: this
+    order's, which shows the window booked (on its day, if it names one) and the
+    total reported at checkout."""
+    state = load_state(job_dir)
+    book = _book(opened)
+    if not state.clicked or state.checkout is None:
+        raise CheckoutRefused("Nothing was ordered: there's no confirmation to record.")
+    await opened._stay_on_site()
+    if len({number, window, total}) != 3:
+        raise CheckoutRefused("Each part is a different element: point at each one once.")
+    shown = " ".join((await opened.element_text(number)).split())
+    found = re.findall(r"\b[A-Z0-9-]*\d{5,}[A-Z0-9-]*\b", shown, re.I)
+    if not found:
+        raise CheckoutRefused(f"{shown[:60]!r} shows no order number: point at the one shown.")
+    when = " ".join((await opened.element_text(window)).split())
+    booked = windows.parse(when)
+    if booked is None:
+        raise CheckoutRefused("That element shows no delivery window: point at the one booked.")
+    charged = money(await opened.element_text(total))
+    if (
+        booked != state.window
+        or (_names_a_day(when) and not _day_named(when, book.day))
+        or charged != state.checkout.total_cents
+    ):
+        raise CheckoutRefused(
+            "That isn't this order: its window, day, or total isn't the one just placed "
+            f"({book.day:%a, %b} {book.day.day}, {windows.label(state.window or booked)}, "
+            f"{cents_text(state.checkout.total_cents)}). If this order's confirmation isn't "
+            "shown anywhere, call `not_confirmed`."
+        )
+    confirmation = Confirmation(order_number=found[-1], window=booked, total_cents=charged)
+    with locked(job_dir):
+        state = load_state(job_dir)
+        state.confirmation = confirmation
+        _save(job_dir, state)
+    return confirmation
+
+
+async def mark_not_confirmed(job_dir: Path) -> None:
+    """Record that no confirmation could be found after Place order was pressed."""
+    with locked(job_dir):
+        state = load_state(job_dir)
+        if not state.clicked:
+            raise CheckoutRefused("Nothing was ordered: there's nothing to confirm.")
+        if state.confirmation is not None:
+            raise CheckoutRefused("It's confirmed already: you're done.")
+        state.not_confirmed = True
         _save(job_dir, state)

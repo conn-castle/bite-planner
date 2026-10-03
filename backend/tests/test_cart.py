@@ -40,7 +40,7 @@ def test_the_households_own_items_are_set_aside_while_the_cart_is_filled_then_pu
     with cart.filled(household_id, lines) as filled:
         inside = cart_now(codex_home)
         kept = ledger(session, household_id)
-        cart.check(filled, lines, {})
+        cart.check(filled.cart, lines, {})
 
     assert inside == {SWEET_ONIONS: 2, "777": 3}
     assert kept == CartLedger(
@@ -112,7 +112,7 @@ def test_a_product_the_cart_doesnt_take_is_named(
         pytest.raises(cart.CartMismatch, match="Wegmans didn't take Curry Leaves"),
         cart.filled(household_id, lines) as filled,
     ):
-        cart.check(filled, lines, {"777": "Curry Leaves"})
+        cart.check(filled.cart, lines, {"777": "Curry Leaves"})
 
     assert cart_now(codex_home) == {}
 

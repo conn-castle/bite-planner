@@ -12,6 +12,8 @@ import { OrderCard } from '../../ui/OrderCard'
 import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { MealRow } from '../meals/MealRow'
+import { BOOK_STATE_ICON, BOOK_STATE_LABEL, changeable, needsAttention } from '../orders/booking'
+import { BookingGroup } from '../orders/BookingGroup'
 import { plural } from '../orders/format'
 import { listCounts } from '../orders/list'
 import { OrderFlowModal } from '../orders/OrderFlow'
@@ -42,6 +44,10 @@ export function OrderPage({ tab }: { tab: OrderTab }) {
   const placed = usePlacedOrders(tab.href === '/week' ? coveringFrom(today) : undefined)
   const next = useNextOrder()
   const order = placed.data?.find((each) => each.id === orderId)
+  const router = useIonRouter()
+  // The flow: for the next order, or for this one, back in the draft to change it
+  // (it then leaves the placed orders; closing the flow goes back).
+  const [flow, setFlow] = useState<Flow | null>(null)
 
   return (
     <NavPage title={order ? `Order ${order.number}` : 'Order'} tab={tab}>
@@ -51,12 +57,34 @@ export function OrderPage({ tab }: { tab: OrderTab }) {
         </Notice>
       )}
       {placed.isPending && !placed.isError && <Skeleton height={220} radius={26} />}
-      {placed.data && !order && <Notice>No such order.</Notice>}
+      {placed.data && !order && !flow?.orderId && <Notice>No such order.</Notice>}
       {order && (
-        <PlacedOrderView order={order} placed={placed.data ?? []} next={next.data} today={today} base={tab.href} />
+        <PlacedOrderView
+          order={order}
+          placed={placed.data ?? []}
+          next={next.data}
+          today={today}
+          base={tab.href}
+          onOpenFlow={setFlow}
+        />
       )}
+      <OrderFlowModal
+        isOpen={flow !== null}
+        orderId={flow?.orderId}
+        startAt={flow?.startAt}
+        onDismiss={() => {
+          if (flow?.orderId) router.goBack()
+          setFlow(null)
+        }}
+      />
     </NavPage>
   )
+}
+
+/** What the flow opens: the next order, or this one to change (at a step). */
+interface Flow {
+  orderId?: string
+  startAt?: 'delivery' | 'list'
 }
 
 interface PlacedOrderViewProps {
@@ -66,18 +94,19 @@ interface PlacedOrderViewProps {
   today: ISODate
   /** The tab's path, which the order's meals and the next order are pushed under. */
   base: OrderTab['href']
+  onOpenFlow: (flow: Flow) => void
 }
 
-function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewProps) {
+function PlacedOrderView({ order, placed, next, today, base, onOpenFlow }: PlacedOrderViewProps) {
   const userId = useSession().data?.user.id
   const router = useIonRouter()
-  const [flowOpen, setFlowOpen] = useState(false)
   const meals = plural(order.meals.length, 'meal')
   const following = followingOrder(order, placed, next)
   const theirLock = lockedByOther(next?.draft, userId)
+  const state = order.book_state
 
   function openFlow() {
-    setFlowOpen(true)
+    onOpenFlow({})
   }
 
   return (
@@ -85,7 +114,11 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
       <OrderCard
         number={order.number}
         look="placed"
-        chip={<Chip icon="bag">Order placed</Chip>}
+        chip={
+          <Chip icon={BOOK_STATE_ICON[state]} tone={needsAttention(state) ? 'danger' : 'default'}>
+            {BOOK_STATE_LABEL[state]}
+          </Chip>
+        }
         title={placedTitle(order, false, placed, today)}
         subtitle={`${coverage(order)} · ${meals}`}
       >
@@ -93,6 +126,12 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
           <PlacedTrack order={order} today={today} userId={userId} dated />
         </div>
       </OrderCard>
+
+      <BookingGroup
+        order={order}
+        onChanged={(step) => onOpenFlow({ orderId: order.id, startAt: step })}
+        onCancelled={() => router.goBack()}
+      />
 
       <Group
         title="Meals"
@@ -110,7 +149,11 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
         ))}
       </Group>
 
-      <Group title="Delivery" footerIcon="lock" footer="Placed orders are read-only.">
+      <Group
+        title="Delivery"
+        footerIcon="lock"
+        footer={changeable(state) ? 'To change it, change the order (above).' : 'Placed orders are read-only.'}
+      >
         <Row label="Delivery date" detail={formatDate(order.delivery_date, 'medium')} />
         <Row label="Next delivery" detail={formatDate(order.next_delivery_date, 'medium')} />
         {order.shopping_list.length > 0 && (
@@ -151,7 +194,6 @@ function PlacedOrderView({ order, placed, next, today, base }: PlacedOrderViewPr
         </Group>
       )}
 
-      <OrderFlowModal isOpen={flowOpen} onDismiss={() => setFlowOpen(false)} />
     </div>
   )
 }

@@ -14,8 +14,10 @@ import logging
 import tempfile
 from collections.abc import Mapping, Sequence
 from typing import Any
+from uuid import UUID
 
 from castle_chef_agent.checkout import INSTACART_COOKIE, SITE, Checkout
+from castle_chef_agent.windows import Window
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from castle_chef.settings import get_settings
@@ -83,6 +85,33 @@ class Quote(BaseModel):
         if (self.blocked_because is None) == (self.checkout is None):
             raise ValueError("A quote is either blocked or a checkout, not both or neither.")
         return self
+
+
+class Swap(BaseModel):
+    """A product gone when the order booked, and the alternative bought instead."""
+
+    item: str  # the list's item ("yellow onions")
+    gone: str  # the product that was gone
+    bought: str  # the alternative bought
+
+
+class Booking(BaseModel):
+    """What Instacart confirmed for a booked order: its order number ("Dry run"
+    for development's dry run), the window, and the total charged; each unknown
+    for one settled by hand ("It was placed"). And any products swapped."""
+
+    order_number: str | None
+    window: Window | None
+    total_cents: int | None
+    swaps: list[Swap] = []
+
+
+class BookIssue(BaseModel):
+    """Why an approved order isn't booked (yet), as whoever approved it is told;
+    for a product gone, the list items whose product to choose again."""
+
+    message: str
+    item_ids: list[UUID] = []
 
 
 # The session.

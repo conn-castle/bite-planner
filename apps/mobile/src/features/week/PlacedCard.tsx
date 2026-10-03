@@ -8,6 +8,7 @@ import { MealStack } from '../../ui/MealStack'
 import { OrderCard, OrderCardBody, OrderCardDivider, OrderCardNote } from '../../ui/OrderCard'
 import { OrderTrack, type TrackDate } from '../../ui/OrderTrack'
 import { MealRow } from '../meals/MealRow'
+import { BOOK_STATE_ICON, BOOK_STATE_LABEL, bookingLine, needsAttention } from '../orders/booking'
 import { plural } from '../orders/format'
 import { byWhom, coverage, followingOrder, phase, placedOn, placedTitle } from './home'
 import styles from './PlacedCard.module.css'
@@ -50,7 +51,23 @@ export function PlacedCard({
   )
 
   let body: ReactNode = null
-  if (now === 'waiting') {
+  const booking = order.book_state === 'booked' ? null : bookingLine(order)
+  if (booking) {
+    // Not booked yet: where it is with the store comes first.
+    body = top ? (
+      <>
+        <p className={styles.act}>
+          <span className={styles.overline}>
+            Placed {relativeDay(placedOn(order), today, 'short')} by {by}
+          </span>
+          <span className={styles.lead}>{booking}.</span>
+        </p>
+        {viewOrder}
+      </>
+    ) : (
+      <OrderCardNote icon={needsAttention(order.book_state) ? 'alert' : 'cal'}>{booking}.</OrderCardNote>
+    )
+  } else if (now === 'waiting') {
     const following = followingOrder(order, placed, next)
     const decide = following?.kind === 'next' && following.next.decide_by_date
     const remindFrom = following?.kind === 'next' ? following.next.reminders_start_date : null
@@ -108,7 +125,14 @@ export function PlacedCard({
     <OrderCard
       number={order.number}
       look="placed"
-      chip={<Chip icon="bag">Order placed</Chip>}
+      chip={
+        <Chip
+          icon={BOOK_STATE_ICON[order.book_state]}
+          tone={needsAttention(order.book_state) ? 'danger' : 'default'}
+        >
+          {BOOK_STATE_LABEL[order.book_state]}
+        </Chip>
+      }
       title={placedTitle(order, top, placed, today)}
       subtitle={`${coverage(order)} · ${meals}`}
       onOpen={onOpen}
@@ -178,6 +202,7 @@ export function PlacedTrack({
       days={days}
       day={daysBetween(order.delivery_date, today) + 1}
       dates={dates}
+      booked={order.book_state === 'booked'}
     />
   )
 }

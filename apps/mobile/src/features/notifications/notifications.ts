@@ -208,7 +208,12 @@ export type Delivered =
   | { kind: 'list_ready'; orderId: string }
   // Shopping the list failed: its step says why and offers Try again.
   | { kind: 'list_failed'; orderId: string }
+  // How booking an approved order went: a tap opens that order.
+  | { kind: 'booking'; orderId: string }
   | { kind: 'test' }
+
+/** A notification about the household's draft (or the next order): what the flow opens for. */
+export type AboutDraft = Exclude<Delivered, { kind: 'test' } | { kind: 'booking' }>
 
 export function parseDelivered(data: unknown): Delivered | null {
   if (!isRecord(data)) return null
@@ -216,7 +221,10 @@ export function parseDelivered(data: unknown): Delivered | null {
     return { kind: 'reminder', orderNumber: data.order_number }
   }
   if (
-    (data.kind === 'ideas_ready' || data.kind === 'list_ready' || data.kind === 'list_failed') &&
+    (data.kind === 'ideas_ready' ||
+      data.kind === 'list_ready' ||
+      data.kind === 'list_failed' ||
+      data.kind === 'booking') &&
     typeof data.order_id === 'string'
   ) {
     return { kind: data.kind, orderId: data.order_id }
@@ -237,7 +245,7 @@ export type TapResult =
   | { open: false; header: string; message: string }
 
 export function tapResult(
-  tapped: Exclude<Delivered, { kind: 'test' }>,
+  tapped: AboutDraft,
   next: NextOrder,
   tappedOrder: GroceryOrder | 'discarded' | null,
 ): TapResult {
@@ -287,7 +295,7 @@ export function tapResult(
  * not through the next-order query, which another request (e.g. the flow's own
  * saving) may cancel.
  */
-export async function resolveTap(about: Exclude<Delivered, { kind: 'test' }>): Promise<TapResult> {
+export async function resolveTap(about: AboutDraft): Promise<TapResult> {
   const next = await apiRequest<NextOrder>('GET', '/v1/grocery-orders/next')
   const tappedOrder =
     about.kind !== 'reminder' && next.draft?.id !== about.orderId
@@ -401,8 +409,12 @@ function received(notification: PushNotificationSchema, queryClient: QueryClient
   logger.info('push.received', { kind: delivered?.kind ?? null })
   // Whatever it's about, Home may be showing something older.
   void queryClient.invalidateQueries({ queryKey: queryKeys.nextOrder })
+  if (delivered?.kind === 'booking') void queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders })
   const aboutAnOrder =
-    delivered?.kind === 'ideas_ready' || delivered?.kind === 'list_ready' || delivered?.kind === 'list_failed'
+    delivered?.kind === 'ideas_ready' ||
+    delivered?.kind === 'list_ready' ||
+    delivered?.kind === 'list_failed' ||
+    delivered?.kind === 'booking'
   if (delivered && aboutAnOrder && !orderFlowOpen) {
     toast.set({
       id: ++toastCount,

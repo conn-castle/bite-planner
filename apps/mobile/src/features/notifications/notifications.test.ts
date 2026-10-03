@@ -280,6 +280,10 @@ describe('an order opened from "ideas ready" before fresh data arrived', () => {
 
 describe('what a tap leads to', () => {
   const draft = (id: string, number: number, status: 'draft' | 'placed' = 'draft'): GroceryOrder => ({
+    book_state: null,
+    book_on: null,
+    booking: null,
+    book_issue: null,
     id,
     number,
     status,
@@ -344,6 +348,11 @@ describe('what a tap leads to', () => {
       orderId: 'd',
       step: 'list',
     })
+  })
+
+  it('reads how booking went from a notification: about that order', () => {
+    expect(push.parseDelivered({ kind: 'booking', order_id: 'o' })).toEqual({ kind: 'booking', orderId: 'o' })
+    expect(push.parseDelivered({ kind: 'booking' })).toBeNull()
   })
 
   it('reads "list ready" from a notification', () => {

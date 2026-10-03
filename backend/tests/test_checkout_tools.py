@@ -105,7 +105,7 @@ def refs_of(page: str, lines: list[str]) -> ReportRefs:
         lines=[ref(page, line) for line in lines],
         tip=ref(page, r"\$1\.96"),
         total=ref(page, "Total"),
-        delivery=ref(page, 'button "Tomorrow'),
+        delivery=ref(page, r'button "\w{3}, \w{3} \d+, 4pm'),
         address=ref(page, 'button "1 Main Street'),
         card=ref(page, r'button "\*4242'),
     )
@@ -188,15 +188,17 @@ def test_a_report_that_doesnt_add_up_or_breaks_a_rule_is_refused_with_why(job_di
 def test_place_order_is_never_pressed_and_pages_stay_on_instacart(job_dir: Path) -> None:
     async def steps(opened: Browser) -> list[str]:
         page = await to_checkout(opened)
-        # The button, one named Place order by its label ("Pay $25.08 now"), and a
-        # submit input whose value is Place order: all named Place order.
+        # The button, one named Place order by its label ("Pay $25.08 now"), a
+        # submit input whose value is Place order, and a Place order button with
+        # an icon of its own in it: all named Place order, or part of it.
         orders = re.findall(r'button "Place order" \[ref=(\w+)\]', page)
-        assert len(orders) == 3
+        assert len(orders) == 4
         refused = []
         for action in (
             lambda: opened.click(orders[0]),
             lambda: opened.click(orders[1]),
             lambda: opened.click(orders[2]),
+            lambda: opened.click(ref(page, 'img "Lock"')),
             lambda: opened.open("https://example.com/"),
             lambda: opened.open("//example.com/"),
         ):
@@ -206,9 +208,9 @@ def test_place_order_is_never_pressed_and_pages_stay_on_instacart(job_dir: Path)
                 refused.append(str(error))
         return refused
 
-    place, labeled, submit, elsewhere, other_host = in_browser(job_dir, steps)
+    place, labeled, submit, icon, elsewhere, other_host = in_browser(job_dir, steps)
 
-    assert all("never press Place order" in refusal for refusal in (place, labeled, submit))
+    assert all("never press Place order" in refusal for refusal in (place, labeled, submit, icon))
     assert "path on Instacart's site" in elsewhere
     assert "path on Instacart's site" in other_host
 
@@ -247,7 +249,7 @@ def test_a_report_points_at_different_elements_the_items_and_total_lines_and_eve
                 [],
                 free,
                 free,
-                ref(page, 'button "Tomorrow'),
+                ref(page, r'button "\w{3}, \w{3} \d+, 4pm'),
                 ref(page, 'button "1 Main Street'),
                 ref(page, r'button "\*4242'),
             ),
@@ -259,7 +261,8 @@ def test_a_report_points_at_different_elements_the_items_and_total_lines_and_eve
             except CheckoutRefused as error:
                 refused.append(str(error))
         try:
-            await checkout.record_replacements(job_dir, opened, [ref(page, 'button "Tomorrow')])
+            scheduled = ref(page, r'button "\w{3}, \w{3} \d+, 4pm')
+            await checkout.record_replacements(job_dir, opened, [scheduled])
         except CheckoutRefused as error:
             refused.append(str(error))
         return refused

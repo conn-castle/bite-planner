@@ -12,6 +12,10 @@ const batch: Job = {
   meals: [{ id: 'tacos', name: 'Tacos', description: null, active_time_minutes: 20, total_time_minutes: 30, rating: null }],
 }
 const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
+  book_state: null,
+  book_on: null,
+  booking: null,
+  book_issue: null,
   id: 'draft',
   number: 4,
   status: 'draft',

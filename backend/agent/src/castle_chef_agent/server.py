@@ -251,8 +251,11 @@ Ref = Annotated[str, Field(description="An element's ref from the page, e.g. e12
 
 
 def checkout_server(job_dir: Path) -> MCPServer:
-    """The browser tools: the browser starts with the server and closes with it."""
+    """The browser tools: the browser starts with the server and closes with it.
+    A booking gets the tools to choose the window and place the order; a quote,
+    the one to record the cart's out-of-stock settings."""
     opened: list[checkout.Browser] = []
+    booking = read_context(job_dir, checkout.CheckoutJob).book is not None
 
     @asynccontextmanager
     async def lifespan(_: MCPServer) -> AsyncIterator[None]:
@@ -328,19 +331,21 @@ def checkout_server(job_dir: Path) -> MCPServer:
 
         return await act(amount())
 
-    @server.tool()
-    async def record_replacements(
-        refs: Annotated[
-            list[Ref],
-            Field(
-                min_length=1,
-                description="The ref of each cart item's out-of-stock (replacement) setting.",
-            ),
-        ],
-    ) -> str:
-        """Record what Instacart does when each cart item is out of stock, from the cart."""
-        settings = await act(checkout.record_replacements(job_dir, opened[0], refs))
-        return f"Recorded: {', '.join(settings)}."
+    if not booking:
+
+        @server.tool()
+        async def record_replacements(
+            refs: Annotated[
+                list[Ref],
+                Field(
+                    min_length=1,
+                    description="The ref of each cart item's out-of-stock (replacement) setting.",
+                ),
+            ],
+        ) -> str:
+            """Record what Instacart does when each cart item is out of stock, from the cart."""
+            settings = await act(checkout.record_replacements(job_dir, opened[0], refs))
+            return f"Recorded: {', '.join(settings)}."
 
     @server.tool()
     async def report(
@@ -375,6 +380,47 @@ def checkout_server(job_dir: Path) -> MCPServer:
         """Instacart asks to sign in: record it and stop (someone signs it in again)."""
         await act(checkout.mark_signed_out(job_dir, opened[0], ref))
         return "Recorded: signed out. Stop here."
+
+    if booking:
+
+        @server.tool()
+        async def choose_window(
+            day: Annotated[str, Field(description="The ref of the delivery day's tab, selected.")],
+            windows: Annotated[
+                list[Ref],
+                Field(min_length=1, description="The ref of each time window offered that day."),
+            ],
+        ) -> str:
+            """Choose which of the day's delivery windows to book (by the household's
+            rule), or find that none works. Says which to click, or to stop."""
+            return await act(checkout.choose_window(job_dir, opened[0], day, windows))
+
+        @server.tool()
+        async def place_order(
+            ref: Annotated[str, Field(description="The ref of the Place order button.")],
+        ) -> str:
+            """Place the order, once, after checkout is reported. Says what happened
+            and what to do next."""
+            return await act(checkout.place_order(job_dir, opened[0], ref))
+
+        @server.tool()
+        async def confirmed(
+            number: Annotated[str, Field(description="The ref of Instacart's order number.")],
+            window: Annotated[str, Field(description="The ref of the delivery window booked.")],
+            total: Annotated[str, Field(description="The ref of the order's total.")],
+        ) -> str:
+            """Record what Instacart confirmed after Place order. Then you're done."""
+            read = await act(
+                checkout.record_confirmation(job_dir, opened[0], number, window, total)
+            )
+            return f"Recorded order {read.order_number}. You're done."
+
+        @server.tool()
+        async def not_confirmed() -> str:
+            """Place order was pressed, but there's no confirmation, and the order
+            isn't in your orders: record that, and stop (someone checks)."""
+            await act(checkout.mark_not_confirmed(job_dir))
+            return "Recorded. Stop here."
 
     return server
 

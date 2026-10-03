@@ -43,6 +43,10 @@ describe('lockRequest', () => {
 
 describe('withLock', () => {
   const draft = (reached: OrderStep): GroceryOrder => ({
+    book_state: null,
+    book_on: null,
+    booking: null,
+    book_issue: null,
     id: 'draft',
     number: 4,
     status: 'draft',

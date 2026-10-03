@@ -44,6 +44,7 @@ if app.node.try_get_context("repositoriesOnly") != "true":
         config=RuntimeConfig(
             neon_auth_url=stage["neonAuthUrl"],
             database_url_parameter=stage["databaseUrlParameter"],
+            instacart_booking_parameter=stage["instacartBookingParameter"],
             cors_origins=stage["corsOrigins"],
             alarm_email=app.node.get_context("alarmEmail"),
             release=app.node.get_context("release"),

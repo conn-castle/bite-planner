@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     instacart_session_parameter: str | None = None
     # Instacart's website (tests serve stand-in pages at another address).
     instacart_site: str = "https://www.instacart.com"
+    # Whether booking presses Place order (castle_chef.booking): `live` orders;
+    # `dry_run` (development) stops just before and shows the order as booked,
+    # "Dry run"; `off` (production until the owner turns it on, from SSM) stops
+    # just before and says booking isn't turned on yet.
+    instacart_booking: Literal["live", "dry_run", "off"] = "dry_run"
+    # The store's time zone: delivery times, and the day an order books (at
+    # BOOK_HOUR there, four days before delivery).
+    store_time_zone: str = "America/New_York"
     # Neon project and branch for managing Neon Auth accounts (`castle-chef household`).
     neon_project_id: str | None = None
     neon_branch_id: str | None = None

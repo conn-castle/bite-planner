@@ -96,7 +96,7 @@ export interface MealSummary {
  */
 export interface Job {
   id: string
-  kind: 'generate_meals' | 'build_list' | 'shop' | 'quote'
+  kind: 'generate_meals' | 'build_list' | 'shop' | 'quote' | 'book'
   status: JobStatus
   error: string | null
   requested_by: Member
@@ -203,7 +203,56 @@ export interface DeliveryWindow {
   end: ClockTime
 }
 
-export interface GroceryOrder {
+/**
+ * Where a placed (approved) order is with the store: waiting for the day it
+ * books (four days before delivery), being booked, booked, or not booked and why
+ * (a time or a product to choose, a failure before Place order, or Place order
+ * pressed without Instacart confirming it).
+ */
+export type BookState =
+  | 'waiting'
+  | 'booking'
+  | 'booked'
+  | 'needs_time'
+  | 'needs_product'
+  | 'not_booked'
+  | 'check_instacart'
+
+/** A product gone when the order booked, and the alternative bought instead. */
+export interface Swap {
+  /** The list's item: "yellow onions". */
+  item: string
+  gone: string
+  bought: string
+}
+
+/** What Instacart confirmed for a booked order; each unknown (null) for one settled by hand ("It was placed"). */
+export interface Booking {
+  /** Instacart's order number; "Dry run" for development's dry run. */
+  order_number: string | null
+  window: DeliveryWindow | null
+  /** What was charged. */
+  total_cents: number | null
+  swaps: Swap[]
+}
+
+/** Why an approved order isn't booked, as whoever approved it is told; for a product gone, the list items to choose again. */
+export interface BookIssue {
+  message: string
+  item_ids: string[]
+}
+
+/** Where a placed order is with the store (null for a draft): GroceryOrder's and PlacedOrder's. */
+export interface BookFields {
+  book_state: BookState | null
+  /** The day it books. */
+  book_on: ISODate | null
+  /** Once booked: null for orders placed before booking existed. */
+  booking: Booking | null
+  book_issue: BookIssue | null
+}
+
+export interface GroceryOrder extends BookFields {
   id: string
   /** "Order 3" */
   number: number
@@ -264,7 +313,9 @@ export interface MealPick {
 }
 
 /** A placed order (`GET /v1/grocery-orders`): it can't change, so it has no suggestions, and its dates are set. */
-export interface PlacedOrder {
+export interface PlacedOrder extends BookFields {
+  book_state: BookState
+  book_on: ISODate
   id: string
   number: number
   placed_at: ISODateTime

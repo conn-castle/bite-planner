@@ -34,6 +34,7 @@ const PATHS = {
     </>
   ),
   bag: <path d="M5 8h14l-1 12H6L5 8zM9 8V6.5a3 3 0 016 0V8" />,
+  hourglass: <path d="M6.5 3h11M6.5 21h11M8 3v3.5l4 5.5-4 5.5V21M16 3v3.5L12 12l4 5.5V21" />,
   bell: <path d="M6 16v-5a6 6 0 0112 0v5l1.5 2h-15L6 16zM10 20.5a2 2 0 004 0" />,
   alert: <path d="M12 3.5l9.5 16.5h-19zM12 10v4.5M12 17.5v.01" />,
   cal: (

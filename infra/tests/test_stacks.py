@@ -29,6 +29,7 @@ def runtime() -> Template:
         config=RuntimeConfig(
             neon_auth_url="https://ep-x.neonauth.example/neondb/auth",
             database_url_parameter="/castle-chef/test/database-url-pooled",
+            instacart_booking_parameter="/castle-chef/test/instacart-booking",
             cors_origins=["capacitor://localhost"],
             alarm_email="owner@example.com",
             release="2026.9.24.1",
@@ -74,7 +75,12 @@ def test_worker_is_locked_down_and_pinned(runtime: Template) -> None:
     # Needed to start, and stop, the agent as its own user.
     assert not dropped & {"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL"}
     assert "Add" not in capabilities
-    secrets = ["DATABASE_URL", "CASTLE_CHEF_APNS_KEY", "CASTLE_CHEF_APNS_KEY_ID"]
+    secrets = [
+        "DATABASE_URL",
+        "CASTLE_CHEF_APNS_KEY",
+        "CASTLE_CHEF_APNS_KEY_ID",
+        "CASTLE_CHEF_INSTACART_BOOKING",
+    ]
     assert [s["Name"] for s in container["Secrets"]] == secrets
     environment = {e["Name"] for e in container.get("Environment", [])}
     assert not environment & set(secrets)
@@ -191,7 +197,7 @@ def test_api_runs_outside_any_vpc_within_limits(runtime: Template) -> None:
     [api] = [
         f
         for f in functions(runtime).values()
-        if "CASTLE_CHEF_JOBS_QUEUE_URL" in f["Environment"]["Variables"]
+        if "CASTLE_CHEF_NEON_AUTH_URL" in f["Environment"]["Variables"]
     ]
     assert "VpcConfig" not in api
     assert api["Timeout"] == 30
@@ -212,6 +218,54 @@ def test_only_the_api_has_a_url(runtime: Template) -> None:
         if f["Environment"]["Variables"].get("CASTLE_CHEF_FAILURE_HANDLER") == "true"
     ]
     assert "CASTLE_CHEF_JOBS_QUEUE_URL" not in handler["Environment"]["Variables"]
+
+
+def test_booking_presses_place_order_only_as_the_stages_switch_says(runtime: Template) -> None:
+    [secret] = [
+        s
+        for s in worker_container(runtime)["Secrets"]
+        if s["Name"] == "CASTLE_CHEF_INSTACART_BOOKING"
+    ]
+    # Read by each task as it starts, from the parameter set by hand.
+    assert "/castle-chef/test/instacart-booking" in json.dumps(secret["ValueFrom"])
+
+
+def test_booking_runs_daily_at_nine_in_the_morning_store_time(runtime: Template) -> None:
+    _, reminders = reminders_function(runtime)
+    schedules = runtime.find_resources("AWS::Scheduler::Schedule")
+    [schedule] = [s["Properties"] for s in schedules.values()]
+    assert schedule["ScheduleExpression"] == "cron(0 9 * * ? *)"
+    assert schedule["ScheduleExpressionTimezone"] == "America/New_York"
+    assert "GroupName" not in schedule  # not one of the members' (the sync keeps those)
+    assert json.loads(schedule["Target"]["Input"]) == {"book_due": {}}
+    assert "function:Runtime-Reminders" in json.dumps(schedule["Target"]["Arn"])
+    # The run queues the book jobs that are due.
+    variables = reminders["Environment"]["Variables"]
+    assert variables["CASTLE_CHEF_JOB_DISPATCH"] == "sqs"
+    assert "CASTLE_CHEF_JOBS_QUEUE_URL" in variables
+    sends = [
+        statement
+        for policy in runtime.find_resources("AWS::IAM::Policy").values()
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]
+        if "sqs:SendMessage" in json.dumps(statement["Action"])
+        and policy["Properties"]["Roles"][0]["Ref"].startswith("Reminders")
+    ]
+    assert len(sends) == 1
+
+
+def test_a_stopped_booking_tells_whoever_approved_the_order(runtime: Template) -> None:
+    [handler] = [
+        f
+        for f in functions(runtime).values()
+        if f["Environment"]["Variables"].get("CASTLE_CHEF_FAILURE_HANDLER")
+    ]
+    variables = handler["Environment"]["Variables"]
+    assert variables["CASTLE_CHEF_PUSH"] == "apns"
+    assert json.loads(variables["CASTLE_CHEF_SSM_PARAMETERS"]) == {
+        "DATABASE_URL": "/castle-chef/test/database-url-pooled",
+        "CASTLE_CHEF_APNS_KEY": "/castle-chef/shared/apns-key-base64",
+        "CASTLE_CHEF_APNS_KEY_ID": "/castle-chef/shared/apns-key-id",
+    }
 
 
 def test_stopped_workers_reach_the_failure_handler(runtime: Template) -> None:
@@ -292,7 +346,7 @@ def test_the_api_keeps_members_schedules_but_never_holds_the_push_key(runtime: T
     [api] = [
         f
         for f in functions(runtime).values()
-        if "CASTLE_CHEF_JOBS_QUEUE_URL" in f["Environment"]["Variables"]
+        if "CASTLE_CHEF_NEON_AUTH_URL" in f["Environment"]["Variables"]
     ]
     variables = api["Environment"]["Variables"]
     assert variables["CASTLE_CHEF_REMINDER_SCHEDULER"] == "aws"

@@ -1,8 +1,10 @@
 <!doctype html>
 <html lang="en">
 <!-- A stand-in for Instacart's checkout (tests only), as recorded 2026-09-28:
-     Priority is chosen until Schedule and a window are; the tip starts at $2.00
-     and takes another amount in its own dialog; the total adds everything up. -->
+     Priority is chosen until Schedule and a window are (Schedule's dialog has a
+     tab for each of the next five days, tomorrow's selected, each with its
+     windows); the tip starts at $2.00 and takes another amount in its own
+     dialog; the total adds everything up; Place order goes to the confirmation. -->
 <head><meta charset="utf-8"><title>Checkout</title></head>
 <body>
 <main>
@@ -16,7 +18,8 @@
   </ul>
   <div id="windows" role="dialog" aria-label="Schedule" hidden>
     <h2>Schedule a time</h2>
-    <button type="button" onclick="scheduled()">4pm–6pm $0</button>
+    <div role="tablist" id="days"></div>
+    <div role="tabpanel" id="times"></div>
   </div>
   <h2>Pay with</h2>
   <button type="button">*0005 Amex</button>
@@ -37,32 +40,59 @@
       <li id="priority">Priority fee $1.00</li>
       <li id="total"></li>
     </ul>
-    <button type="button">Place order</button>
+    <button type="button" onclick="placed()">Place order</button>
   </section>
   <h2>Help</h2>
   <button type="button" onclick="location.href = location.href.replace('127.0.0.1', 'localhost')">Help center</button>
   <button type="button" onclick="window.open('/store/wegmans/storefront')">Keep shopping in a new tab</button>
   <button type="button" aria-label="Place order">Pay $25.08 now</button>
   <input type="submit" value="Place order">
+  <button type="button" aria-label="Place order" onclick="placed()"><span role="img" aria-label="Lock">&#128274;</span></button>
 </main>
 <script>
-  let tip = 200, priority = 100
+  const WINDOWS = ['10am–Noon', 'Noon–2pm', '2pm–4pm', '4pm–6pm']
+  let tip = 200, priority = 100, day = 1
+  function dayName(offset) {
+    const date = new Date()
+    date.setDate(date.getDate() + offset)
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  }
+  function days() {
+    document.getElementById('days').innerHTML = [1, 2, 3, 4, 5].map(offset =>
+      `<button type="button" role="tab" aria-selected="${offset === day}" onclick="pickDay(${offset})">${dayName(offset)} $0</button>`
+    ).join('')
+    document.getElementById('times').innerHTML = WINDOWS.map(window =>
+      `<button type="button" onclick="scheduled('${window}')">${window} $0</button>`
+    ).join('')
+  }
+  function pickDay(offset) {
+    day = offset
+    days()
+  }
   function show() {
     document.getElementById('tip').textContent = '$' + (tip / 100).toFixed(2)
     document.getElementById('priority').hidden = priority === 0
     document.getElementById('total').textContent = 'Total $' + ((1959 + 249 + priority + tip) / 100).toFixed(2)
   }
-  function scheduled() {
+  function scheduled(window) {
     priority = 0
     document.getElementById('windows').hidden = true
-    document.getElementById('schedule').textContent = 'Tomorrow, 4pm–6pm More times available $0'
+    document.getElementById('schedule').textContent = `${dayName(day)}, ${window} More times available $0`
     show()
+  }
+  function placed() {
+    const params = new URLSearchParams({
+      when: document.getElementById('schedule').textContent.replace(/ More times.*/, ''),
+      total: document.getElementById('total').textContent,
+    })
+    location.href = '/store/orders/confirmation?' + params
   }
   function saveTip() {
     tip = Math.round(parseFloat(document.getElementById('amount').value) * 100)
     document.getElementById('tipper').hidden = true
     show()
   }
+  days()
   show()
 </script>
 </body>

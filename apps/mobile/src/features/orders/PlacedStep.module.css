@@ -14,7 +14,7 @@
   }
 }
 
-.check {
+.mark {
   display: grid;
   place-items: center;
   width: 84px;
@@ -25,8 +25,14 @@
   font-size: 40px;
 }
 
-.check svg {
+.mark svg {
   stroke-width: 2.6;
+}
+
+/* Something needs doing: the danger chip's colors. */
+.mark.attention {
+  background: var(--cc-danger-soft);
+  color: var(--cc-danger);
 }
 
 .status {
@@ -50,4 +56,9 @@
   line-height: 1.45;
   color: var(--cc-ink-2);
   text-wrap: pretty;
+}
+
+/* What the store has of it, and what can be done: under the message. */
+.booking {
+  margin-top: 28px;
 }

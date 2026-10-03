@@ -1,19 +1,27 @@
 """What the app's notifications say, and when a member's daily reminder is due
 (spec/requirements.md "Notifications")."""
 
+import logging
 from datetime import date, timedelta
+from uuid import UUID
 
+from castle_chef_agent import windows
 from sqlmodel import Session, col, func, select
 
-from castle_chef import orders
-from castle_chef.models import AppUser, GroceryOrder, Job, Meal, ShoppingListItem
+from castle_chef import orders, push
+from castle_chef.booking import DRY_RUN
+from castle_chef.db import get_session
+from castle_chef.models import AppUser, BookState, GroceryOrder, Job, Meal, ShoppingListItem
 from castle_chef.push import Notification, NotificationKind
 from castle_chef.settings import get_settings
+
+log = logging.getLogger(__name__)
 
 # How long APNs keeps one for a phone that's off or offline.
 REMINDER_EXPIRY = timedelta(hours=12)
 IDEAS_READY_EXPIRY = timedelta(hours=6)
 LIST_READY_EXPIRY = timedelta(hours=6)
+BOOKING_EXPIRY = timedelta(hours=24)
 
 
 def _weekday(day: date) -> str:
@@ -113,3 +121,62 @@ def list_failed(session: Session, build: Job) -> Notification:
         expires_in=LIST_READY_EXPIRY,
         order_id=order.id,
     )
+
+
+def _money(cents: int) -> str:
+    return f"${cents / 100:,.2f}"
+
+
+def booking(session: Session, order: GroceryOrder) -> Notification | None:
+    """For whoever approved the order, once booking it has gone one way or
+    another; None while it's waiting or under way."""
+    number = orders.number(session, order)
+    issue = order.book_issue.message if order.book_issue else ""
+    store = get_settings().instacart_store
+    if order.book_state == BookState.BOOKED and order.booking is not None:
+        booked = order.booking
+        when = _long_date(order.delivery_date) if order.delivery_date else "the delivery day"
+        if booked.window is not None:
+            when += f", {windows.label(booked.window)}"
+        title = f"Order {number} is booked"
+        if booked.order_number == DRY_RUN:
+            title += " (dry run)"
+        body = f"Arrives {when}."
+        if booked.total_cents is not None:
+            body += f" {_money(booked.total_cents)} at {store}."
+        for swap in booked.swaps:
+            body += f" {swap.gone} was gone, so it's {swap.bought} instead."
+    elif order.book_state == BookState.NEEDS_TIME:
+        title, body = f"Order {number} needs a new time", f"{issue} Open it to choose another."
+    elif order.book_state == BookState.NEEDS_PRODUCT:
+        title, body = f"Order {number} needs a product chosen", f"{issue} Open it to choose."
+    elif order.book_state == BookState.NOT_BOOKED:
+        title, body = f"Order {number} wasn't booked", f"{issue} Nothing was ordered."
+    elif order.book_state == BookState.CHECK_INSTACART:
+        title = f"Check Instacart for Order {number}"
+        body = f"{issue} Open it to say whether Instacart has it."
+    else:
+        return None
+    return Notification(
+        kind=NotificationKind.BOOKING,
+        title=title,
+        body=body,
+        expires_in=BOOKING_EXPIRY,
+        # The latest word on the order replaces the one before.
+        collapse_id=f"booking-{order.id}",
+        order_id=order.id,
+    )
+
+
+def notify_booking(order_id: UUID) -> None:
+    """Tell whoever approved the order how booking it went. A failure here is
+    logged as an error; the booking stands."""
+    try:
+        with get_session() as session:
+            order = session.get(GroceryOrder, order_id)
+            notification = booking(session, order) if order else None
+            approver = order.placed_by if order else None
+        if notification is not None and approver is not None:
+            push.notify(approver, notification)
+    except Exception:
+        log.exception("booking.notify_failed", extra={"grocery_order_id": str(order_id)})

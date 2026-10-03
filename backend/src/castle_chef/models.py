@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, Relationship, SQLModel
 
-from castle_chef.checkout import CartLedger, Quote, QuoteRequest
+from castle_chef.checkout import Booking, BookIssue, CartLedger, Quote, QuoteRequest
 
 
 def utc_now() -> datetime:
@@ -171,6 +171,7 @@ class JobKind(StrEnum):
     BUILD_LIST = "build_list"  # the draft's shopping list
     SHOP = "shop"  # the products to buy for a list, at the Instacart store
     QUOTE = "quote"  # what the list's products cost at checkout, for the final review
+    BOOK = "book"  # booking an approved order at the store
 
 
 class JobStatus(StrEnum):
@@ -228,7 +229,22 @@ class Job(TimestampMixin, SQLModel, table=True):
 
 class GroceryOrderStatus(StrEnum):
     DRAFT = "draft"
+    # Approved: ordered, as far as the rest of the app goes (reminders stop, and
+    # the next order starts from it), whether it's booked at the store yet or not.
     PLACED = "placed"
+
+
+class BookState(StrEnum):
+    """Where a placed (approved) order is with the store (spec/requirements.md
+    "Shopping list", stage 3)."""
+
+    WAITING = "waiting"  # until the day it books (four days before delivery)
+    BOOKING = "booking"  # its book job is under way
+    BOOKED = "booked"
+    NEEDS_TIME = "needs_time"  # no window left that day by the time: choose another
+    NEEDS_PRODUCT = "needs_product"  # a product is gone: choose another
+    NOT_BOOKED = "not_booked"  # failed before the click; nothing was ordered
+    CHECK_INSTACART = "check_instacart"  # clicked, but not confirmed: someone checks
 
 
 class OrderStep(StrEnum):
@@ -274,6 +290,17 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
         CheckConstraint(
             "status = 'draft' OR locked_by IS NULL", name="grocery_order_lock_only_draft"
         ),
+        CheckConstraint(
+            "(status = 'placed') = (book_state IS NOT NULL)", name="grocery_order_book_state_placed"
+        ),
+        CheckConstraint(
+            "(book_state = 'booking') = (book_job_id IS NOT NULL)",
+            name="grocery_order_book_job_while_booking",
+        ),
+        CheckConstraint(
+            "status = 'draft' OR quote_id IS NOT NULL OR book_state = 'booked'",
+            name="grocery_order_approved_quote",
+        ),
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -301,6 +328,24 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
     # household can finish a draft). Both null while it's a draft.
     placed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     placed_by: UUID | None = None
+    # Once placed: where it is with the store; null for a draft.
+    book_state: BookState | None = Field(
+        default=None, sa_type=Enum(BookState, name="book_state", values_callable=_values)
+    )
+    # The quote approved with it (the estimated total the member saw), whose
+    # address and card booking checks it still has. Null for a draft, and for
+    # orders placed before booking existed.
+    quote_id: UUID | None = Field(default=None, foreign_key="job.id", ondelete="SET NULL")
+    # The book job under way (book_state 'booking').
+    book_job_id: UUID | None = Field(default=None, foreign_key="job.id", ondelete="SET NULL")
+    # When booking pressed Place order (recorded just before): it's never pressed
+    # again for this order, unless someone says it wasn't placed after all.
+    clicked_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    # What Instacart confirmed, once booked; null before (and for orders placed
+    # before booking existed).
+    booking: Booking | None = Field(default=None, sa_type=ModelJSONB(Booking))
+    # Why it isn't booked (needs a time, a product, not booked, check Instacart).
+    book_issue: BookIssue | None = Field(default=None, sa_type=ModelJSONB(BookIssue))
     # The order lock: only one ordering session (one opening of the flow, on one
     # phone) changes the draft at a time. Who holds it (a Neon Auth user), that
     # session (chosen by the app), when they took it, their last renewal (it

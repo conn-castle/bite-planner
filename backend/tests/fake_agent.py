@@ -7,7 +7,9 @@ with `add_meal` (or, given a shopping list prompt, MEALS items sharing its lines
 `add_item`, and salt with `add_staple`; or, given a list to shop, each item's first
 search result, with the second as its alternative), then `done`; or, given checkout
 to read, checkout on the stand-in pages the prompt's tools open, reporting it (MEALS 0:
-finding it signed out). It takes SECONDS and prints
+finding it signed out); or, given an order to book, the window `choose_window` says
+on the order's day, the report, `place_order`, and the confirmation (MEALS 0: signed
+out; 3: no confirmation found after the press). It takes SECONDS and prints
 Grok-style JSON. Settings are arguments because the worker gives the agent a minimal
 environment.
 """
@@ -70,7 +72,64 @@ async def use_tools() -> None:
                 raise SystemExit(f"No {pattern!r} on the page.")
             return match.group(1) or match.group(2)
 
-        if "at checkout on Instacart" in prompt and meal_count == "0":
+        booking = prompt.startswith("Book the household's")
+        if booking and meal_count == "0":
+            page = await page_after("open_page", {"path": "/store/sign-in"})
+            await call("signed_out", {"ref": ref(page, 'button "Log in')})
+        elif booking:
+            # As the prompt says: checkout, the order's day and the window the rule
+            # chooses, the rule's tip, the report, then Place order and what it shows.
+            store = re.search(r"Open `(/store/[^`]+)`", prompt).group(1)
+            day = re.search(r"Click the tab for \w+, (\w+ \d+)", prompt).group(1)
+            page = await page_after("open_page", {"path": store})
+            page = await page_after("click", {"ref": ref(page, 'button "View cart')})
+            page = await page_after("click", {"ref": ref(page, 'button "Go to checkout')})
+            page = await page_after("click", {"ref": ref(page, 'button "Schedule')})
+            page = await page_after("click", {"ref": ref(page, rf'tab "\w+, {day}\b')})
+            windows = re.findall(r'button "[^"]*(?:am|pm|Noon)[^"]*" \[ref=(\w+)\]', page)
+            said = await page_after(
+                "choose_window", {"day": ref(page, rf'tab "\w+, {day}\b'), "windows": windows}
+            )
+            if "Stop here" in said:
+                return
+            page = await page_after("click", {"ref": re.search(r"click (\w+)", said).group(1)})
+            tip = await page_after("tip", {"items": ref(page, r"\d+ items")})
+            amount = re.search(r"type ([\d.]+)", tip).group(1)
+            page = await page_after("click", {"ref": ref(page, 'button "Other"')})
+            page = await page_after(
+                "type_text", {"ref": ref(page, 'textbox "Other amount"'), "text": amount}
+            )
+            page = await page_after("click", {"ref": ref(page, 'button "Save Tip"')})
+            reported = await session.call_tool(
+                "report",
+                {
+                    "items": ref(page, r"\d+ items"),
+                    "lines": [ref(page, "Delivery with"), ref(page, "Service fee")],
+                    "tip": ref(page, re.escape("$" + amount)),
+                    "total": ref(page, "Total"),
+                    "delivery": ref(page, 'button "[^"]*More times'),
+                    "address": ref(page, 'button "1 Main Street'),
+                    "card": ref(page, r'button "\*4242'),
+                },
+            )
+            if getattr(reported, "is_error", False):
+                return  # told to stop (the account changed)
+            placed = await page_after("place_order", {"ref": ref(page, 'button "Place order"')})
+            if not placed.startswith("Place order was pressed"):
+                return
+            if meal_count == "3":
+                await call("not_confirmed", {})
+                return
+            page = await page_after("look", {})
+            await call(
+                "confirmed",
+                {
+                    "number": ref(page, '"Order #'),
+                    "window": ref(page, "Arrives"),
+                    "total": ref(page, "Total"),
+                },
+            )
+        elif "at checkout on Instacart" in prompt and meal_count == "0":
             # Signed out: Instacart shows its sign-in control instead of the store.
             page = await page_after("open_page", {"path": "/store/sign-in"})
             await call("signed_out", {"ref": ref(page, 'button "Log in')})
@@ -99,7 +158,7 @@ async def use_tools() -> None:
                     "lines": [ref(page, "Delivery with"), ref(page, "Service fee")],
                     "tip": ref(page, re.escape("$" + amount)),
                     "total": ref(page, "Total"),
-                    "delivery": ref(page, 'button "Tomorrow'),
+                    "delivery": ref(page, r'button "\w{3}, \w{3} \d+, 4pm'),
                     "address": ref(page, 'button "1 Main Street'),
                     "card": ref(page, r'button "\*4242'),
                 },
@@ -139,7 +198,7 @@ async def use_tools() -> None:
         else:
             for index in range(int(meal_count)):
                 await call("add_meal", {"meal": MEAL | {"name": f"{MEAL['name']} {index}"}})
-        if "at checkout on Instacart" not in prompt:
+        if "at checkout on Instacart" not in prompt and not booking:
             await call("done", {}, check=False)
 
 
