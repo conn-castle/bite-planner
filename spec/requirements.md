@@ -128,7 +128,7 @@ Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-2
 
 - [x] A person is in only one household.
 - [x] Settings lists the household's members by name.
-- [ ] Anyone in a household can add and remove its members. Not scheduled yet; until then, the admin command does it.
+- [x] Anyone in a household can add and remove its members: invite someone by email (they join on their first sign-in with it; only an invited email can make an account), withdraw an invitation, or remove anyone, themselves too, but never the last member.
 
 ## Settings
 

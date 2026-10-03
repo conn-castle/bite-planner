@@ -49,6 +49,10 @@ INSERTS = {
     "push_device": (
         f"INSERT INTO push_device (token, user_id) VALUES ('{'ab' * 32}', '{uuid4()}')"
     ),
+    "household_invite": (
+        "INSERT INTO household_invite (id, household_id, email, name) "
+        f"VALUES ('{uuid4()}', '{uuid4()}', 'sam@example.com', 'Sam')"
+    ),
     "meal_preference": (
         "INSERT INTO meal_preference (household_id, meal_id, rating) "
         f"VALUES ('{uuid4()}', '{uuid4()}', 'up')"

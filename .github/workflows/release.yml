@@ -242,6 +242,8 @@ jobs:
           worker-image-digest: ${{ needs.images.outputs.worker }}
           role: ${{ env.DEPLOY_ROLE }}
           region: ${{ env.AWS_REGION }}
+          neon-api-key: ${{ secrets.NEON_API_KEY }}
+          neon-project-id: ${{ env.NEON_PROJECT_ID }}
 
   publish:
     needs: [changes, images, migrate, deploy]

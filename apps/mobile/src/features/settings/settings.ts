@@ -5,7 +5,7 @@ import { auth } from '../../lib/auth/auth'
 import type { ClockTime, Household, HouseholdSettings, PersonalSettings } from '../../lib/api/types'
 import { isRecord } from '../../lib/isRecord'
 import { queryKeys } from '../../lib/query/keys'
-import { type Session, sessionQuery, useSession } from '../session/session'
+import { afterLeaving, type Session, sessionQuery, useSession } from '../session/session'
 
 /**
  * The household's settings (shared by everyone in it) and each member's own.
@@ -20,6 +20,9 @@ import { type Session, sessionQuery, useSession } from '../session/session'
 const CHANGE_HOUSEHOLD = ['household', 'change']
 const CHANGE_PERSONAL = ['personal-settings', 'change']
 const CHANGE_NAME = ['user', 'change-name']
+const INVITE = ['household', 'invite']
+const CANCEL_INVITE = ['household', 'cancel-invite']
+const REMOVE_MEMBER = ['household', 'remove-member']
 
 // Changes are sent one at a time, in the order they were made, so the last tap
 // is the one the server keeps.
@@ -128,6 +131,8 @@ export function registerSettingsMutations(queryClient: QueryClient) {
     onError: () => queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey }),
   })
 
+  registerMemberMutations(queryClient)
+
   queryClient.setMutationDefaults(CHANGE_NAME, {
     mutationFn: ({ name }: NameChange) => auth.updateName(name),
     retry,
@@ -140,6 +145,59 @@ export function registerSettingsMutations(queryClient: QueryClient) {
         ),
       ),
   })
+}
+
+/** Someone to invite: what to call them, and the email they'll sign in with. */
+export interface Invitation {
+  name: string
+  email: string
+}
+
+/** A member to remove (themselves, to leave), or an invitation to withdraw. */
+export interface MemberRemoval {
+  userId: string
+  /** The signed-in member themselves: they lose the household. */
+  self: boolean
+}
+
+export interface InviteCancellation {
+  inviteId: string
+}
+
+/** How member changes are sent (registered with the settings changes). */
+function registerMemberMutations(queryClient: QueryClient) {
+  const stored = async (household: Household) => {
+    await queryClient.cancelQueries({ queryKey: queryKeys.household })
+    queryClient.setQueryData(queryKeys.household, household)
+  }
+  queryClient.setMutationDefaults(INVITE, {
+    mutationFn: ({ name, email }: Invitation) =>
+      apiRequest<Household>('POST', '/v1/household/invites', { name, email }),
+    onSuccess: stored,
+  })
+  queryClient.setMutationDefaults(CANCEL_INVITE, {
+    mutationFn: ({ inviteId }: InviteCancellation) =>
+      apiRequest<Household>('DELETE', `/v1/household/invites/${inviteId}`),
+    onSuccess: stored,
+  })
+  queryClient.setMutationDefaults(REMOVE_MEMBER, {
+    mutationFn: ({ userId }: MemberRemoval) => apiRequest<void>('DELETE', `/v1/household/members/${userId}`),
+    // Leaving: the household's data goes, and the app shows that it's in no household.
+    onSuccess: (_result: void, { self }: MemberRemoval) =>
+      self ? afterLeaving(queryClient) : queryClient.invalidateQueries({ queryKey: queryKeys.household }),
+  })
+}
+
+export function useInvite() {
+  return useMutation<Household, Error, Invitation>({ mutationKey: INVITE })
+}
+
+export function useCancelInvite() {
+  return useMutation<Household, Error, InviteCancellation>({ mutationKey: CANCEL_INVITE })
+}
+
+export function useRemoveMember() {
+  return useMutation<void, Error, MemberRemoval>({ mutationKey: REMOVE_MEMBER })
 }
 
 /** The household's settings and members, with the changes still being saved applied. */

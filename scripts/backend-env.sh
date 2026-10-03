@@ -5,7 +5,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-: "${NEON_PROJECT_ID:?run through make}" "${NEON_DEV_BRANCH_ID:?run through make}"
 auth_url=$(sed -n 's/^VITE_NEON_AUTH_URL=//p' apps/mobile/.env.development)
 [[ -n $auth_url ]] || { echo "VITE_NEON_AUTH_URL missing from apps/mobile/.env.development" >&2; exit 1; }
 
@@ -17,8 +16,6 @@ trap 'rm -f "$tmp"' EXIT
   printf 'DATABASE_URL='
   aws ssm get-parameter --profile conn --region us-east-1 --with-decryption \
     --name /castle-chef/development/database-url --query Parameter.Value --output text
-  echo "CASTLE_CHEF_NEON_PROJECT_ID=$NEON_PROJECT_ID"
-  echo "CASTLE_CHEF_NEON_BRANCH_ID=$NEON_DEV_BRANCH_ID"
   echo "CASTLE_CHEF_NEON_AUTH_URL=$auth_url"
   echo "CASTLE_CHEF_JOB_DISPATCH=local"
 } >"$tmp"

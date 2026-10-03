@@ -1,5 +1,6 @@
 """Neon Auth JWT verification, against a local JWKS endpoint and real Ed25519 keys."""
 
+import base64
 import json
 import threading
 import time
@@ -13,7 +14,13 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from jwt.algorithms import OKPAlgorithm
 
-from castle_chef.auth import AuthError, AuthUnavailable, NeonAuthVerifier
+from castle_chef.auth import (
+    AuthError,
+    AuthUnavailable,
+    NeonAuthVerifier,
+    NeonWebhookVerifier,
+    WebhookRejected,
+)
 
 SIGNING_KEY = Ed25519PrivateKey.generate()
 KID = "test-key"
@@ -137,3 +144,55 @@ def test_unreachable_keys_fail_closed() -> None:
 
     with pytest.raises(AuthUnavailable):
         verifier.verify(token("http://127.0.0.1:9/neondb/auth"))
+
+
+# Neon Auth's webhook requests: a detached JWS over the timestamp and the body
+# (https://neon.com/docs/auth/guides/webhooks), signed by a key in the same JWKS.
+
+
+def neon_signed(
+    body: bytes,
+    key: Ed25519PrivateKey = SIGNING_KEY,
+    kid: str = KID,
+    timestamp: int | None = None,
+) -> dict[str, str]:
+    """The headers Neon Auth sends with a webhook request for this body."""
+    sent = str(timestamp if timestamp is not None else int(time.time() * 1000))
+    body_b64 = base64.urlsafe_b64encode(body).rstrip(b"=").decode()
+    compact = jwt.PyJWS().encode(
+        f"{sent}.{body_b64}".encode(), key, algorithm="EdDSA", headers={"kid": kid}
+    )
+    header, _, signature = compact.split(".")
+    return {
+        "x-neon-signature": f"{header}..{signature}",
+        "x-neon-signature-kid": kid,
+        "x-neon-timestamp": sent,
+    }
+
+
+BODY = b'{"event_type": "user.before_create", "user": {"email": "mom@example.com"}}'
+
+
+def test_a_webhook_request_signed_by_neon_auth_is_accepted(auth_url: str) -> None:
+    NeonWebhookVerifier(auth_url).verify(BODY, neon_signed(BODY))
+
+
+@pytest.mark.parametrize(
+    ("body", "headers"),
+    [
+        # Altered on the way.
+        (BODY.replace(b"mom", b"eve"), neon_signed(BODY)),
+        # Signed by someone else's key under Neon's key id.
+        (BODY, neon_signed(BODY, key=Ed25519PrivateKey.generate())),
+        # Replayed long after.
+        (BODY, neon_signed(BODY, timestamp=int(time.time() * 1000) - 10 * 60 * 1000)),
+        # Not signed at all.
+        (BODY, {}),
+    ],
+    ids=["altered", "other key", "stale", "unsigned"],
+)
+def test_webhook_requests_not_from_neon_auth_as_sent_are_refused(
+    auth_url: str, body: bytes, headers: dict[str, str]
+) -> None:
+    with pytest.raises(WebhookRejected):
+        NeonWebhookVerifier(auth_url).verify(body, headers)

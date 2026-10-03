@@ -19,9 +19,12 @@ import {
 } from './settings'
 
 vi.mock('../../lib/api/client', () => ({ apiRequest: vi.fn() }))
-vi.mock('../../lib/log', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
+vi.mock('../../lib/log', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  errorFields: vi.fn(() => ({})),
+}))
 // session.ts (imported for its query key) signs in through the real provider otherwise.
-vi.mock('../../lib/auth/auth', () => ({ auth: { updateName: vi.fn() } }))
+vi.mock('../../lib/auth/auth', () => ({ auth: { updateName: vi.fn(), getUser: vi.fn() } }))
 vi.mock('../../lib/logUpload', () => ({ uploadLogs: vi.fn() }))
 vi.mock('../../lib/query/queryClient', () => ({ persister: {} }))
 const request = vi.mocked(apiRequest)
@@ -37,6 +40,7 @@ const household = (settings: Partial<Household> = {}): Household => ({
   tip_max_cents: 1500,
   product_gone: 'use_alternative',
   members: [{ user_id: 'sam', name: 'Sam', email: 'sam@example.com' }],
+  invites: [],
   ...settings,
 })
 
@@ -252,5 +256,75 @@ describe('renaming', () => {
     for (const key of [sessionQuery.queryKey, queryKeys.household, queryKeys.nextOrder, queryKeys.placedOrdersFrom()]) {
       expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true)
     }
+  })
+})
+
+describe('members', () => {
+  const me: Session = {
+    user: { id: 'me', email: 'me@example.com', name: 'Me' },
+    household: { id: 'castle', name: 'Conn Castle' },
+    settings: { notification_time: '08:00:00', time_zone: 'Europe/Lisbon', reminders_on: true },
+  }
+  const remove = (userId: string, self: boolean) =>
+    new MutationObserver<void, Error, { userId: string; self: boolean }>(queryClient, {
+      mutationKey: ['household', 'remove-member'],
+    }).mutate({ userId, self })
+
+  it('shows an invitation as soon as it is made', async () => {
+    queryClient.setQueryData(queryKeys.household, household())
+    const invited = household({
+      invites: [{ id: 'i', name: 'Kid', email: 'kid@example.com', invited_by: null, created_at: '2026-10-03T12:00:00Z' }],
+    })
+    request.mockResolvedValue(invited)
+
+    await new MutationObserver<Household, Error, { name: string; email: string }>(queryClient, {
+      mutationKey: ['household', 'invite'],
+    }).mutate({ name: 'Kid', email: 'kid@example.com' })
+
+    expect(request).toHaveBeenCalledWith('POST', '/v1/household/invites', { name: 'Kid', email: 'kid@example.com' })
+    expect(onScreen().household?.invites.map((i) => i.email)).toEqual(['kid@example.com'])
+  })
+
+  it('drops the household from the phone after leaving and asks for the session again', async () => {
+    queryClient.setQueryData<Session>(sessionQuery.queryKey, me)
+    queryClient.setQueryData(queryKeys.household, household())
+    queryClient.setQueryData(queryKeys.nextOrder, { number: 1 })
+    vi.mocked(auth.getUser).mockResolvedValue(me.user)
+    // GET /v1/me: in no household now.
+    request.mockImplementation((method: string) =>
+      Promise.resolve(method === 'GET' ? { household: null, settings: null } : undefined),
+    )
+
+    await remove('me', true)
+
+    expect(request).toHaveBeenCalledWith('DELETE', '/v1/household/members/me')
+    expect(queryClient.getQueryData(queryKeys.household)).toBeUndefined()
+    expect(queryClient.getQueryData(queryKeys.nextOrder)).toBeUndefined()
+    expect(queryClient.getQueryData<Session>(sessionQuery.queryKey)?.household).toBeNull()
+  })
+
+  it('stays out of the household after leaving even when the session cannot be fetched again', async () => {
+    queryClient.setQueryData<Session>(sessionQuery.queryKey, me)
+    queryClient.setQueryData(queryKeys.household, household())
+    vi.mocked(auth.getUser).mockResolvedValue(me.user)
+    request.mockImplementation((method: string) =>
+      method === 'GET' ? Promise.reject(new Error('offline')) : Promise.resolve(undefined),
+    )
+
+    await remove('me', true)
+
+    expect(queryClient.getQueryData<Session>(sessionQuery.queryKey)?.household).toBeNull()
+    expect(queryClient.getQueryData(queryKeys.household)).toBeUndefined()
+  })
+
+  it('fetches the household again after removing someone else', async () => {
+    queryClient.setQueryData<Session>(sessionQuery.queryKey, me)
+    queryClient.setQueryData(queryKeys.household, household())
+    request.mockResolvedValue(undefined)
+
+    await remove('sam', false)
+
+    expect(queryClient.getQueryState(queryKeys.household)?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(sessionQuery.queryKey)?.isInvalidated).toBe(false)
   })
 })

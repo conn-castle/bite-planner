@@ -507,6 +507,26 @@ class Household(TimestampMixin, SQLModel, table=True):
     cart_ledger: CartLedger | None = Field(default=None, sa_type=ModelJSONB(CartLedger))
 
 
+class HouseholdInvite(TimestampMixin, SQLModel, table=True):
+    """Someone invited to a household, by email, until they first sign in with it
+    (they join then). Only an invited email can create an account (the sign-in
+    provider asks the API first: castle_chef.household)."""
+
+    __tablename__ = "household_invite"
+    __table_args__ = (
+        # One invitation per person, whatever the case of their email.
+        Index("household_invite_email", text("lower(email)"), unique=True),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    household_id: UUID = Field(foreign_key="household.id", ondelete="CASCADE", index=True)
+    email: str
+    # What to call them (their account's name, once they sign in).
+    name: str
+    # The member who invited them; null for the admin command.
+    invited_by: UUID | None = None
+
+
 class AppUser(SQLModel, table=True):
     """The app's side of a user: a Neon Auth account (same id) invited to a
     household, and their own settings. The app is invite-only: the API serves only

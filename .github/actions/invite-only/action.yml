@@ -1,0 +1,47 @@
+# Makes sign-up on Neon `main` invite-only: Neon Auth asks the API before it creates
+# any account (its blocking user.before_create webhook), and the API allows only
+# invited emails (docs/operations/aws.md "Sign-up"). Sets the webhook, then checks it
+# is exactly that. Run by every deploy, and by rollback from the current main (the
+# release it goes back to may not have this).
+name: Invite-only sign-up
+description: Set and check Neon Auth's sign-up webhook on main
+
+inputs:
+  api-url:
+    description: The API's URL (the stack's ApiUrlOutput, ending in /)
+    required: true
+  neon-api-key:
+    description: Neon API key (the project's)
+    required: true
+  neon-project-id:
+    description: The Neon project
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        API_URL: ${{ inputs.api-url }}
+        NEON_API_KEY: ${{ inputs.neon-api-key }}
+        NEON_PROJECT_ID: ${{ inputs.neon-project-id }}
+      run: |
+        neon=https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID
+        auth=(--header "Authorization: Bearer $NEON_API_KEY" --header "Accept: application/json")
+        branch=$(curl --fail --silent --show-error "${auth[@]}" "$neon/branches" |
+          jq -er '[.branches[] | select(.name == "main")] | if length == 1 then .[0].id else error("no single main branch") end')
+        # 10 s per attempt (Neon's most): a cold API answers within it.
+        want=$(jq -n --arg url "${API_URL%/}/v1/auth/neon-webhook" \
+          '{enabled: true, webhook_url: $url, enabled_events: ["user.before_create"], timeout_seconds: 10}')
+        curl --fail --silent --show-error --request PUT "${auth[@]}" --header "Content-Type: application/json" \
+          --data "$want" "$neon/branches/$branch/auth/webhooks" > /dev/null
+        have=$(curl --fail --silent --show-error "${auth[@]}" "$neon/branches/$branch/auth/webhooks")
+        # Exactly this: another event (send.otp) would stop Neon emailing sign-in codes.
+        if ! jq -e --argjson want "$want" \
+            '.enabled == $want.enabled and .webhook_url == $want.webhook_url
+             and .enabled_events == $want.enabled_events and .timeout_seconds == $want.timeout_seconds' \
+            <<< "$have" > /dev/null; then
+          echo "::error::Neon Auth's sign-up webhook on main isn't as set: $have"
+          exit 1
+        fi
+        echo "Sign-up is invite-only: Neon Auth asks ${API_URL%/}/v1/auth/neon-webhook" >> "$GITHUB_STEP_SUMMARY"

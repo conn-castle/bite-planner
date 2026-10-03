@@ -14,3 +14,6 @@ export const TIP_PERCENT: Range = { min: 0, max: 30 }
 export const TIP_MAX_CENTS: Range = { min: 0, max: 10_000 }
 /** The most characters in a household's name, and (in the app) a person's. */
 export const NAME_LENGTH = 60
+
+/** An email address, at most (backend household.EMAIL_LENGTH). */
+export const EMAIL_LENGTH = 254

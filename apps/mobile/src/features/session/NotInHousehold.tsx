@@ -6,7 +6,7 @@ import { Notice } from '../../ui/Notice'
 import { signOut, type Session } from './session'
 import { Welcome } from './Welcome'
 
-/** A signed-in account that no household has invited. */
+/** A signed-in account in no household: never invited, or removed since. */
 export function NotInHousehold({ session }: { session: Session }) {
   const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
@@ -25,8 +25,8 @@ export function NotInHousehold({ session }: { session: Session }) {
       title="Almost there"
       subtitle={
         <>
-          <strong>{session.user.email}</strong> isn't part of a Castle Chef household yet. Ask
-          whoever runs Castle Chef to add you, then open the app again.
+          <strong>{session.user.email}</strong> isn't part of a Castle Chef household. Ask someone
+          in your household to invite this email, then open the app again.
         </>
       }
     >

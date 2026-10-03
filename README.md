@@ -65,7 +65,7 @@ To try the app against a deployed API instead of the local one: `cd apps/mobile 
 
 ## Backend
 
-`backend/.env` (gitignored, written by `make env`; `make` ignores a `DATABASE_URL` in your shell) holds `DATABASE_URL`, the direct owner-role connection string for the Neon `dev` branch, the Neon ids for `household` commands, `CASTLE_CHEF_NEON_AUTH_URL` (`dev`'s Neon Auth), and `CASTLE_CHEF_JOB_DISPATCH=local` (see [Development](#development)). It is generated from SSM ([Secrets](docs/operations/aws.md#secrets)); credentials for `main` are never in your checkout. Every setting is in `src/castle_chef/settings.py`.
+`backend/.env` (gitignored, written by `make env`; `make` ignores a `DATABASE_URL` in your shell) holds `DATABASE_URL`, the direct owner-role connection string for the Neon `dev` branch, `CASTLE_CHEF_NEON_AUTH_URL` (`dev`'s Neon Auth), and `CASTLE_CHEF_JOB_DISPATCH=local` (see [Development](#development)). It is generated from SSM ([Secrets](docs/operations/aws.md#secrets)); credentials for `main` are never in your checkout. Every setting is in `src/castle_chef/settings.py`.
 
 The worker's packages are the project's dependencies; the API's extra packages (FastAPI, boto3, PyJWT, uvicorn) are the `api` dependency group, installed by default locally and left out of the worker image.
 
@@ -203,7 +203,7 @@ Every push to `main` runs `.github/workflows/release.yml`:
 1. **CI** (`ci.yml`): lint and tests for the backend (including migration up/down and the migration guard), the app (and its build), and `infra/`.
 2. **Images**, alongside CI: `api` and `worker` built from `docker/Dockerfile` and pushed to ECR as `commit-<sha>` (the worker with zstd layers, which Fargate starts faster). A re-run reuses images already pushed for its commit.
 3. **Migrate**: a Neon snapshot of `main` named `pre-<release>` (the restore point, kept 14 days), `alembic upgrade head` on `main`, then checks that `main` is at this release's migrations and matches the models.
-4. **Deploy** (`.github/actions/deploy`): `cdk deploy` of both stacks (stage `prod`) with the images' digests, through the `castle-chef-github-deploy` role (GitHub OIDC; no AWS keys stored), then a smoke test (`GET /health` must answer and `GET /v1/me` without a token must return 401), then every member's reminder schedule is rebuilt from the database (the Reminders Lambda's sync; it fails the deploy if any schedule couldn't be saved).
+4. **Deploy** (`.github/actions/deploy`): `cdk deploy` of both stacks (stage `prod`) with the images' digests, through the `castle-chef-github-deploy` role (GitHub OIDC; no AWS keys stored), then a smoke test (`GET /health` must answer and `GET /v1/me` without a token must return 401), then sign-up on Neon `main` is made invite-only and checked (`.github/actions/invite-only`; docs/operations/aws.md "Sign-up"), then every member's reminder schedule is rebuilt from the database (the Reminders Lambda's sync; it fails the deploy if any schedule couldn't be saved).
 5. **Publish**: the GitHub release for the commit, with `release.json` (commit, image digests, migration), which `rollback.yml` uses.
 6. **iOS**, only if `apps/mobile/` changed since the last upload (or when run manually with `force_ios`): build on macOS, check that the app has the production push entitlement, upload, then wait for Apple's processing on Linux (cheaper). Tag `ios-<release>` marks a processed upload; without it, the next release builds again.
 
@@ -215,13 +215,13 @@ Repository secrets: `NEON_API_KEY`, `MIGRATION_DATABASE_URL` (direct owner conne
 
 ### Rollback
 
-**Rollback** (`rollback.yml`, run from the Actions tab or `gh workflow run rollback.yml -f release=<release> -f confirm="roll back to <release>"`) redeploys an earlier release's images with that release's own CDK code, without rebuilding, and smoke-tests it. Only releases with `release.json` (from `r6` on, the first deployed to AWS) can be rolled back to. Don't push while it runs (a new release run would cancel it while it waits).
+**Rollback** (`rollback.yml`, run from the Actions tab or `gh workflow run rollback.yml -f release=<release> -f confirm="roll back to <release>"`) redeploys an earlier release's images with that release's own CDK code, without rebuilding, and smoke-tests it; then it makes sign-up invite-only with the current `main`'s action, whatever that release did. Only releases with `release.json` (from `r6` on, the first deployed to AWS) can be rolled back to. Don't push while it runs (a new release run would cancel it while it waits).
 
 | What went wrong | What to do |
 | --- | --- |
 | The release failed | Nothing to undo. Fix and push. |
 | The release is bad, the data is fine | Run **Rollback** with the previous release. The database keeps the newer schema, which the older code works with; the workflow refuses if a contract migration since then removed something it needs or holds data it can't handle safely (e.g. `households`: older releases would show one household's requests to another). Then `git revert` the bad commits and push (the next push releases `main` again). |
-| Data was damaged | Run **Rollback** with the last good release, `restore_database` checked, and the confirmation `roll back to <release> and restore the database`. It stops the Pipe (no new jobs start; requests wait in the queue), waits for running workers, snapshots `main` as it is (`before-rollback-<release>-…`), restores `main` from the snapshot taken before the next release, deploys the release, and starts the Pipe again. Everything written since that snapshot is lost, including sign-ins (Neon Auth lives in the same database), so everyone signs in again. Restore points expire after 14 days. Then follow its summary: `git revert` the bad commits and their migrations and push; if `main`'s branch id changed, update `CASTLE_CHEF_NEON_BRANCH_ID` where you run `household` commands; delete the pre-restore branch Neon keeps when done, and reset `dev` if it was a child of it. |
+| Data was damaged | Run **Rollback** with the last good release, `restore_database` checked, and the confirmation `roll back to <release> and restore the database`. It stops the Pipe (no new jobs start; requests wait in the queue), waits for running workers, snapshots `main` as it is (`before-rollback-<release>-…`), restores `main` from the snapshot taken before the next release, deploys the release, and starts the Pipe again. Everything written since that snapshot is lost, including sign-ins (Neon Auth lives in the same database), so everyone signs in again. Restore points expire after 14 days. Then follow its summary: `git revert` the bad commits and their migrations and push; the rollback sets the sign-up webhook on `main` whatever its branch id; delete the pre-restore branch Neon keeps when done, and reset `dev` if it was a child of it. |
 | A bad iOS build | Expire it in App Store Connect; testers can reinstall the previous build from TestFlight → Previous Builds. Then fix forward. |
 
 A code rollback was rehearsed on 2026-09-24 (r8 to r7). The database restore has not been exercised (Neon doesn't allow a test root branch in this project); it also assumes the restored branch keeps `main`'s endpoints, so check sign-in and a request afterwards.
@@ -230,7 +230,7 @@ A code rollback was rehearsed on 2026-09-24 (r8 to r7). The database restore has
 
 Development uses the Neon branch `dev` (`example-development-branch`), a copy of `main` with its own Neon Auth (users and keys copied when the branch was made, then independent). Test in the browser with [local development](#local-development); iOS-only behavior (native sign-in in `src/lib/auth/neonAuth.ts`, the persisted cache across relaunches) still needs a TestFlight build.
 
-`make env` writes `backend/.env` for `dev`: `DATABASE_URL` from SSM `/castle-chef/development/database-url` ([Secrets](docs/operations/aws.md#secrets)), the Neon project and `dev` branch ids (`Makefile`), `CASTLE_CHEF_NEON_AUTH_URL` (from `apps/mobile/.env.development`), and `CASTLE_CHEF_JOB_DISPATCH=local`. The database and the Neon ids must all point at `dev`, or `household invite` creates the account on one branch and the membership on the other.
+`make env` writes `backend/.env` for `dev`: `DATABASE_URL` from SSM `/castle-chef/development/database-url` ([Secrets](docs/operations/aws.md#secrets)), `CASTLE_CHEF_NEON_AUTH_URL` (from `apps/mobile/.env.development`), and `CASTLE_CHEF_JOB_DISPATCH=local`. The Neon project and `dev` branch ids stay in the `Makefile`, for `make dev-reset`.
 
 `make dev-reset` (it asks first) replaces `dev` with a copy of production as it is now, then applies this checkout's migrations. It discards everything on `dev`, including its Neon Auth state (users and sessions become production's, so sign in again). Connection details stay the same, so `backend/.env` still works. The copy is the family's real data: keep it on this machine.
 
@@ -241,7 +241,7 @@ Project `castle-chef` (`example-project`), database `neondb`, branches `main` (p
 Security model:
 
 - The app signs in with Neon Auth using an emailed one-time code (no passwords, no social providers) and gets a 15-minute JWT (EdDSA). The API verifies it against the branch's published keys (`castle_chef/auth.py`, behind an `AuthVerifier` interface so the provider can be swapped).
-- Invite-only: the API serves only accounts in a household (an `app_user` row, the app's side of a Neon Auth account, with a `household_id`); anyone else gets 403. Sign-up is disabled in Neon Auth, but only for passwords: Neon's setting doesn't cover emailed codes, so anyone can request a code for any address, and entering it creates an empty account (tested on `dev`, 2026-09-24). Such accounts get no data (403). Accepted for the private TestFlight app. To close it, use Neon Auth's `send.otp` and `user.before_create` webhooks to email codes only to invited people, or wait for Neon to apply disable-sign-up to emailed codes.
+- Invite-only: the API serves only accounts in a household (an `app_user` row, the app's side of a Neon Auth account, with a `household_id`); anyone else gets 403. Sign-up is disabled in Neon Auth, but only for passwords: Neon's setting doesn't cover emailed codes (tested on `dev`, 2026-09-24). So on `main` Neon Auth's blocking `user.before_create` webhook asks the API before it creates any account, and the API allows only an email with an invitation (`POST /v1/auth/neon-webhook`, signed by Neon Auth's keys; docs/operations/aws.md "Sign-up"). `dev` has no webhook (its API is this machine), so anyone with a code can still make an empty account there.
 - Households are separate: every order, job, and meal belongs to a household through its order, members see only their household's, and another household's is 404 like a missing one. `GET /v1/me` reports the caller's `household` (`id`, `name`, or null).
 - The API enforces the ordering rules: one draft per household, one batch of suggestions at a time per draft, client-generated job ids that can't be reused for another order or by someone else, picks only from the draft's suggestions, valid dates, and no changes once placed.
 - The API and worker use the owner role through Neon's pooled endpoint; the agent has no database access. Local tools use the direct endpoint.
@@ -259,18 +259,17 @@ cd backend
 uv run castle-chef household create "Test Household"   # a new, empty household
 uv run castle-chef household list                       # names, member and order counts
 uv run castle-chef household invite mom@example.com --name "Mom" --household "Conn Castle"
-                                                        # create the account if needed and add it
-uv run castle-chef household members "Conn Castle"      # its members' emails and names
-uv run castle-chef household remove mom@example.com     # remove and delete the account
+                                                        # invite them: they join on first sign-in
+uv run castle-chef household members "Conn Castle"      # its members, then its invitations
+uv run castle-chef household remove mom@example.com     # end their membership (the account stays)
 
 # Production: prefix each command with `prod`
 prod() { DATABASE_URL="$(aws ssm get-parameter --profile conn --region us-east-1 --with-decryption \
-  --name /castle-chef/production/database-url --query Parameter.Value --output text)" \
-  CASTLE_CHEF_NEON_BRANCH_ID=br-example-00000000 "$@"; }
+  --name /castle-chef/production/database-url --query Parameter.Value --output text)" "$@"; }
 prod uv run castle-chef household list
 ```
 
-`invite` refuses someone already in another household (remove them first); inviting them to their own household again changes nothing. `invite` and `remove` need `CASTLE_CHEF_NEON_PROJECT_ID` and `CASTLE_CHEF_NEON_BRANCH_ID` and a logged-in `neonctl`. Sign-in is passwordless: the person enters their email in the app, then the 6-digit code Neon Auth emails them (from `auth@mail.myneon.app`; check spam).
+Members do the same from the app (Settings → Members): anyone in a household can invite someone by email, cancel an invitation, and remove anyone, themselves too, but never the last member. An invited person joins when they first sign in with that email; only an invited email can create an account, since Neon Auth asks the API first (docs/operations/aws.md "Sign-up"). Removing someone ends their membership and keeps their account, so their name stays on what they did and inviting them again works. `invite` refuses someone already in a household or invited to another; inviting them to the same household again changes only the name. Sign-in is passwordless: the person enters their email in the app, then the 6-digit code Neon Auth emails them (from `auth@mail.myneon.app`; check spam). They also need the app: add them as a tester in App Store Connect ([TestFlight](#testflight)).
 
 ## Status and next steps
 

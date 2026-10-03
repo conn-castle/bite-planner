@@ -33,7 +33,16 @@ from sqlmodel import Session, col, select
 from castle_chef import booking, failures, orders, push, quotes, ratings, reminders, shopping
 from castle_chef import household as households
 from castle_chef import log as logging_config
-from castle_chef.auth import AuthError, AuthUnavailable, AuthVerifier, NeonAuthVerifier, Principal
+from castle_chef.auth import (
+    AuthError,
+    AuthUnavailable,
+    AuthVerifier,
+    NeonAuthVerifier,
+    NeonWebhookVerifier,
+    Principal,
+    WebhookRejected,
+    WebhookVerifier,
+)
 from castle_chef.checkout import SIGNED_OUT_ERROR, Booking, BookIssue, Checkout
 from castle_chef.db import get_request_session
 from castle_chef.dispatch import DispatchError, JobDispatcher, get_dispatcher
@@ -330,6 +339,17 @@ class HouseholdMemberOut(BaseModel):
     email: str | None
 
 
+class InviteOut(BaseModel):
+    """Someone invited, who joins when they first sign in with this email."""
+
+    id: UUID
+    name: str
+    email: str
+    # The member who invited them; null for the admin command.
+    invited_by: MemberOut | None
+    created_at: datetime
+
+
 class HouseholdOut(BaseModel):
     """The household's settings, shared by everyone in it, and who's in it."""
 
@@ -347,6 +367,8 @@ class HouseholdOut(BaseModel):
     product_gone: ProductGone
     # In the order they were invited.
     members: list[HouseholdMemberOut]
+    # Invitations not used yet, oldest first.
+    invites: list[InviteOut]
 
 
 class PersonalSettingsOut(BaseModel):
@@ -482,6 +504,32 @@ class SettleIn(BaseModel):
     placed: bool
 
 
+class InviteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    email: str
+
+
+class NeonAuthUser(BaseModel):
+    email: str | None = None
+
+
+class NeonAuthEvent(BaseModel):
+    """A Neon Auth webhook's envelope (https://neon.com/docs/auth/guides/webhooks):
+    what's used of it."""
+
+    event_type: str
+    user: NeonAuthUser = NeonAuthUser()
+
+
+class SignUpAnswer(BaseModel):
+    """The answer to `user.before_create`: whether the account may be made."""
+
+    allowed: bool
+    error_message: str | None = None
+
+
 class LockIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -528,6 +576,13 @@ class LogsIn(BaseModel):
 
 
 @lru_cache
+def get_webhook_verifier() -> WebhookVerifier:
+    settings = get_settings()
+    if not settings.neon_auth_url:
+        raise RuntimeError("Set CASTLE_CHEF_NEON_AUTH_URL.")
+    return NeonWebhookVerifier(settings.neon_auth_url)
+
+
 def get_verifier() -> AuthVerifier:
     settings = get_settings()
     if not settings.neon_auth_url:
@@ -574,7 +629,8 @@ def names(session: Session, user_ids: set[UUID]) -> dict[UUID, str | None]:
         ),
         {"ids": list(user_ids)},
     ).all()
-    found: dict[UUID, str | None] = {row.id: row.name for row in rows}
+    # An account named nothing (made by signing in with a code) has no name.
+    found: dict[UUID, str | None] = {row.id: row.name or None for row in rows}
     return {user_id: found.get(user_id) for user_id in user_ids}
 
 
@@ -807,6 +863,9 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     NothingToList: status.HTTP_409_CONFLICT,
     orders.NotForUs: status.HTTP_409_CONFLICT,
     booking.NotChangeable: status.HTTP_409_CONFLICT,
+    households.NotFound: status.HTTP_404_NOT_FOUND,
+    households.Refused: status.HTTP_409_CONFLICT,
+    households.Invalid: status.HTTP_422_UNPROCESSABLE_CONTENT,
     JobIdTaken: status.HTTP_409_CONFLICT,
     orders.InvalidDates: status.HTTP_422_UNPROCESSABLE_CONTENT,
     BatchRunning: status.HTTP_429_TOO_MANY_REQUESTS,
@@ -907,7 +966,7 @@ def account(session: Session, user_id: UUID) -> tuple[str | None, str | None]:
     row = session.execute(
         text('SELECT email, name FROM neon_auth."user" WHERE id = :id'), {"id": user_id}
     ).first()
-    return (row.email, row.name) if row else (None, None)
+    return (row.email, row.name or None) if row else (None, None)
 
 
 def personal_settings_out(user: AppUser) -> PersonalSettingsOut:
@@ -919,6 +978,9 @@ def personal_settings_out(user: AppUser) -> PersonalSettingsOut:
 
 
 def household_out(session: Session, household: Household) -> HouseholdOut:
+    members = households.members_of(session, household.id)
+    invites = households.invites_of(session, household.id)
+    people = names(session, {invited.invited_by for invited in invites if invited.invited_by})
     return HouseholdOut(
         id=household.id,
         name=household.name,
@@ -931,7 +993,21 @@ def household_out(session: Session, household: Household) -> HouseholdOut:
         product_gone=household.product_gone,
         members=[
             HouseholdMemberOut(user_id=person.user_id, name=person.name, email=person.email)
-            for person in households.members_of(session, household.id)
+            for person in members
+        ],
+        invites=[
+            InviteOut(
+                id=invited.id,
+                name=invited.name,
+                email=invited.email,
+                invited_by=MemberOut(
+                    user_id=invited.invited_by, name=people.get(invited.invited_by)
+                )
+                if invited.invited_by
+                else None,
+                created_at=invited.created_at,
+            )
+            for invited in invites
         ],
     )
 
@@ -999,8 +1075,9 @@ def create_app() -> FastAPI:
         principal: Annotated[Principal, Depends(signed_in)],
         session: Annotated[Session, Depends(db)],
     ) -> MeOut:
+        # Someone invited joins on their first sign-in (and is named, if unnamed).
+        household = households.join_if_invited(session, principal.user_id)
         email, name = account(session, principal.user_id)
-        household = household_of(session, principal.user_id)
         return MeOut(
             user_id=principal.user_id,
             email=email,
@@ -1111,6 +1188,70 @@ def create_app() -> FastAPI:
             raise
         log.info("settings.household_updated", extra={"fields": sorted(body.model_fields_set)})
         return household_out(session, household)
+
+    @api.post("/v1/household/invites", status_code=status.HTTP_201_CREATED)
+    def invite_member(
+        body: InviteIn,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> HouseholdOut:
+        """Invite someone by email: they join when they first sign in with it (and
+        only an invited email can make an account)."""
+        household = session.get_one(Household, caller.household_id)
+        households.invite(session, household, body.email, body.name, caller.user_id)
+        return household_out(session, household)
+
+    @api.delete("/v1/household/invites/{invite_id}")
+    def cancel_invite(
+        invite_id: UUID,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> HouseholdOut:
+        """Withdraw an invitation not used yet."""
+        households.cancel_invite(session, caller.household_id, invite_id)
+        return household_out(session, session.get_one(Household, caller.household_id))
+
+    @api.delete("/v1/household/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def remove_member(
+        user_id: UUID,
+        caller: Annotated[Member, Depends(member)],
+        session: Annotated[Session, Depends(db)],
+    ) -> None:
+        """Remove someone from the household, the caller too (leaving); never the last."""
+        households.remove_member(session, caller.household_id, user_id)
+
+    @api.post("/v1/auth/neon-webhook")
+    async def neon_auth_webhook(
+        request: Request,
+        verifier: Annotated[WebhookVerifier, Depends(get_webhook_verifier)],
+        session: Annotated[Session, Depends(db)],
+    ) -> SignUpAnswer | dict[str, str]:
+        """Neon Auth's webhook: before it makes an account (`user.before_create`), it
+        asks whether the email is invited; an account for anyone else is refused."""
+        body = await request.body()
+        try:
+            verifier.verify(body, request.headers)
+        except WebhookRejected as error:
+            log.warning("auth.webhook_rejected", extra={"error": str(error)})
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not a Neon Auth request.") from error
+        except AuthUnavailable as error:
+            log.error("auth.unavailable", extra={"error": str(error)})
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(error)) from error
+        event = NeonAuthEvent.model_validate_json(body)
+        if event.event_type != "user.before_create":
+            log.warning("auth.webhook_unexpected", extra={"event_type": event.event_type})
+            return {"status": "ignored"}
+        email = event.user.email or ""
+        if households.may_sign_up(session, email):
+            log.info("auth.sign_up_allowed")
+            return SignUpAnswer(allowed=True)
+        log.warning("auth.sign_up_refused")
+        return SignUpAnswer(
+            allowed=False,
+            error_message=(
+                "Castle Chef is invite-only: ask someone in your household to invite this email."
+            ),
+        )
 
     def order_error(_: Request, error: Exception) -> JSONResponse:
         return JSONResponse({"detail": str(error)}, status_code=ORDER_ERRORS[type(error)])

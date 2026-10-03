@@ -51,6 +51,16 @@ aws ssm put-parameter --profile conn --region us-east-1 --overwrite \
 
 To run the daily booking now (e.g. after a fix): `castle-chef job book-due` against the database in question.
 
+**Sign-up** (invite-only): on `main`, Neon Auth calls the API before it creates any account (its blocking `user.before_create` webhook, signed with Neon Auth's own keys), and the API allows only an email someone has invited (`POST /v1/auth/neon-webhook`; `backend/src/castle_chef/household.py`). It fails closed: while the API is down, nobody new can sign up (members already in sign in as usual). The webhook is Neon Auth configuration on the branch; every deploy sets it on `main` with the API's URL (10 seconds per attempt, so a cold API answers) and checks it is exactly that (`.github/actions/invite-only`), and so does every rollback, with the current `main`'s action whatever release it goes back to, so a restored `main` gets it again. To see it: `neonctl api /projects/example-project/branches/<main's id>/auth/webhooks`. `dev` has none: its API is a laptop, which Neon can't reach. To set it by hand:
+
+```sh
+api=$(aws cloudformation describe-stacks --profile conn --region us-east-1 --stack-name CastleChef \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiUrlOutput'].OutputValue" --output text)
+neonctl api "/projects/example-project/branches/$(neonctl branches get main \
+  --project-id example-project -o json | jq -r .id)/auth/webhooks" -X PUT \
+  -d "{\"enabled\": true, \"webhook_url\": \"${api%/}/v1/auth/neon-webhook\", \"enabled_events\": [\"user.before_create\"], \"timeout_seconds\": 10}"
+```
+
 **Alarms** email `operator@example.com` (SNS topic "Castle Chef alarms"; the subscription must be confirmed from the first email): any error-level log line, Lambda errors, Pipe failures, and reminder schedules that couldn't invoke Reminders. A request that fails because of the agent (bad output, timeout, an expired login) also logs at error level, so it emails too.
 
 **Failures** mark jobs failed without polling: a message the Pipe can't start a task for goes to the dead-letter queue after 3 tries, and a worker task that stops with a non-zero exit (crash, out of memory, image pull or EFS failure, the 40-minute cap) sends an ECS event; the failure handler fails its job either way, and the shopping its task went on to. As a backstop, the API fails a person's jobs that stayed pending for 10 minutes or running for 20.

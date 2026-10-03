@@ -123,29 +123,32 @@ def household_invite(
     name: Annotated[str, typer.Option(help="Name for their account.")],
     household_name: HouseholdOption,
 ) -> None:
-    """Invite someone: create their account if needed and add them to the household."""
+    """Invite someone by email, as the app does: they join the household when they
+    first sign in with it."""
     with household_session() as session:
-        household.invite(session, email, name, household_name)
+        household.invite_by_name(session, household_name, email, name)
     typer.echo(
-        f"Invited {email} to {household_name!r}. They sign in to the app with this email and "
-        "the code Neon Auth emails them."
+        f"Invited {email} to {household_name!r}. They join when they first sign in to the app "
+        "with this email and the code Neon Auth emails them."
     )
 
 
 @household_app.command("members")
 def household_members(household_name: Annotated[str, typer.Argument(metavar="household")]) -> None:
-    """List a household's members: email and name."""
+    """List a household's members (email and name), then its invitations."""
     with household_session() as session:
         for person in household.members(session, household_name):
             typer.echo(f"{person.email}\t{person.name}")
+        for invited in household.invites_of(session, household.get(session, household_name).id):
+            typer.echo(f"{invited.email}\t{invited.name}\tinvited")
 
 
 @household_app.command("remove")
 def household_remove(email: str) -> None:
-    """Remove someone from their household and delete their account."""
+    """Remove someone from their household, as the app does (their account stays)."""
     with household_session() as session:
         household.remove(session, email)
-    typer.echo(f"Removed {email}.")
+    typer.echo(f"Removed {email} from their household.")
 
 
 @household_app.command("notify-test")

@@ -64,6 +64,18 @@ export interface Household extends HouseholdSettings {
   name: string
   /** In the order they were invited. */
   members: HouseholdMember[]
+  /** Invitations not used yet, oldest first. */
+  invites: HouseholdInvite[]
+}
+
+/** Someone invited, who joins when they first sign in with this email. */
+export interface HouseholdInvite {
+  id: string
+  name: string
+  email: string
+  /** The member who invited them; null for the admin command. */
+  invited_by: Member | null
+  created_at: ISODateTime
 }
 
 export interface Member {

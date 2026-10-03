@@ -115,9 +115,6 @@ class Settings(BaseSettings):
     # The store's time zone: delivery times, and the day an order books (at
     # BOOK_HOUR there, four days before delivery).
     store_time_zone: str = "America/New_York"
-    # Neon project and branch for managing Neon Auth accounts (`castle-chef household`).
-    neon_project_id: str | None = None
-    neon_branch_id: str | None = None
     # Structured logs from the worker and CLI, plus logs sent from the app (client/).
     logs_dir: Path = Path.home() / ".local" / "state" / "castle-chef" / "logs"
     # Per-job working directories (prompt, agent output, logs).

@@ -1,46 +1,27 @@
-"""`castle-chef household`, through the CLI. Neon Auth account calls go to a
-fake `neonctl` that applies them to the test database."""
+"""`castle-chef household`, through the CLI: the admin's way to make households,
+invite people (they join on their first sign-in, as when a member invites them
+from the app), and remove them."""
 
-import json
-import stat
-import sys
 from datetime import UTC, date, datetime
-from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
 from sqlmodel import Session, select
 from typer.testing import CliRunner, Result
 
-from castle_chef import push
+from castle_chef import household, push
 from castle_chef.cli import app
 from castle_chef.models import (
-    AppUser,
     BookState,
     GroceryOrder,
     GroceryOrderStatus,
     Household,
+    HouseholdInvite,
     PushDevice,
 )
 
 runner = CliRunner()
-FAKE_NEONCTL = Path(__file__).parent / "fake_neonctl.py"
-
-
-@pytest.fixture(autouse=True)
-def fake_neonctl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    script = bin_dir / "neonctl"
-    script.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE_NEONCTL} "$@"\n')
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{Path(sys.executable).parent}:/usr/bin:/bin")
-    monkeypatch.setenv("CASTLE_CHEF_NEON_PROJECT_ID", "proj-test")
-    monkeypatch.setenv("CASTLE_CHEF_NEON_BRANCH_ID", "br-test")
-    log = tmp_path / "neonctl.log"
-    monkeypatch.setenv("FAKE_NEONCTL_LOG", str(log))
-    return log
 
 
 @pytest.fixture(autouse=True)
@@ -51,10 +32,6 @@ def households() -> None:
 
 def run(*args: str) -> Result:
     return runner.invoke(app, list(args))
-
-
-def calls(log: Path) -> list[list[str]]:
-    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
 def membership(session: Session) -> dict[str, str | None]:
@@ -69,12 +46,25 @@ def membership(session: Session) -> dict[str, str | None]:
     return {row.email: row.name for row in rows}
 
 
-def add_account(session: Session, email: str, name: str) -> None:
-    session.execute(
-        text('INSERT INTO neon_auth."user" (email, name) VALUES (:email, :name)'),
+def add_account(session: Session, email: str, name: str) -> UUID:
+    """An account, as signing in with an emailed code makes one."""
+    user_id: UUID = session.execute(
+        text('INSERT INTO neon_auth."user" (email, name) VALUES (:email, :name) RETURNING id'),
         {"email": email, "name": name},
-    )
+    ).scalar_one()
     session.commit()
+    return user_id
+
+
+def joined(session: Session, email: str, name: str, household_name: str) -> UUID:
+    """Invited, then signed in for the first time: a member."""
+    assert (
+        run("household", "invite", email, "--name", name, "--household", household_name).exit_code
+        == 0
+    )
+    user_id = add_account(session, email, name)
+    assert household.join_if_invited(session, user_id) is not None
+    return user_id
 
 
 def test_households_are_created_once_by_name() -> None:
@@ -86,9 +76,9 @@ def test_households_are_created_once_by_name() -> None:
 
 
 def test_list_counts_each_households_members_and_orders(session: Session) -> None:
-    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
-    run("household", "invite", "dad@example.com", "--name", "Dad", "--household", "Conn Castle")
-    run("household", "invite", "me@example.com", "--name", "Me", "--household", "Test Household")
+    joined(session, "mom@example.com", "Mom", "Conn Castle")
+    joined(session, "dad@example.com", "Dad", "Conn Castle")
+    joined(session, "me@example.com", "Me", "Test Household")
     house = session.exec(select(Household.id).where(Household.name == "Test Household")).one()
     # A placed order and the current draft.
     member = uuid4()
@@ -110,50 +100,70 @@ def test_list_counts_each_households_members_and_orders(session: Session) -> Non
     assert run("household", "list").stdout == "Conn Castle\t2\t0\nTest Household\t1\t2\n"
 
 
-def test_invite_creates_account_and_adds_it_to_the_household(
-    session: Session, fake_neonctl: Path
-) -> None:
+def test_invite_records_an_invitation_and_they_join_on_first_sign_in(session: Session) -> None:
     result = run(
-        "household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle"
+        "household", "invite", "Mom@Example.com", "--name", "Mom", "--household", "Conn Castle"
     )
 
     assert result.exit_code == 0, result.output
-    assert [call[:4] for call in calls(fake_neonctl)] == [
-        ["api", "/projects/proj-test/branches/br-test/auth/users", "-X", "POST"]
-    ]
-    assert run("household", "members", "Conn Castle").stdout == "mom@example.com\tMom\n"
-    assert run("household", "members", "Test Household").stdout == ""
+    # No account yet: they're invited.
+    assert membership(session) == {}
+    assert run("household", "members", "Conn Castle").stdout == "Mom@Example.com\tMom\tinvited\n"
+    assert household.may_sign_up(session, "mom@example.com")
+    # Their emailed code makes the account; their first sign-in joins them.
+    mom = add_account(session, "mom@example.com", "Mom")
+    assert household.join_if_invited(session, mom) is not None
     assert membership(session) == {"mom@example.com": "Conn Castle"}
+    assert run("household", "members", "Conn Castle").stdout == "mom@example.com\tMom\n"
+    # The invitation is used up: no other account can be made with it.
+    assert not household.may_sign_up(session, "mom@example.com")
 
 
-def test_inviting_an_existing_account_only_adds_membership(
-    session: Session, fake_neonctl: Path
-) -> None:
-    add_account(session, "kid@example.com", "Kid")
+def test_inviting_the_same_email_again_only_renames_the_invitation(session: Session) -> None:
+    run("household", "invite", "kid@example.com", "--name", "Kid", "--household", "Conn Castle")
 
-    first = run(
-        "household", "invite", "KID@example.com", "--name", "Kid", "--household", "Conn Castle"
-    )
     again = run(
-        "household", "invite", "kid@example.com", "--name", "Kid", "--household", "Conn Castle"
+        "household", "invite", "KID@example.com", "--name", "Sam", "--household", "Conn Castle"
     )
 
-    assert (first.exit_code, again.exit_code) == (0, 0), first.output + again.output
-    assert calls(fake_neonctl) == []
-    assert membership(session) == {"kid@example.com": "Conn Castle"}
+    assert again.exit_code == 0, again.output
+    [invited] = session.exec(select(HouseholdInvite)).all()
+    assert (invited.email, invited.name) == ("kid@example.com", "Sam")
 
 
-def test_someone_in_another_household_is_not_moved(session: Session, fake_neonctl: Path) -> None:
-    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
+def test_someone_in_or_invited_to_another_household_is_not_moved(session: Session) -> None:
+    joined(session, "mom@example.com", "Mom", "Conn Castle")
+    run("household", "invite", "dad@example.com", "--name", "Dad", "--household", "Conn Castle")
 
-    result = run(
+    member = run(
         "household", "invite", "mom@example.com", "--name", "Mom", "--household", "Test Household"
     )
+    invited = run(
+        "household", "invite", "dad@example.com", "--name", "Dad", "--household", "Test Household"
+    )
+    again = run(
+        "household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle"
+    )
+
+    assert (member.exit_code, invited.exit_code, again.exit_code) == (1, 1, 1)
+    assert "mom@example.com is in another household." in member.stderr
+    assert "dad@example.com is invited to another household." in invited.stderr
+    assert "mom@example.com is already in this household." in again.stderr
+    assert membership(session) == {"mom@example.com": "Conn Castle"}
+
+
+@pytest.mark.parametrize(
+    ("email", "name", "said"),
+    [
+        ("mom", "Mom", "mom isn't an email address."),
+        ("mom@example.com", " ", "Give them a name"),
+    ],
+)
+def test_an_invitation_needs_an_email_and_a_name(email: str, name: str, said: str) -> None:
+    result = run("household", "invite", email, "--name", name, "--household", "Conn Castle")
 
     assert result.exit_code == 1
-    assert "already in the household 'Conn Castle'" in result.stderr
-    assert membership(session) == {"mom@example.com": "Conn Castle"}
-    assert len(calls(fake_neonctl)) == 1  # only the first invite's account
+    assert said in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -163,34 +173,56 @@ def test_someone_in_another_household_is_not_moved(session: Session, fake_neonct
         ["household", "members", "Nowhere"],
     ],
 )
-def test_unknown_households_fail_clearly(
-    session: Session, fake_neonctl: Path, command: list[str]
-) -> None:
+def test_unknown_households_fail_clearly(session: Session, command: list[str]) -> None:
     result = run(*command)
 
     assert result.exit_code == 1
     assert "No household named 'Nowhere'" in result.stderr
-    assert calls(fake_neonctl) == []
-    assert membership(session) == {}
+    assert session.exec(select(HouseholdInvite)).all() == []
 
 
-def test_remove_deletes_membership_and_account(session: Session, fake_neonctl: Path) -> None:
-    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
+def test_remove_ends_the_membership_and_keeps_the_account(session: Session) -> None:
+    mom = joined(session, "mom@example.com", "Mom", "Conn Castle")
+    joined(session, "dad@example.com", "Dad", "Conn Castle")
+    session.add(PushDevice(token="ab" * 32, user_id=mom))
+    session.commit()
 
     result = run("household", "remove", "mom@example.com")
 
     assert result.exit_code == 0, result.output
-    assert calls(fake_neonctl)[-1][3] == "DELETE"
-    assert session.exec(select(AppUser)).all() == []
-    assert run("household", "members", "Conn Castle").stdout == ""
+    assert membership(session) == {"dad@example.com": "Conn Castle"}
+    # Her phones stop getting the household's notifications; her account stays.
+    assert session.exec(select(PushDevice)).all() == []
+    assert session.execute(text('SELECT count(*) FROM neon_auth."user"')).scalar_one() == 2
+    # Invited again, she's back on her next sign-in.
+    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
+    assert household.join_if_invited(session, mom) is not None
+
+
+def test_the_last_member_cant_be_removed(session: Session) -> None:
+    joined(session, "mom@example.com", "Mom", "Conn Castle")
+
+    result = run("household", "remove", "mom@example.com")
+
+    assert result.exit_code == 1
+    assert "only member" in result.stderr
+    assert membership(session) == {"mom@example.com": "Conn Castle"}
+
+
+def test_removing_someone_not_in_a_household_fails_clearly(session: Session) -> None:
+    add_account(session, "stranger@example.com", "Stranger")
+
+    for email in ("stranger@example.com", "nobody@example.com"):
+        result = run("household", "remove", email)
+        assert result.exit_code == 1
+        assert f"{email} isn't in a household." in result.stderr
 
 
 def test_notify_test_reaches_a_members_phones(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
-    [mom] = session.exec(select(AppUser)).all()
-    session.add(PushDevice(token="ab" * 32, user_id=mom.user_id))
+    mom = joined(session, "mom@example.com", "Mom", "Conn Castle")
+    session.add(PushDevice(token="ab" * 32, user_id=mom))
     session.commit()
     sent: list[tuple[str, str]] = []
 
@@ -211,46 +243,12 @@ def test_notify_test_reaches_a_members_phones(
     )
 
 
-def test_removing_someone_forgets_their_phones(session: Session) -> None:
-    run("household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle")
-    [mom] = session.exec(select(AppUser)).all()
-    session.add(PushDevice(token="ab" * 32, user_id=mom.user_id))
-    session.commit()
-
-    assert run("household", "remove", "mom@example.com").exit_code == 0
-
-    session.expire_all()
-    assert session.exec(select(PushDevice)).all() == []
-
-
-def test_removing_an_unknown_account_fails_clearly(fake_neonctl: Path) -> None:
-    result = run("household", "remove", "nobody@example.com")
-
-    assert result.exit_code == 1
-    assert "No account for nobody@example.com." in result.stderr
-    assert calls(fake_neonctl) == []
-
-
-def test_invite_fails_loudly_when_neon_rejects_it(
-    session: Session, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("FAKE_NEONCTL_FAIL", "1")
-
-    result = run(
-        "household", "invite", "mom@example.com", "--name", "Mom", "--household", "Conn Castle"
-    )
-
-    assert result.exit_code != 0
-    assert "simulated Neon failure" in str(result.exception)
-    assert session.exec(select(AppUser)).all() == []
-
-
 @pytest.mark.parametrize("missing", ["--name", "--household"])
-def test_invite_requires_a_name_and_a_household(fake_neonctl: Path, missing: str) -> None:
+def test_invite_requires_a_name_and_a_household(session: Session, missing: str) -> None:
     options = {"--name": "Mom", "--household": "Conn Castle"}
     del options[missing]
 
     result = run("household", "invite", "mom@example.com", *sum(options.items(), ()))
 
     assert result.exit_code == 2  # usage error: missing required option
-    assert calls(fake_neonctl) == []
+    assert session.exec(select(HouseholdInvite)).all() == []

@@ -118,7 +118,7 @@ jobs:
             echo "Restored Neon main from $SNAPSHOT (everything written since is gone; everyone signs in again)."
             if [ "$after" != "$before" ]; then
               # Expected: the restored branch takes over the name; the old one is kept.
-              echo "main's branch id changed ($before -> $after): set CASTLE_CHEF_NEON_BRANCH_ID=$after in backend/.env for \`castle-chef household\`. Delete the pre-restore branch when no longer needed."
+              echo "main's branch id changed ($before -> $after): the steps below set Neon Auth's sign-up webhook on it (docs/operations/aws.md \"Sign-up\"). Delete the pre-restore branch when no longer needed."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/deploy
@@ -128,6 +128,22 @@ jobs:
           worker-image-digest: ${{ steps.check.outputs.worker }}
           role: ${{ env.DEPLOY_ROLE }}
           region: ${{ env.AWS_REGION }}
+          neon-api-key: ${{ secrets.NEON_API_KEY }}
+          neon-project-id: ${{ env.NEON_PROJECT_ID }}
+      # Sign-up stays invite-only whatever the release does: this from the current main.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          path: current
+          sparse-checkout: .github/actions
+      - id: api
+        run: echo "url=$(jq -er '.CastleChef.ApiUrlOutput' "$RUNNER_TEMP/cdk-outputs.json")" >> "$GITHUB_OUTPUT"
+      - name: Make sign-up invite-only
+        uses: ./current/.github/actions/invite-only
+        with:
+          api-url: ${{ steps.api.outputs.url }}
+          neon-api-key: ${{ secrets.NEON_API_KEY }}
+          neon-project-id: ${{ env.NEON_PROJECT_ID }}
       - name: Start jobs again
         if: inputs.restore_database
         env:

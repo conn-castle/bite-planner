@@ -42,7 +42,12 @@ export const sessionQuery = queryOptions({
     if (!user) return null
     const me = await apiRequest<Me>('GET', '/v1/me')
     logger.info('session.loaded', { userId: user.id, householdId: me.household?.id ?? null })
-    return { user, household: me.household, settings: me.settings && (await withPhoneTimeZone(me.settings)) }
+    return {
+      // The API's name: joining names an account the sign-in left unnamed.
+      user: { ...user, name: me.name ?? user.name },
+      household: me.household,
+      settings: me.settings && (await withPhoneTimeZone(me.settings)),
+    }
   },
   // Always stale: the persisted session renders the app instantly, and is
   // re-checked in the background on every launch and return to the foreground.
@@ -63,6 +68,28 @@ function removeAccountData(queryClient: QueryClient) {
 export async function afterSignIn(queryClient: QueryClient) {
   removeAccountData(queryClient)
   await queryClient.fetchQuery(sessionQuery)
+}
+
+/**
+ * After leaving the household (still signed in): nothing of it stays on the
+ * phone, cached or waiting to be sent, and the session says it's in none.
+ */
+export async function afterLeaving(queryClient: QueryClient) {
+  // A fetch on its way was answered while still a member: it mustn't land.
+  await queryClient.cancelQueries({ queryKey: sessionQuery.queryKey })
+  queryClient.setQueryData<Session | null>(
+    sessionQuery.queryKey,
+    (session) => session && { ...session, household: null, settings: null },
+  )
+  removeAccountData(queryClient)
+  const mutations = queryClient.getMutationCache()
+  for (const mutation of mutations.getAll()) if (mutation.state.isPaused) mutations.remove(mutation)
+  try {
+    await queryClient.fetchQuery(sessionQuery)
+  } catch (error) {
+    // It stays in no household; the session is checked again on the next launch.
+    logger.warn('session.refresh_failed', errorFields(error))
+  }
 }
 
 export async function signOut(queryClient: QueryClient) {

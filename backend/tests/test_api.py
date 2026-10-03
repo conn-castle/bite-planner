@@ -7,7 +7,7 @@ import logging
 import os
 import subprocess
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_OID, UUID, uuid4, uuid5
@@ -27,7 +27,7 @@ from sqlmodel import Session, col, select
 from castle_chef import api as api_module
 from castle_chef import booking, orders, products
 from castle_chef.api import app, create_app
-from castle_chef.auth import AuthError, AuthUnavailable, Principal
+from castle_chef.auth import AuthError, AuthUnavailable, Principal, WebhookRejected
 from castle_chef.checkout import SIGNED_OUT_ERROR, Quote
 from castle_chef.db import get_engine
 from castle_chef.dispatch import DispatchError, LocalDispatcher, SqsDispatcher, get_dispatcher
@@ -1476,6 +1476,7 @@ def test_a_household_starts_with_the_default_settings_and_lists_its_members(
             {"user_id": str(DAD), "name": "Dad", "email": "dad@example.com"},
             {"user_id": str(MOM), "name": "Mom", "email": "mom@example.com"},
         ],
+        "invites": [],
     }
     assert [m["name"] for m in household_settings(client, NEIGHBOR)["members"]] == ["Neighbor"]
 
@@ -1647,7 +1648,12 @@ def test_personal_settings_that_are_not_valid_are_refused(
     }
 
 
-def test_placed_orders_are_listed_from_the_day_they_cover(client: TestClient) -> None:
+def test_placed_orders_are_listed_from_the_day_they_cover(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Midday in the store's time zone: today's booking run has been.
+    noon = datetime.now(ZoneInfo("America/New_York")).replace(hour=12, minute=0)
+    monkeypatch.setattr(booking, "store_now", lambda: noon)
     start = tomorrow()
     first = placed_order(client, start, start + timedelta(days=3))
     second = placed_order(client, start + timedelta(days=3), start + timedelta(days=5), DAD)
@@ -3062,3 +3068,166 @@ def test_someone_says_whether_instacart_has_an_order_booking_couldnt_confirm(
         "booked",
         {"order_number": None, "window": None, "total_cents": None, "swaps": []},
     )
+
+
+# Members: invited by email, joining on their first sign-in; removed by anyone in
+# the household, but never the last.
+
+
+def invite(client: TestClient, email: str, name: str = "Sam", user: UUID = MOM) -> Response:
+    return client.post(
+        "/v1/household/invites", headers=as_user(user), json={"email": email, "name": name}
+    )
+
+
+def remove_member(client: TestClient, who: UUID, user: UUID = MOM) -> Response:
+    return client.delete(f"/v1/household/members/{who}", headers=as_user(user))
+
+
+def account(session: Session, email: str, name: str) -> UUID:
+    """An account, as Neon Auth makes one on a first sign-in with an emailed code."""
+    user_id = uuid4()
+    session.execute(
+        text('INSERT INTO neon_auth."user" (id, email, name) VALUES (:id, :email, :name)'),
+        {"id": user_id, "email": email, "name": name},
+    )
+    session.commit()
+    return user_id
+
+
+def me(client: TestClient, user: UUID) -> dict[str, Any]:
+    return ok(client.get("/v1/me", headers=as_user(user)))
+
+
+def test_someone_invited_joins_the_household_when_they_first_sign_in(
+    client: TestClient, session: Session
+) -> None:
+    invited = ok(invite(client, "Sam@Example.com"), 201)["invites"]
+    assert [(i["name"], i["email"], i["invited_by"]["name"]) for i in invited] == [
+        ("Sam", "Sam@Example.com", "Mom")
+    ]
+    # Everyone in the household sees the invitation.
+    assert household_settings(client, DAD)["invites"] == invited
+
+    # Signing in with the emailed code makes the account, unnamed.
+    sam = account(session, "sam@example.com", "")
+    signed_in = me(client, sam)
+
+    assert (signed_in["member"], signed_in["household"]["name"]) == (True, "Conn Castle")
+    # Called what the invitation said, listed after the members invited before.
+    assert signed_in["name"] == "Sam"
+    household = household_settings(client, sam)
+    names_ = [m["name"] for m in household["members"]]
+    assert (sorted(names_[:2]), names_[2]) == (["Dad", "Mom"], "Sam")
+    assert household["invites"] == []
+
+
+def test_someone_signed_in_but_never_invited_joins_nothing(client: TestClient) -> None:
+    signed_in = me(client, STRANGER)
+
+    assert (signed_in["member"], signed_in["household"]) == (False, None)
+    detail(client.get("/v1/household", headers=as_user(STRANGER)), 403)
+
+
+def test_an_invitation_can_be_withdrawn_before_its_used(
+    client: TestClient, session: Session
+) -> None:
+    [invited] = ok(invite(client, "sam@example.com"), 201)["invites"]
+
+    after = ok(client.delete(f"/v1/household/invites/{invited['id']}", headers=as_user(DAD)))
+
+    assert after["invites"] == []
+    assert me(client, account(session, "sam@example.com", "Sam"))["member"] is False
+    # Another household's members can't withdraw it.
+    [again] = ok(invite(client, "kid@example.com"), 201)["invites"]
+    ok(client.delete(f"/v1/household/invites/{again['id']}", headers=as_user(NEIGHBOR)))
+    assert [i["email"] for i in household_settings(client)["invites"]] == ["kid@example.com"]
+
+
+def test_invitations_that_cant_be_are_refused(client: TestClient) -> None:
+    assert (
+        detail(invite(client, "dad@example.com"), 409)
+        == "dad@example.com is already in this household."
+    )
+    assert detail(invite(client, "neighbor@example.com"), 409) == (
+        "neighbor@example.com is in another household."
+    )
+    ok(invite(client, "sam@example.com", user=NEIGHBOR), 201)
+    assert detail(invite(client, "sam@example.com"), 409) == (
+        "sam@example.com is invited to another household."
+    )
+    assert detail(invite(client, "sam"), 422) == "sam isn't an email address."
+    detail(invite(client, "kid@example.com", name=" "), 422)
+
+
+def test_a_member_removed_loses_access_at_once_and_their_lock_goes(
+    client: TestClient, session: Session
+) -> None:
+    order_id = open_draft(client, DAD)["id"]  # Dad has its lock
+
+    no_content(remove_member(client, DAD))
+
+    assert [m["name"] for m in household_settings(client)["members"]] == ["Mom"]
+    detail(client.get("/v1/household", headers=as_user(DAD)), 403)
+    assert me(client, DAD)["member"] is False
+    # Mom can order now.
+    assert get_order(client, order_id)["lock"] is None
+    ok(take(client, order_id, MOM))
+
+
+def test_a_member_can_leave_but_the_last_one_cant(client: TestClient) -> None:
+    no_content(remove_member(client, MOM, user=MOM))  # Mom leaves
+
+    assert detail(remove_member(client, DAD, user=DAD), 409) == (
+        "They're the household's only member: a household can't be left empty."
+    )
+    assert [m["name"] for m in household_settings(client, DAD)["members"]] == ["Dad"]
+
+
+def test_only_the_households_own_members_can_be_removed(client: TestClient) -> None:
+    detail(remove_member(client, NEIGHBOR), 404)
+    detail(remove_member(client, uuid4()), 404)
+    assert [m["name"] for m in household_settings(client, NEIGHBOR)["members"]] == ["Neighbor"]
+
+
+class Verifier:
+    """Neon Auth's signature checked (test_auth.py checks the real one)."""
+
+    def __init__(self, genuine: bool = True) -> None:
+        self.genuine = genuine
+
+    def verify(self, body: bytes, headers: Mapping[str, str]) -> None:
+        if not self.genuine:
+            raise WebhookRejected("Bad signature.")
+
+
+def before_create(client: TestClient, email: str, genuine: bool = True) -> Response:
+    app.dependency_overrides[api_module.get_webhook_verifier] = lambda: Verifier(genuine)
+    body = {
+        "event_id": str(uuid4()),
+        "event_type": "user.before_create",
+        "timestamp": "2026-10-03T12:00:00.000Z",
+        "user": {"id": str(uuid4()), "email": email, "name": "Someone"},
+        "event_data": {"auth_provider": "credential"},
+    }
+    return client.post("/v1/auth/neon-webhook", json=body)
+
+
+def test_neon_auth_makes_an_account_only_for_an_invited_email(client: TestClient) -> None:
+    ok(invite(client, "sam@example.com"), 201)
+
+    assert ok(before_create(client, "SAM@example.com")) == {"allowed": True, "error_message": None}
+    refused = ok(before_create(client, "eve@example.com"))
+    assert refused["allowed"] is False
+    assert "invite-only" in refused["error_message"]
+    # A request Neon Auth didn't sign is refused outright (and so is the sign-up).
+    detail(before_create(client, "sam@example.com", genuine=False), 401)
+
+
+def test_someone_who_already_has_a_name_keeps_it_when_they_join(
+    client: TestClient, session: Session
+) -> None:
+    ok(invite(client, "sam@example.com", name="Sam"), 201)
+    samuel = account(session, "sam@example.com", "Samuel")  # named before, e.g. removed once
+
+    assert me(client, samuel)["name"] == "Samuel"

@@ -20,6 +20,12 @@ inputs:
   region:
     description: AWS region
     required: true
+  neon-api-key:
+    description: Neon API key (the project's), to make sign-up on main invite-only
+    required: true
+  neon-project-id:
+    description: The Neon project
+    required: true
 
 runs:
   using: composite
@@ -58,6 +64,15 @@ runs:
           exit 1
         fi
         echo "Smoke test passed: $url" >> "$GITHUB_STEP_SUMMARY"
+    - id: api
+      shell: bash
+      run: echo "url=$(jq -er '.CastleChef.ApiUrlOutput' "$RUNNER_TEMP/cdk-outputs.json")" >> "$GITHUB_OUTPUT"
+    - name: Make sign-up invite-only
+      uses: ./.github/actions/invite-only
+      with:
+        api-url: ${{ steps.api.outputs.url }}
+        neon-api-key: ${{ inputs.neon-api-key }}
+        neon-project-id: ${{ inputs.neon-project-id }}
     - name: Rebuild the reminder schedules
       shell: bash
       run: |

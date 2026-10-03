@@ -1,14 +1,16 @@
+import { useIonAlert } from '@ionic/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
   DECIDE_BY_OFFSET_DAYS,
+  EMAIL_LENGTH,
   NAME_LENGTH,
   REMINDER_LEAD_DAYS,
   SERVINGS,
   TIP_MAX_CENTS,
   TIP_PERCENT,
 } from '../../lib/api/limits'
-import type { Household, PersonalSettings, ProductGone } from '../../lib/api/types'
+import type { Household, HouseholdInvite, HouseholdMember, PersonalSettings, ProductGone } from '../../lib/api/types'
 import { errorFields, logger } from '../../lib/log'
 import { Button } from '../../ui/Button'
 import { Group, Row } from '../../ui/Group'
@@ -28,12 +30,15 @@ import styles from './SettingsPage.module.css'
 import {
   useChangeHousehold,
   useChangeName,
+  useCancelInvite,
   useChangePersonal,
   useHousehold,
   useHouseholdError,
   useNameError,
   usePersonalError,
   usePersonalSettings,
+  useInvite,
+  useRemoveMember,
   useUserName,
 } from './settings'
 
@@ -46,7 +51,10 @@ export function SettingsPage() {
   return (
     <Page title="Settings" overline={name ? `You · ${name}` : undefined}>
       {household.shown ? (
-        <HouseholdGroup household={household.shown} userId={session?.user.id} />
+        <>
+          <HouseholdGroup household={household.shown} />
+          <MembersGroup household={household.shown} userId={session?.user.id} />
+        </>
       ) : household.isError ? (
         <Group title="Household">
           <Row label="Couldn't load the household's settings" sub={household.error.message} />
@@ -62,14 +70,11 @@ export function SettingsPage() {
   )
 }
 
-function HouseholdGroup({ household, userId }: { household: Household; userId: string | undefined }) {
+function HouseholdGroup({ household }: { household: Household }) {
   const change = useChangeHousehold()
   const error = useHouseholdError()
   const prompt = useTextPrompt()
   const { decide_by_offset_days: offset, reminder_lead_days: lead, default_servings: servings } = household
-  const members = household.members.map((member) =>
-    member.user_id === userId ? 'You' : (member.name ?? member.email ?? 'Someone'),
-  )
 
   return (
     <>
@@ -85,9 +90,8 @@ function HouseholdGroup({ household, userId }: { household: Household; userId: s
           onClick={() =>
             prompt({
               title: 'Household name',
-              value: household.name,
-              maxLength: NAME_LENGTH,
-              onSave: (name) => change.mutate({ name }),
+              fields: [{ value: household.name, maxLength: NAME_LENGTH }],
+              onSave: ([name]) => change.mutate({ name }),
             })
           }
         />
@@ -132,7 +136,6 @@ function HouseholdGroup({ household, userId }: { household: Household; userId: s
             />
           }
         />
-        <Row label="Members" detail={members.join(', ')} />
       </Group>
       <Group
         title="Delivery"
@@ -302,6 +305,99 @@ function AllowNotificationsRow() {
   )
 }
 
+/**
+ * Who's in the household, and who's invited: anyone in it invites someone by
+ * email (they join on their first sign-in with it), withdraws an invitation, or
+ * removes someone, themselves too, but never the last member.
+ */
+function MembersGroup({ household, userId }: { household: Household; userId: string | undefined }) {
+  const [presentAlert] = useIonAlert()
+  const prompt = useTextPrompt()
+  const invite = useInvite()
+  const cancelInvite = useCancelInvite()
+  const removeMember = useRemoveMember()
+  const failed = invite.error ?? cancelInvite.error ?? removeMember.error
+  const alone = household.members.length === 1
+
+  function inviteSomeone() {
+    prompt({
+      title: 'Invite someone',
+      message: 'They join when they first sign in to Castle Chef with this email.',
+      fields: [
+        { placeholder: 'Name', maxLength: NAME_LENGTH },
+        { placeholder: 'Email', maxLength: EMAIL_LENGTH, email: true },
+      ],
+      action: 'Invite',
+      onSave: ([name, email]) => invite.mutate({ name, email }),
+    })
+  }
+
+  function confirmRemove(member: HouseholdMember) {
+    const self = member.user_id === userId
+    const who = member.name || member.email || 'them'
+    void presentAlert({
+      header: self ? `Leave ${household.name}?` : `Remove ${who}?`,
+      message: self
+        ? "You won't see its orders or meals any more. Someone can invite you back."
+        : `They won't see ${household.name}'s orders or meals any more. You can invite them back.`,
+      buttons: [
+        { text: 'Cancel', role: 'cancel' },
+        {
+          text: self ? 'Leave' : 'Remove',
+          role: 'destructive',
+          handler: () => removeMember.mutate({ userId: member.user_id, self }),
+        },
+      ],
+    })
+  }
+
+  function confirmCancel(invited: HouseholdInvite) {
+    void presentAlert({
+      header: `Withdraw ${invited.name}'s invitation?`,
+      message: `${invited.email} won't be able to join unless you invite them again.`,
+      buttons: [
+        { text: 'Keep it', role: 'cancel' },
+        { text: 'Withdraw', role: 'destructive', handler: () => cancelInvite.mutate({ inviteId: invited.id }) },
+      ],
+    })
+  }
+
+  return (
+    <>
+      {failed && <Notice>Couldn't do that: {failed.message}</Notice>}
+      <Group
+        title="Members"
+        footerIcon="users"
+        footer="Anyone here can invite or remove people. They'll also need TestFlight access to install the app."
+      >
+        {household.members.map((member) => (
+          <Row
+            key={member.user_id}
+            // An account named nothing yet shows its email.
+            label={member.name || member.email || 'Someone'}
+            sub={member.name ? member.email : undefined}
+            detail={member.user_id === userId ? 'You' : undefined}
+            // The last member stays: a household is never empty.
+            onClick={alone ? undefined : () => confirmRemove(member)}
+            chevron={!alone}
+          />
+        ))}
+        {household.invites.map((invited) => (
+          <Row
+            key={invited.id}
+            label={invited.name}
+            sub={invited.email}
+            detail="Invited"
+            chevron
+            onClick={() => confirmCancel(invited)}
+          />
+        ))}
+        <Row label="Invite someone" chevron onClick={inviteSomeone} />
+      </Group>
+    </>
+  )
+}
+
 function AccountGroup() {
   const queryClient = useQueryClient()
   const { data: session } = useSession()
@@ -345,9 +441,8 @@ function AccountGroup() {
               onClick={() =>
                 prompt({
                   title: 'Your name',
-                  value: name ?? '',
-                  maxLength: NAME_LENGTH,
-                  onSave: (text) => changeName.mutate({ name: text }),
+                  fields: [{ value: name ?? '', maxLength: NAME_LENGTH }],
+                  onSave: ([text]) => changeName.mutate({ name: text }),
                 })
               }
             />
