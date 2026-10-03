@@ -24,9 +24,10 @@ import { nextQuery, useDiscardOrder, useNextOrder, usePlacedOrders } from '../or
 import {
   awaitIdeas,
   clearTapped,
+  onTap,
   resolveTap,
   stopAwaitingIdeas,
-  useTapped,
+  type Tap,
   useYourReminder,
 } from '../notifications/notifications'
 import { useSession } from '../session/session'
@@ -93,62 +94,68 @@ export function WeekPage() {
   // why (its top card has the next step); nothing starts a draft without a tap
   // in the app. "Ideas ready" for the draft already cached opens it at once,
   // loading its ideas, rather than waiting on the phone's connection.
-  const tapped = useTapped()
   useEffect(() => {
-    if (!tapped || tapped.about.kind === 'test') return
-    if (tapped.about.kind === 'booking') {
-      // How booking went: that order's page says, with what can be done.
-      clearTapped()
-      logger.info('push.tap_opened', { kind: 'booking', open: true })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders })
-      router.push(`/week/orders/${tapped.about.orderId}`)
-      return
-    }
-    const about = tapped.about
-    let current = true
-    const since = (at: number) => Math.round(Date.now() - at)
-    const cachedDraft = queryClient.getQueryData<NextOrder>(nextQuery.queryKey)?.draft
-    const early = about.kind === 'ideas_ready' && cachedDraft?.id === about.orderId
-    if (early) {
-      awaitIdeas(queryClient, about.orderId, tapped.at)
-      openFlow(about.orderId)
-      logger.info('push.tap_opened', { kind: about.kind, open: true, early: true, ms: since(tapped.at) })
-    }
-    resolveTap(about)
-      .then((result) => {
-        if (!current) return
+    // The tap being handled. A newer one supersedes it; once Home has gone,
+    // none is, and the tap stays for the next Home to handle.
+    let handling: Tap | null = null
+    const stop = onTap((tapped) => {
+      if (tapped.about.kind === 'test') return
+      handling = tapped
+      if (tapped.about.kind === 'booking') {
+        // How booking went: that order's page says, with what can be done.
         clearTapped()
-        if (early && result.open) return
-        logger.info('push.tap_opened', { kind: about.kind, open: result.open, early, ms: since(tapped.at) })
-        if (result.open) {
-          // The list the tap is about may be newer than the copy cached.
-          if (result.step === 'list') void queryClient.invalidateQueries({ queryKey: queryKeys.order(result.orderId) })
-          openFlow(result.orderId, result.step)
-          return
-        }
-        // Opened early, but the draft is gone or placed: close it and say why.
-        if (early) {
-          stopAwaitingIdeas('closed')
-          setFlowOpen(false)
-        }
-        void presentAlert({ header: result.header, message: result.message, buttons: ['OK'] })
-      })
-      .catch((error: unknown) => {
-        if (!current) return
-        logger.warn('push.tap_failed', { ...errorFields(error), ms: since(tapped.at) })
-        clearTapped()
-        // Opened early, the flow shows its own problem (and keeps trying).
-        if (early) return
-        void presentAlert({
-          header: "Couldn't open the order",
-          message: error instanceof Error ? error.message : String(error),
-          buttons: ['OK'],
+        logger.info('push.tap_opened', { kind: 'booking', open: true })
+        void queryClient.invalidateQueries({ queryKey: queryKeys.placedOrders })
+        router.push(`/week/orders/${tapped.about.orderId}`)
+        return
+      }
+      const about = tapped.about
+      const current = () => handling === tapped
+      const since = (at: number) => Math.round(Date.now() - at)
+      const cachedDraft = queryClient.getQueryData<NextOrder>(nextQuery.queryKey)?.draft
+      const early = about.kind === 'ideas_ready' && cachedDraft?.id === about.orderId
+      if (early) {
+        awaitIdeas(queryClient, about.orderId, tapped.at)
+        openFlow(about.orderId)
+        logger.info('push.tap_opened', { kind: about.kind, open: true, early: true, ms: since(tapped.at) })
+      }
+      resolveTap(about)
+        .then((result) => {
+          if (!current()) return
+          clearTapped()
+          if (early && result.open) return
+          logger.info('push.tap_opened', { kind: about.kind, open: result.open, early, ms: since(tapped.at) })
+          if (result.open) {
+            // The list the tap is about may be newer than the copy cached.
+            if (result.step === 'list') void queryClient.invalidateQueries({ queryKey: queryKeys.order(result.orderId) })
+            openFlow(result.orderId, result.step)
+            return
+          }
+          // Opened early, but the draft is gone or placed: close it and say why.
+          if (early) {
+            stopAwaitingIdeas('closed')
+            setFlowOpen(false)
+          }
+          void presentAlert({ header: result.header, message: result.message, buttons: ['OK'] })
         })
-      })
+        .catch((error: unknown) => {
+          if (!current()) return
+          logger.warn('push.tap_failed', { ...errorFields(error), ms: since(tapped.at) })
+          clearTapped()
+          // Opened early, the flow shows its own problem (and keeps trying).
+          if (early) return
+          void presentAlert({
+            header: "Couldn't open the order",
+            message: error instanceof Error ? error.message : String(error),
+            buttons: ['OK'],
+          })
+        })
+    })
     return () => {
-      current = false
+      handling = null
+      stop()
     }
-  }, [tapped, queryClient, presentAlert, router])
+  }, [queryClient, presentAlert, router])
 
   // Discarding affects everyone in the household, so it asks first.
   function confirmDiscard(order: GroceryOrder) {

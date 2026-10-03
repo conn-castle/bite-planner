@@ -371,6 +371,21 @@ export function clearTapped() {
   tapped.set(null)
 }
 
+/**
+ * Calls `handler` with each tap there is to act on: one waiting from before it
+ * listened (a tap that launched the app), at once, then each new one. Home
+ * handles them (see WeekPage), clearing each once it's done.
+ */
+export function onTap(handler: (tap: Tap) => void): () => void {
+  const deliver = () => {
+    const tap = tapped.get()
+    if (tap) handler(tap)
+  }
+  const unsubscribe = tapped.subscribe(deliver)
+  deliver()
+  return unsubscribe
+}
+
 /** In the app: a notification that arrived while it was open (iOS shows no banner then). */
 export interface Toast {
   id: number

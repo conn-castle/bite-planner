@@ -230,6 +230,23 @@ describe('a tapped notification', () => {
     expect(currentTapped()).toBeNull()
   })
 
+  it('is handed to Home whether it launched the app or came after Home was listening', () => {
+    fire('pushNotificationActionPerformed', { notification: { data: { kind: 'reminder', order_number: 4 } } })
+    const handled: unknown[] = []
+    const stop = push.onTap((tap) => handled.push(tap.about))
+    expect(handled).toEqual([{ kind: 'reminder', orderNumber: 4 }])
+
+    push.clearTapped()
+    fire('pushNotificationActionPerformed', { notification: { data: { kind: 'list_ready', order_id: 'draft' } } })
+    stop()
+    fire('pushNotificationActionPerformed', { notification: { data: { kind: 'reminder', order_number: 5 } } })
+
+    expect(handled).toEqual([
+      { kind: 'reminder', orderNumber: 4 },
+      { kind: 'list_ready', orderId: 'draft' },
+    ])
+  })
+
   it('only opens the app when it is a test, or not one the app knows', () => {
     fire('pushNotificationActionPerformed', { notification: { data: { kind: 'test' } } })
     fire('pushNotificationActionPerformed', { notification: { data: { kind: 'reminder' } } })
