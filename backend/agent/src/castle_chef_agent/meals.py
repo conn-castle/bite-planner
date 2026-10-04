@@ -1,9 +1,11 @@
 """The meals the agent adds (`castle-chef meal add`), kept in the job directory
 for the worker."""
 
+from collections import Counter
 from pathlib import Path
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from castle_chef_agent.jobfiles import locked, read_context, replace_file
 from castle_chef_agent.names import key
@@ -31,6 +33,23 @@ class IngredientInput(BaseModel):
     preparation: str | None = Field(default=None, description="e.g. 'minced', 'sliced'.")
 
 
+class StepInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, description="The step, as the cook reads it.")
+    timer_minutes: int | None = Field(
+        default=None,
+        ge=1,
+        description="When the step has the cook wait for a set time (roasting, baking, "
+        "simmering, resting), those minutes, for a timer. Null when there's nothing to time.",
+    )
+    ingredients: list[str] = Field(
+        default_factory=list,
+        description="The ingredients this step uses, each named exactly as in the meal's "
+        "`ingredients`. Empty when it uses none (e.g. 'Heat the oven to 425°F.').",
+    )
+
+
 class MealInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -40,7 +59,33 @@ class MealInput(BaseModel):
     active_time_minutes: int | None = Field(default=None, ge=0)
     total_time_minutes: int | None = Field(default=None, ge=0)
     ingredients: list[IngredientInput] = Field(min_length=1)
-    steps: list[str] = Field(min_length=1)
+    steps: list[StepInput] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _steps_use_its_ingredients(self) -> Self:
+        listed = Counter(key(ingredient.name) for ingredient in self.ingredients)
+        named = [name for step in self.steps for name in step.ingredients]
+        if unknown := [name for name in named if not listed[key(name)]]:
+            raise ValueError(f"Steps name ingredients the meal doesn't list: {_quoted(unknown)}.")
+        if twice := sorted({name for name in named if listed[key(name)] > 1}):
+            raise ValueError(
+                f"Steps name ingredients the meal lists more than once: {_quoted(twice)}. "
+                "Name each entry so a step can say which it uses, e.g. 'milk, for the sauce'."
+            )
+        return self
+
+    def step_ingredients(self, step: StepInput) -> list[int]:
+        """The positions in `ingredients` of the ones `step` uses (each listed once)."""
+        names = {key(name) for name in step.ingredients}
+        return [
+            position
+            for position, ingredient in enumerate(self.ingredients)
+            if key(ingredient.name) in names
+        ]
+
+
+def _quoted(names: list[str]) -> str:
+    return ", ".join(f'"{name}"' for name in names)
 
 
 class MealsJob(BaseModel):

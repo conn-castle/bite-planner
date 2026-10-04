@@ -17,7 +17,7 @@ import pytest
 from botocore.stub import Stubber
 from castle_chef_agent.checkout import Checkout, QuoteLine
 from castle_chef_agent.instacart import Product
-from castle_chef_agent.meals import IngredientInput, MealInput
+from castle_chef_agent.meals import IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ItemChoice, ProductCount
 from fastapi.testclient import TestClient
 from httpx2 import Response
@@ -243,7 +243,11 @@ def recipe(name: str) -> MealInput:
             IngredientInput(name="tortillas", quantity=8),
             IngredientInput(name="ground beef", quantity=1, unit="lb", preparation="browned"),
         ],
-        steps=["Cook.", "Serve."],
+        steps=[
+            StepInput(text="Brown the beef.", ingredients=["Ground beef"]),
+            StepInput(text="Simmer until thick.", timer_minutes=10),
+            StepInput(text="Fill the tortillas.", ingredients=["tortillas", "ground beef"]),
+        ],
     )
 
 
@@ -1721,7 +1725,12 @@ def test_a_suggestion_opens_as_its_full_recipe(client: TestClient) -> None:
         "total_time_minutes": 30,
         "rating": None,
         "servings": 4,
-        "steps": ["Cook.", "Serve."],
+        # Each step with its timer and the ingredients it uses (by position).
+        "steps": [
+            {"text": "Brown the beef.", "timer_minutes": None, "ingredients": [1]},
+            {"text": "Simmer until thick.", "timer_minutes": 10, "ingredients": []},
+            {"text": "Fill the tortillas.", "timer_minutes": None, "ingredients": [0, 1]},
+        ],
         "ingredients": [
             {"name": "tortillas", "quantity": 8, "unit": None, "preparation": None},
             {"name": "ground beef", "quantity": 1, "unit": "lb", "preparation": "browned"},

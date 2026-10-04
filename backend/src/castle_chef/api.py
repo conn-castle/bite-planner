@@ -321,9 +321,16 @@ class IngredientOut(BaseModel):
     preparation: str | None
 
 
+class StepOut(BaseModel):
+    text: str
+    timer_minutes: int | None
+    # Positions in the meal's `ingredients`.
+    ingredients: list[int]
+
+
 class MealOut(MealSummaryOut):
     servings: int
-    steps: list[str]
+    steps: list[StepOut]
     ingredients: list[IngredientOut]
 
 
@@ -1694,7 +1701,7 @@ def create_app() -> FastAPI:
         return MealOut(
             **meal_summary(meal, rated).model_dump(),
             servings=meal.servings,
-            steps=meal.steps,
+            steps=[StepOut.model_validate(step.model_dump()) for step in meal.steps],
             ingredients=[
                 IngredientOut.model_validate(ingredient, from_attributes=True)
                 for ingredient in meal.ingredients

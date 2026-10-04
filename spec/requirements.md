@@ -35,7 +35,7 @@ Each step does one thing.
 
 ## Draft order
 
-- [ ] An unplaced order is a household draft: its suggestions, picks, and dismissals are kept when the flow is closed.
+- [x] An unplaced order is a household draft: its suggestions, picks, and dismissals are kept when the flow is closed.
 - [x] Any household member can resume the draft, at the furthest step its flow has reached.
 - [x] A household member can discard the draft.
 
@@ -115,7 +115,7 @@ Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-2
 ## Calendar and tasks
 
 - [x] The app shows delivery dates, decide-by dates, and the days each order covers, from past orders to 90 days ahead.
-- [ ] The app tells the user which tasks are due, such as picking meals and placing the next order.
+- [x] The app tells the user which tasks are due, such as picking meals and placing the next order.
 
 ## Notifications
 
@@ -151,7 +151,7 @@ Personal settings:
 - [x] History's meals can be searched by name and filtered, including by rating.
 - [x] Order view: an order's dates, status, meals, and shopping list (from stage 3, its Instacart order too).
 - [x] Meal view: a meal's recipe (servings, ingredients, facts).
-- [ ] Instructions view: a meal's cooking steps.
+- [x] Instructions view: a meal's cooking steps.
 
 ## Deferred
 

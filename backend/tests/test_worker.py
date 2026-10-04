@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 import pytest
 from castle_chef_agent.checkout import Checkout
 from castle_chef_agent.instacart import Product
-from castle_chef_agent.meals import IngredientInput, MealInput
+from castle_chef_agent.meals import IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ProductCount
 from castle_chef_agent.shopping import Aisle
 from castle_chef_agent.windows import Window
@@ -436,7 +436,7 @@ def suggest(session: Session, job: Job, *meals: tuple[str, str | None]) -> list[
                 description=description,
                 servings=4,
                 ingredients=[IngredientInput(name="onions")],
-                steps=["Cook."],
+                steps=[StepInput(text="Cook.")],
             )
             for name, description in meals
         ],
@@ -544,7 +544,7 @@ def picked(session: Session, job: Job, *servings: int) -> list[Meal]:
                     IngredientInput(name="bell peppers", quantity=3, preparation="sliced"),
                     IngredientInput(name="salt"),
                 ],
-                steps=["Cook."],
+                steps=[StepInput(text="Cook.")],
             )
             for index in range(len(servings))
         ],

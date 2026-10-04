@@ -24,6 +24,15 @@
   background: var(--cc-other);
 }
 
+/* .segs */
+.cooking {
+  gap: 4px;
+}
+
+.cooking i {
+  flex: 1;
+}
+
 /* .pstep */
 .progress {
   display: flex;

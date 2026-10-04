@@ -1,3 +1,5 @@
+import type { MealIngredient } from '../../lib/api/types'
+
 /** Scales a recipe quantity from the meal's servings to the servings the user picked. */
 export function scaleQuantity(quantity: number, fromServings: number, toServings: number): number {
   return (quantity * toServings) / fromServings
@@ -66,4 +68,16 @@ export function formatUnit(unit: string, quantity: number): string {
   const forms = UNIT_FORMS.find(([one, many]) => [one, many].includes(unit.toLowerCase()))
   if (!forms) return unit
   return quantity > 1 ? forms[1] : forms[0]
+}
+
+/**
+ * An ingredient's amount for `servings` of a recipe that makes `recipeServings`,
+ * e.g. "1½ lb" or "3"; empty when it has no quantity or unit ("salt, to taste").
+ */
+export function ingredientAmount(ingredient: MealIngredient, recipeServings: number, servings: number): string {
+  const quantity =
+    ingredient.quantity != null ? scaleIngredient(ingredient.quantity, ingredient.unit, recipeServings, servings) : null
+  return [quantity != null && formatQuantity(quantity), ingredient.unit && formatUnit(ingredient.unit, quantity ?? 1)]
+    .filter(Boolean)
+    .join(' ')
 }

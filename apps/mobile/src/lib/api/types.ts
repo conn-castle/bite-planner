@@ -377,8 +377,16 @@ export interface MealIngredient {
 }
 
 /** The full recipe. */
+export interface MealStep {
+  text: string
+  /** How long the cook waits in it, for a timer; null when there's nothing to time. */
+  timer_minutes: number | null
+  /** The positions in the meal's `ingredients` of the ones it uses. */
+  ingredients: number[]
+}
+
 export interface Meal extends MealSummary {
   servings: number
-  steps: string[]
+  steps: MealStep[]
   ingredients: MealIngredient[]
 }

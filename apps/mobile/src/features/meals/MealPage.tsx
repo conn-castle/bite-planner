@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Button, IconButton } from '../../ui/Button'
 import type { Meal, MealSummary } from '../../lib/api/types'
 import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
@@ -7,11 +8,12 @@ import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { Stepper } from '../../ui/Stepper'
 import { cachedMealSummary } from './cached'
+import { CookView } from './CookView'
 import styles from './MealPage.module.css'
 import { mealQuery } from './meals'
 import { MealRatingButton } from './MealRating'
 import { useRatingError } from './ratings'
-import { formatQuantity, formatUnit, scaleIngredient } from './servings'
+import { ingredientAmount } from './servings'
 
 const MAX_SERVINGS = 24
 
@@ -46,12 +48,28 @@ export function MealPage({ mealId, tab, rateable = false, servings, suggestion =
   const queryClient = useQueryClient()
   const summary = meal.data ?? cachedMealSummary(queryClient, mealId)
   const ratingError = useRatingError([mealId])
+  const startAt = suggestion ? null : servings
+  // The servings chosen here; until then, where they start.
+  const [chosen, setChosen] = useState<number | null>(null)
+  const [cooking, setCooking] = useState(false)
+  const recipe = meal.data
+  const shownServings = recipe && (chosen ?? startingServings(recipe, startAt))
+  // Cooking is for a meal on its way or eaten (from Orders or History), not one being picked.
+  const cookable = tab !== undefined && recipe !== undefined && recipe.steps.length > 0
 
   return (
     <NavPage
       title={summary?.name ?? 'Recipe'}
       tab={tab}
       actions={rateable && summary ? <MealRatingButton meal={summary} /> : undefined}
+      footer={
+        cookable && (
+          <Button block onClick={() => setCooking(true)}>
+            <Icon name="flame" />
+            Start cooking
+          </Button>
+        )
+      }
     >
       {rateable && ratingError && <Notice>Couldn't save the rating: {ratingError.message}</Notice>}
       {meal.isError && (
@@ -62,8 +80,17 @@ export function MealPage({ mealId, tab, rateable = false, servings, suggestion =
       {summary ? (
         <article className={styles.recipe}>
           <RecipeHeader meal={summary} ingredientCount={meal.data?.ingredients.length} />
-          {meal.data ? (
-            <RecipeBody meal={meal.data} startAt={suggestion ? null : servings} fixed={suggestion} />
+          {recipe && shownServings !== undefined ? (
+            <RecipeBody
+              meal={recipe}
+              servings={shownServings}
+              chosenServings={typeof startAt === 'number' ? startAt : recipe.servings}
+              onServings={(value) => {
+                pickedServings.set(recipe.id, value)
+                setChosen(value)
+              }}
+              fixed={suggestion}
+            />
           ) : (
             !meal.isError && (
               <div className={styles.loading}>
@@ -83,8 +110,19 @@ export function MealPage({ mealId, tab, rateable = false, servings, suggestion =
           </div>
         )
       )}
+      {cookable && shownServings !== undefined && (
+        <CookView meal={recipe} servings={shownServings} isOpen={cooking} onClose={() => setCooking(false)} />
+      )}
     </NavPage>
   )
+}
+
+/**
+ * Where a recipe's servings start: an order's (or, with null, the recipe's
+ * own), or else the servings last chosen for it.
+ */
+function startingServings(meal: Meal, startAt: number | null | undefined): number {
+  return startAt === undefined ? (pickedServings.get(meal.id) ?? meal.servings) : (startAt ?? meal.servings)
 }
 
 /** The name, description, and facts: all but the ingredient count come with the meal's summary. */
@@ -120,19 +158,15 @@ function RecipeHeader({ meal, ingredientCount }: { meal: MealSummary; ingredient
 
 interface RecipeBodyProps {
   meal: Meal
-  startAt: number | null | undefined
+  servings: number
+  /** The servings chosen for it (an order's, else the recipe's own), which Reset goes back to. */
+  chosenServings: number
+  onServings: (servings: number) => void
   /** The recipe's own servings, with no control to change them. */
   fixed: boolean
 }
 
-function RecipeBody({ meal, startAt, fixed }: RecipeBodyProps) {
-  const [servings, setServingsState] = useState(() =>
-    startAt === undefined ? (pickedServings.get(meal.id) ?? meal.servings) : (startAt ?? meal.servings),
-  )
-  const setServings = (value: number) => {
-    pickedServings.set(meal.id, value)
-    setServingsState(value)
-  }
+function RecipeBody({ meal, servings, chosenServings, onServings: setServings, fixed }: RecipeBodyProps) {
   const ingredients = meal.ingredients
 
   return (
@@ -140,39 +174,37 @@ function RecipeBody({ meal, startAt, fixed }: RecipeBodyProps) {
       <div className={styles.servings}>
         <span className={styles.servingsLabel}>
           <Icon name="users" />
-          <span>
-            {fixed ? `Serves ${meal.servings}` : 'Servings'}
-            {!fixed && servings !== meal.servings && (
-              <button type="button" className={styles.reset} onClick={() => setServings(meal.servings)}>
-                Reset to {meal.servings}
-              </button>
-            )}
-          </span>
+          <span>{fixed ? `Serves ${meal.servings}` : 'Servings'}</span>
         </span>
-        {!fixed && <Stepper value={servings} min={1} max={MAX_SERVINGS} onChange={setServings} label="Servings" />}
+        {!fixed && (
+          <span className={styles.servingsControls}>
+            {/* Only once they differ from what was chosen: there's nothing to go back to before. */}
+            {servings !== chosenServings && (
+              <IconButton
+                variant="white"
+                aria-label={`Back to ${chosenServings} servings`}
+                onClick={() => setServings(chosenServings)}
+              >
+                <Icon name="undo" />
+              </IconButton>
+            )}
+            <Stepper value={servings} min={1} max={MAX_SERVINGS} onChange={setServings} label="Servings" />
+          </span>
+        )}
       </div>
 
       <h2 className={styles.heading}>Ingredients</h2>
       <ul className={styles.ingredients}>
-        {ingredients.map((ingredient, index) => {
-          const quantity =
-            ingredient.quantity != null
-              ? scaleIngredient(ingredient.quantity, ingredient.unit, meal.servings, servings)
-              : null
-          return (
-            // Ingredients have no id; their order is fixed.
-            <li key={index} className={styles.ingredient}>
-              <span className={styles.amount}>
-                {quantity != null && formatQuantity(quantity)}
-                {ingredient.unit && ` ${formatUnit(ingredient.unit, quantity ?? 1)}`}
-              </span>
-              <span>
-                {ingredient.name}
-                {ingredient.preparation && `, ${ingredient.preparation}`}
-              </span>
-            </li>
-          )
-        })}
+        {ingredients.map((ingredient, index) => (
+          // Ingredients have no id; their order is fixed.
+          <li key={index} className={styles.ingredient}>
+            <span className={styles.amount}>{ingredientAmount(ingredient, meal.servings, servings)}</span>
+            <span>
+              {ingredient.name}
+              {ingredient.preparation && `, ${ingredient.preparation}`}
+            </span>
+          </li>
+        ))}
       </ul>
 
       <h2 className={styles.heading}>Steps</h2>
@@ -181,7 +213,7 @@ function RecipeBody({ meal, startAt, fixed }: RecipeBodyProps) {
           <li key={index} className={styles.ingredient}>
             {/* Not aria-hidden: without list markers (list-style: none), VoiceOver announces no step numbers of its own. */}
             <span className={styles.number}>{index + 1}</span>
-            <span>{step}</span>
+            <span>{step.text}</span>
           </li>
         ))}
       </ol>

@@ -82,39 +82,6 @@ class MealIngredient(SQLModel, table=True):
     meal: Meal = Relationship(back_populates="ingredients")
 
 
-class Meal(TimestampMixin, SQLModel, table=True):
-    """A complete recipe for a meal."""
-
-    __tablename__ = "meal"
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-
-    # The run that created it: the suggestion batch it belongs to. Null once that
-    # job is deleted with its discarded draft; the meal itself is kept.
-    job_id: UUID | None = Field(default=None, foreign_key="job.id", ondelete="SET NULL", index=True)
-
-    name: str
-    description: str | None = None
-
-    servings: int
-    active_time_minutes: int | None = None
-    total_time_minutes: int | None = None
-
-    # Steps are just ordered strings. They don't need their own table.
-    steps: list[str] = Field(default_factory=list, sa_type=JSONB)
-
-    ingredients: list[MealIngredient] = Relationship(
-        back_populates="meal",
-        cascade_delete=True,
-        sa_relationship_kwargs={"order_by": "MealIngredient.position"},
-    )
-
-
-def _values(enum: type[StrEnum]) -> list[str]:
-    """Store an enum's lowercase values (what the app sees), not its member names."""
-    return [member.value for member in enum]
-
-
 class ModelJSONB[M: BaseModel](TypeDecorator[M]):
     """A JSONB column holding one typed model: validated as it's read."""
 
@@ -150,6 +117,49 @@ class ModelJSONBList[M: BaseModel](TypeDecorator[list[M]]):
         if not isinstance(value, list):
             raise ValueError(f"Expected a JSON list, got {type(value).__name__}.")
         return [self.model.model_validate(item) for item in value]
+
+
+class MealStep(BaseModel):
+    """One step of a recipe."""
+
+    text: str
+    # How long the cook waits in it, for a timer; null when there's nothing to time.
+    timer_minutes: int | None = None
+    # The positions of the meal's ingredients it uses.
+    ingredients: list[int] = []
+
+
+class Meal(TimestampMixin, SQLModel, table=True):
+    """A complete recipe for a meal."""
+
+    __tablename__ = "meal"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+
+    # The run that created it: the suggestion batch it belongs to. Null once that
+    # job is deleted with its discarded draft; the meal itself is kept.
+    job_id: UUID | None = Field(default=None, foreign_key="job.id", ondelete="SET NULL", index=True)
+
+    name: str
+    description: str | None = None
+
+    servings: int
+    active_time_minutes: int | None = None
+    total_time_minutes: int | None = None
+
+    # In order. They don't need their own table.
+    steps: list[MealStep] = Field(default_factory=list, sa_type=ModelJSONBList(MealStep))
+
+    ingredients: list[MealIngredient] = Relationship(
+        back_populates="meal",
+        cascade_delete=True,
+        sa_relationship_kwargs={"order_by": "MealIngredient.position"},
+    )
+
+
+def _values(enum: type[StrEnum]) -> list[str]:
+    """Store an enum's lowercase values (what the app sees), not its member names."""
+    return [member.value for member in enum]
 
 
 class ListPick(BaseModel):

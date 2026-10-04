@@ -59,6 +59,7 @@ The shopping list, as built (stages 1 and 2; the mockup has the list step but no
 The shopping list shopped at Instacart (stage 3, piece 9; the mockup has none of it), as reviewed in the design (2026-09-27) and replacing the list step's items above in the flow:
 
 - A card's × (a pick's "don't show meals like this", a product's "don't buy this") is one component (ui/CornerToggle): red, on a white circle a little off the card's top-right corner (reviewed 2026-09-28, over the mockup's grey × inside the pick card's picture); while it's off (a pick marked "not for us", a product not bought) it shows ↺ there instead, to put it back.
+- A recipe's servings go back to what was chosen (an order's servings, else the recipe's own) with a reset icon to the left of the stepper, shown only once they've been changed (reviewed 2026-10-04, over "Reset to 4" under the label, which showed whenever they differed from the recipe's).
 - A pushed page (a recipe, a product) always shows its title in the toolbar, not only once its heading scrolls away (reviewed 2026-09-28).
 - On wide screens (700px and up), the pick step's meals and the shopping list's product tiles are four across instead of two (reviewed 2026-09-28).
 - Continuing an order opens the flow at the furthest step it has reached, by anyone in the household, not at picking meals (as mocked); the member can go back from there (Nick, 2026-09-30). The order keeps that step; when the order no longer supports it (say the picks changed since the list), the flow opens at the step that comes first, as it does mid-flow.
@@ -94,6 +95,14 @@ The order lock, as decided:
 - Discarding the draft is refused while another member is ordering (the locked card has no Discard, as mocked).
 - The locked card and screen show the app's steps, not the mockup's four, and the card says what they're doing at that step ("Sam is choosing the dates and servings"; with the one-thing-per-step flow, each step's own words).
 
+Cooking (decided 2026-10-04):
+
+- A step's timer rings with a phone notification, scheduled when it starts, so it rings with the phone locked or the app closed, with a sound bundled with the app (iOS rings silently without one), and in the app too. It needs the phone's notifications; when they're off, the timer doesn't start and says how to turn them on (Nick chose a timer that rings over one counting down only while the app is open, 2026-10-04).
+- One timer runs at a time; starting another replaces it. It runs until it rings or the cook taps it to stop it: closing the cooking view or tapping Done doesn't stop it (over the mockup, where going back drops it), nor does the app closing. Reopening a meal's cooking view goes back to the step it was left at (Done starts it over); after the app has closed, to its running timer's step.
+- Each step says how long it waits, for its timer, and which of the recipe's ingredients it uses, for "You'll need" (amounts at the servings shown on the recipe); the agent gives both with the recipe. Meals from before have neither.
+- The screen stays on while the cooking view is open, and sleeps as usual once it closes (Nick, 2026-10-04: hands are busy while cooking).
+- The cooking view is full screen over the app, like the order flow, closed with its ×. Start cooking is along the bottom of a recipe opened from Orders or History (above the tab bar), not a suggestion being picked.
+
 ## Build order
 
 One piece at a time, each through the UI with real data:
@@ -115,6 +124,7 @@ One piece at a time, each through the UI with real data:
    - Getting the app stays manual: the owner adds them as a tester in App Store Connect (TestFlight); the invite screen says they'll need it.
    - Anyone in the household can invite and remove anyone, themselves too (leaving); the last member can't be removed. Removing ends the membership and keeps the account (their name stays on past orders, and inviting them again works): they lose access at once, their phones stop getting notifications, their reminder schedule goes, and an order lock of theirs is released.
    - The `household invite` and `household remove` commands do the same (an invitation; the membership), so there's one way to add and remove people.
+11. Cooking: a recipe's Start cooking opens its steps one at a time, with each step's timer and the ingredients it uses (requirements "Views": Instructions view). Designed 2026-10-04 (see "Cooking" above) (done).
 
 ## Open questions
 

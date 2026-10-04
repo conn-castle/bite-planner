@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatQuantity, formatUnit, scaleIngredient, scaleQuantity } from './servings'
+import { formatQuantity, formatUnit, ingredientAmount, scaleIngredient, scaleQuantity } from './servings'
 
 describe('scaleQuantity', () => {
   it('scales proportionally to the servings picked', () => {
@@ -57,5 +57,18 @@ describe('formatUnit', () => {
     expect(formatUnit('tbsp', 3)).toBe('tbsp')
     expect(formatUnit('lb', 2)).toBe('lb')
     expect(formatUnit('handful', 2)).toBe('handful')
+  })
+})
+
+describe('ingredientAmount', () => {
+  const ingredient = { name: 'chicken thighs', quantity: 1.5, unit: 'lb', preparation: null }
+
+  it('is the amount for the servings being cooked', () => {
+    expect(ingredientAmount(ingredient, 4, 6)).toBe('2¼ lb')
+    expect(ingredientAmount({ ...ingredient, name: 'eggs', quantity: 3, unit: null }, 4, 2)).toBe('1½')
+  })
+
+  it('is empty when the recipe gives none', () => {
+    expect(ingredientAmount({ ...ingredient, name: 'salt', quantity: null, unit: null }, 4, 6)).toBe('')
   })
 })

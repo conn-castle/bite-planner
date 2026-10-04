@@ -12,6 +12,7 @@ import { formatClockTime } from '../../lib/dates'
 import { queryKeys } from '../../lib/query/keys'
 import { sessionQuery, useSession } from '../session/session'
 import { usePersonalSettings } from '../settings/settings'
+import { store } from '../../lib/store'
 
 /**
  * Push notifications on the phone: the daily reminder to pick meals and "your
@@ -22,25 +23,6 @@ import { usePersonalSettings } from '../settings/settings'
 
 /** Whether this is the iPhone app (a browser gets no push notifications). */
 export const pushAvailable = Capacitor.getPlatform() === 'ios'
-
-// ---------------------------------------------------------------------------
-// A tiny store per piece of state the screens watch.
-
-function store<T>(initial: T) {
-  let value = initial
-  const listeners = new Set<() => void>()
-  return {
-    get: () => value,
-    set(next: T) {
-      value = next
-      for (const listener of listeners) listener()
-    },
-    subscribe(listener: () => void) {
-      listeners.add(listener)
-      return () => void listeners.delete(listener)
-    },
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Permission.

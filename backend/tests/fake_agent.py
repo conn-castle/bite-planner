@@ -33,7 +33,13 @@ MEAL = {
         {"name": "Italian sausage", "quantity": 1.5, "unit": "lb"},
         {"name": "bell peppers", "quantity": 3, "preparation": "sliced"},
     ],
-    "steps": ["Roast everything at 425F for 25 minutes."],
+    "steps": [
+        {
+            "text": "Roast everything at 425F.",
+            "timer_minutes": 25,
+            "ingredients": ["Italian sausage", "bell peppers"],
+        }
+    ],
 }
 
 meal_count, stop_reason, exit_code, seconds, *args = sys.argv[1:]

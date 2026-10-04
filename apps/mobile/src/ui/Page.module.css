@@ -99,3 +99,21 @@
 .navBody.clearTabBar {
   padding-bottom: var(--cc-tab-bar-clearance);
 }
+
+/* A nav page's main action along the bottom (spec/mockup.html: .sticky-cta):
+   the content fades out under it. */
+.footer {
+  box-shadow: none;
+}
+
+.footerBar {
+  display: flex;
+  gap: 10px;
+  padding: 14px var(--cc-page-x) max(34px, var(--ion-safe-area-bottom, 0px));
+  background: linear-gradient(rgb(255 255 255 / 0), var(--cc-bg) 28%);
+}
+
+/* In a tab, it sits above the tab bar. */
+.aboveTabBar .footerBar {
+  padding-bottom: calc(var(--cc-tab-bar-height) + var(--cc-tab-bar-bottom) + 12px);
+}

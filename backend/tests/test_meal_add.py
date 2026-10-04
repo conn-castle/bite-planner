@@ -23,7 +23,11 @@ MEAL_JSON = {
         {"name": "garlic", "quantity": 4, "unit": "clove", "preparation": "minced"},
         {"name": "heavy cream", "quantity": 2, "unit": "cup"},
     ],
-    "steps": ["Season chicken.", "Sear chicken.", "Simmer in cream."],
+    "steps": [
+        {"text": "Season the chicken.", "ingredients": ["chicken"]},
+        {"text": "Sear the chicken with the garlic.", "ingredients": ["chicken", "garlic"]},
+        {"text": "Simmer in the cream.", "timer_minutes": 15, "ingredients": ["heavy cream"]},
+    ],
 }
 
 
@@ -65,6 +69,38 @@ def test_meal_add_rejects_meal_without_servings(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "servings" in result.stderr
     assert not (tmp_path / "meals").exists()
+
+
+def test_a_step_may_only_use_ingredients_the_meal_lists(tmp_path: Path) -> None:
+    steps = [{"text": "Sear the chicken in butter.", "ingredients": ["chicken", "butter"]}]
+
+    result = add(batch(tmp_path), MEAL_JSON | {"steps": steps})
+
+    assert result.exit_code == 1
+    assert 'Steps name ingredients the meal doesn\'t list: "butter".' in result.stderr
+    assert not (tmp_path / "meals").exists()
+
+
+def test_a_step_names_which_entry_of_an_ingredient_listed_twice(tmp_path: Path) -> None:
+    ingredients = [
+        {"name": "milk", "quantity": 1, "unit": "cup"},
+        {"name": "Milk", "quantity": 2, "unit": "tbsp"},
+    ]
+    steps = [{"text": "Whisk in the milk.", "ingredients": ["milk"]}]
+
+    result = add(batch(tmp_path), MEAL_JSON | {"ingredients": ingredients, "steps": steps})
+
+    assert result.exit_code == 1
+    assert 'lists more than once: "milk"' in result.stderr
+
+
+def test_a_step_timer_is_at_least_a_minute(tmp_path: Path) -> None:
+    steps = [{"text": "Rest the chicken.", "timer_minutes": 0}]
+
+    result = add(batch(tmp_path), MEAL_JSON | {"steps": steps})
+
+    assert result.exit_code == 1
+    assert "timer_minutes" in result.stderr
 
 
 def test_meal_add_rejects_unknown_fields(tmp_path: Path) -> None:

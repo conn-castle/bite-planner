@@ -1,0 +1,162 @@
+/* Cooking a meal, full-screen (spec/mockup.html: .cook, .cook-top, .segs, .cook-body, .timer, .uses, .cook-foot). */
+
+.header {
+  background: var(--cc-bg);
+}
+
+.header ion-toolbar {
+  --min-height: 40px;
+  --padding-top: 6px;
+  --padding-bottom: 0;
+  --padding-start: 14px;
+  --padding-end: 14px;
+}
+
+/* Ionic's toolbar container clips what it holds; Close's 44px tap area reaches past it. */
+.header ion-toolbar::part(container) {
+  overflow: visible;
+  contain: none;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cc-ink-2);
+}
+
+/* Keeps the title centered: as wide as Close. */
+.spacer {
+  flex: none;
+  width: 32px;
+}
+
+.progress {
+  padding: 14px calc(var(--cc-page-x) - 14px) 0;
+}
+
+.body {
+  padding: 34px var(--cc-page-x) 24px;
+  animation: fade 300ms var(--cc-ease) both;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.body > [role='alert'] {
+  margin-bottom: 18px;
+}
+
+.number {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cc-accent);
+}
+
+.text {
+  margin: 12px 0 0;
+  font-family: var(--cc-font-display);
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  text-wrap: pretty;
+}
+
+.timer {
+  appearance: none;
+  border: 0;
+  margin-top: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 20px 0 16px;
+  border-radius: 999px;
+  background: var(--cc-accent-soft);
+  color: var(--cc-accent);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.timer svg {
+  font-size: 22px;
+}
+
+.timer:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
+}
+
+.running {
+  background: var(--cc-accent);
+  color: var(--cc-on-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.uses {
+  margin-top: 30px;
+}
+
+.uses h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--cc-ink-3);
+}
+
+.uses ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.uses li {
+  padding: 3px 0;
+  font-size: 15px;
+  color: var(--cc-ink-2);
+}
+
+.footer {
+  box-shadow: none;
+}
+
+.footerBar {
+  display: flex;
+  gap: 10px;
+  padding: 12px var(--cc-page-x) max(34px, var(--ion-safe-area-bottom, 0px));
+  background: var(--cc-bg);
+}
+
+.footerBar button {
+  height: 54px;
+  border-radius: 18px;
+  padding: 0 16px;
+}
+
+.back {
+  flex: 1;
+}
+
+.next {
+  flex: 2;
+}

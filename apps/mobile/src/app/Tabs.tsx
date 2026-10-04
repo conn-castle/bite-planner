@@ -100,7 +100,14 @@ function RoutedMeal({ href }: { href: string }) {
   const { mealId } = useParams<{ mealId: string }>()
   const [params] = useSearchParams()
   return mealId ? (
-    <MealPage mealId={mealId} tab={{ href }} rateable servings={orderedServings(params.get('servings'))} />
+    // Keyed: another meal, or other servings, starts its page afresh.
+    <MealPage
+      key={`${mealId}:${params.get('servings')}`}
+      mealId={mealId}
+      tab={{ href }}
+      rateable
+      servings={orderedServings(params.get('servings'))}
+    />
   ) : (
     <Navigate to={href} replace />
   )

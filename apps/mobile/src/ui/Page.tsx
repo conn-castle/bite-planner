@@ -1,6 +1,7 @@
 import {
   IonButtons,
   IonContent,
+  IonFooter,
   IonHeader,
   IonPage,
   IonRefresher,
@@ -74,6 +75,8 @@ interface NavPageProps {
   tab?: { href: string; backLabel?: string }
   /** Controls at the end of the toolbar, e.g. a meal's rating. */
   actions?: ReactNode
+  /** The page's main action, kept along the bottom (above the tab bar) as the content scrolls under it. */
+  footer?: ReactNode
   children: ReactNode
 }
 
@@ -85,7 +88,7 @@ interface NavPageProps {
  * `IonPage`, which registers with the tab's router outlet. (An `IonPage` in a
  * nav would register with the outlet too, which then hides it.)
  */
-export function NavPage({ title, tab, actions, children }: NavPageProps) {
+export function NavPage({ title, tab, actions, footer, children }: NavPageProps) {
   const bar = tab?.backLabel
   // Once content scrolls under the toolbar, the toolbar shows its glass and title.
   const [scrolled, setScrolled] = useState(false)
@@ -119,8 +122,13 @@ export function NavPage({ title, tab, actions, children }: NavPageProps) {
         </IonToolbar>
       </IonHeader>
       <IonContent fullscreen scrollEvents onIonScroll={(event) => setScrolled(event.detail.scrollTop > 8)}>
-        <div className={bar ? styles.tabBody : `${styles.navBody} ${tab ? styles.clearTabBar : ''}`}>{children}</div>
+        <div className={bar ? styles.tabBody : `${styles.navBody} ${tab && !footer ? styles.clearTabBar : ''}`}>{children}</div>
       </IonContent>
+      {footer && (
+        <IonFooter className={`${styles.footer} ${tab ? styles.aboveTabBar : ''}`}>
+          <div className={styles.footerBar}>{footer}</div>
+        </IonFooter>
+      )}
     </>
   )
 }
