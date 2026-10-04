@@ -1,10 +1,12 @@
 """The worker, through `castle-chef job run` (or `worker.run_job`) with a fake agent."""
 
 import fcntl
+import io
 import json
 import logging
 import os
 import sys
+import tarfile
 import threading
 import time
 from datetime import date, timedelta
@@ -14,7 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from castle_chef_agent.checkout import Checkout
+from castle_chef_agent.checkout import RENEWED_SESSION_FILE, SESSION_FILE, Checkout
 from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ProductCount
@@ -23,7 +25,7 @@ from castle_chef_agent.windows import Window
 from sqlmodel import Session, col, select
 from typer.testing import CliRunner
 
-from castle_chef import booking, orders, push, shopping, worker
+from castle_chef import booking, orders, push, records, shopping, worker
 from castle_chef.checkout import (
     SIGNED_OUT_ERROR,
     Booking,
@@ -1203,6 +1205,15 @@ def test_development_books_as_a_dry_run_that_shows_as_booked_and_puts_the_cart_b
     )
     assert notification.title.endswith("is booked (dry run)")
     assert notification.body.startswith(f"Arrives {BOOK_DAY:%A, %b} {BOOK_DAY.day}, 2–4 PM.")
+    # The log says what Instacart confirmed.
+    [settled] = [e for e in log_events(tmp_path / "logs") if e["event"] == "booking.settled"]
+    assert settled == settled | {
+        "state": "booked",
+        "instacart_order": "Dry run",
+        "window": {"start": "14:00:00", "end": "16:00:00"},
+        "total_cents": 1959 + 249 + 196,
+        "swaps": 0,
+    }
 
 
 def test_a_live_booking_records_the_click_before_pressing_and_keeps_the_confirmation(
@@ -1517,3 +1528,110 @@ def test_a_booking_whose_result_cant_be_saved_after_the_press_needs_checking(
     order = booked_order(session, book)
     assert (order.book_state, order.book_job_id) == (BookState.CHECK_INSTACART, None)
     assert reload(session, book).status == JobStatus.FAILED
+
+
+# Job records.
+
+
+class RecordingStore:
+    def __init__(self, fails: bool = False) -> None:
+        self.kept: dict[str, bytes] = {}
+        self.fails = fails
+
+    def put(self, key: str, data: bytes) -> None:
+        if self.fails:
+            raise ConnectionError("S3 is unreachable")
+        self.kept[key] = data
+
+
+def record_files(data: bytes) -> dict[str, bytes]:
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+        return {
+            member.name: (archive.extractfile(member) or io.BytesIO()).read()
+            for member in archive.getmembers()
+            if member.isfile()
+        }
+
+
+@pytest.fixture
+def store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> RecordingStore:
+    recording = RecordingStore()
+    monkeypatch.setattr(records, "record_store", lambda: recording)
+    # Grok's session files, as Grok keeps them in the project it's launched from.
+    project = tmp_path / "project"
+    session_files = project / ".grok-config" / "sessions" / "a-session"
+    session_files.mkdir(parents=True)
+    (session_files / "updates.jsonl").write_text('{"tool": "add_meal"}\n')
+    monkeypatch.setenv("CASTLE_CHEF_AGENT_PROJECT_DIR", str(project))
+    get_settings.cache_clear()
+    return recording
+
+
+def test_a_jobs_record_keeps_what_its_agent_was_given_and_did(
+    job: Job, monkeypatch: pytest.MonkeyPatch, store: RecordingStore
+) -> None:
+    batch_size(monkeypatch, 1)
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(job)
+
+    files = record_files(store.kept[f"jobs/{job.id}.tar.gz"])
+    assert b"Create 1 distinct meals" in files["job/fake-agent-prompt.md"]
+    assert "job/agent-output.json" in files
+    assert files["grok-sessions/a-session/updates.jsonl"] == b'{"tool": "add_meal"}\n'
+
+
+def test_a_failed_jobs_record_is_kept_too(
+    session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, store: RecordingStore
+) -> None:
+    use_fake_agent(monkeypatch, meals=0, exit_code=3)
+
+    run_job(job)
+
+    assert reload(session, job).status == JobStatus.FAILED
+    assert "job/agent-stderr.log" in record_files(store.kept[f"jobs/{job.id}.tar.gz"])
+
+
+def test_a_record_never_keeps_the_instacart_session(tmp_path: Path) -> None:
+    job_dir = tmp_path / "job"
+    (job_dir / "session").mkdir(parents=True)
+    (job_dir / "report.json").write_text("{}")
+    (job_dir / "session" / SESSION_FILE).write_text('{"cookies": []}')
+    (job_dir / RENEWED_SESSION_FILE).write_text('{"cookies": []}')
+
+    data, parts = records.pack(job_dir, tmp_path / "no-sessions")
+
+    assert list(record_files(data)) == ["job/report.json"]
+    assert parts == ["job"]
+
+
+def test_a_record_that_cant_be_kept_is_logged_and_the_job_still_succeeds(
+    session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(records, "record_store", lambda: RecordingStore(fails=True))
+    batch_size(monkeypatch, 1)
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(job)
+
+    assert reload(session, job).status == JobStatus.SUCCEEDED
+    [failed] = [e for e in log_events(tmp_path / "logs") if e["event"] == "job.record_failed"]
+    assert (failed["level"], failed["final"]) == ("error", True)
+    assert "S3 is unreachable" in failed["exception"]
+
+
+def test_a_jobs_record_is_also_kept_while_it_runs(
+    job: Job, monkeypatch: pytest.MonkeyPatch, store: RecordingStore, tmp_path: Path
+) -> None:
+    # A task that's killed mid-job (out of memory, the time cap) never ends it.
+    monkeypatch.setattr(records, "SAVE_EVERY_SECONDS", 0.2)
+    batch_size(monkeypatch, 1)
+    # An agent that takes a second.
+    monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 1 end_turn 0 1")
+
+    run_job(job)
+
+    saved = [e for e in log_events(tmp_path / "logs") if e["event"] == "job.record_saved"]
+    assert [e["final"] for e in saved].count(True) == 1 and saved[-1]["final"] is True
+    assert False in [e["final"] for e in saved]
+    assert saved[-1]["parts"] == ["job", "grok-sessions"]

@@ -151,6 +151,33 @@ def test_the_worker_reads_and_renews_the_instacart_session(runtime: Template) ->
     )
 
 
+def test_each_jobs_record_is_kept_privately_as_long_as_the_logs(runtime: Template) -> None:
+    [(bucket_id, bucket)] = runtime.find_resources("AWS::S3::Bucket").items()
+    properties = bucket["Properties"]
+    assert properties["PublicAccessBlockConfiguration"] == {
+        "BlockPublicAcls": True,
+        "BlockPublicPolicy": True,
+        "IgnorePublicAcls": True,
+        "RestrictPublicBuckets": True,
+    }
+    [rule] = properties["LifecycleConfiguration"]["Rules"]
+    assert rule["ExpirationInDays"] == 90 and rule["Status"] == "Enabled"
+    assert bucket["DeletionPolicy"] == "Retain"
+    # Only the worker's task role writes there, and only records.
+    granted = [
+        (policy["Properties"]["Roles"], statement)
+        for policy in runtime.find_resources("AWS::IAM::Policy").values()
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]
+        if bucket_id in json.dumps(statement["Resource"])
+    ]
+    [(roles, statement)] = granted
+    assert "WorkerTaskRole" in json.dumps(roles)
+    assert statement["Action"] == "s3:PutObject"
+    assert "/jobs/*" in json.dumps(statement["Resource"])
+    environment = {e["Name"]: e["Value"] for e in worker_container(runtime)["Environment"]}
+    assert environment["CASTLE_CHEF_JOB_RECORDS_BUCKET"] == {"Ref": bucket_id}
+
+
 def test_each_queued_job_starts_one_worker_with_its_id(runtime: Template) -> None:
     runtime.has_resource_properties(
         "AWS::Pipes::Pipe",

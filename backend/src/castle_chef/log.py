@@ -39,3 +39,11 @@ def configure(log_file: Path | None) -> None:
     for handler in handlers:
         handler.setFormatter(JsonFormatter())
     logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
+    # Uvicorn's own lines (starting, stopping, and "Exception in ASGI application"
+    # with its traceback) as JSON too, through the same handlers: its own plain
+    # text would land in CloudWatch a line at a time, with no level. Its access
+    # lines repeat `http.request`.
+    for name in ("uvicorn", "uvicorn.error"):
+        logging.getLogger(name).handlers.clear()
+        logging.getLogger(name).propagate = True
+    logging.getLogger("uvicorn.access").disabled = True

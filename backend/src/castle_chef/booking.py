@@ -194,9 +194,21 @@ def _settle(
     order.booking, order.book_issue = booking, issue
     session.add(order)
     session.commit()
+    # What Instacart confirmed, when it did: which order, when, and what it charged.
+    confirmed = (
+        {
+            "instacart_order": booking.order_number,
+            "window": booking.window and booking.window.model_dump(mode="json"),
+            "total_cents": booking.total_cents,
+            "swaps": len(booking.swaps),
+        }
+        if booking is not None
+        else {}
+    )
     log.info(
         "booking.settled",
-        extra={"grocery_order_id": str(order.id), "state": state, "issue": issue and issue.message},
+        extra={"grocery_order_id": str(order.id), "state": state, "issue": issue and issue.message}
+        | confirmed,
     )
 
 

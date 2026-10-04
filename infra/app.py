@@ -62,6 +62,7 @@ if app.node.try_get_context("repositoriesOnly") != "true":
     )
     CfnOutput(runtime, "WorkerSubnetsOutput", value=",".join(s.subnet_id for s in runtime.subnets))
     CfnOutput(runtime, "WorkerLogGroupOutput", value=runtime.worker_logs.log_group_name)
+    CfnOutput(runtime, "JobRecordsBucketOutput", value=runtime.job_records.bucket_name)
     cdk.Tags.of(runtime).add("project", "castle-chef")
     cdk.Tags.of(runtime).add("stage", stage_name)
 cdk.Tags.of(repositories).add("project", "castle-chef")

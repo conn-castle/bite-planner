@@ -82,6 +82,7 @@ from castle_chef.models import (
 )
 from castle_chef.notifications import ideas_ready, list_failed, list_ready, notify_booking
 from castle_chef.products import InvalidProducts
+from castle_chef.records import keeping_record
 from castle_chef.settings import REPO_ROOT, get_settings
 from castle_chef.shopping import InvalidList, ListEntry
 
@@ -186,6 +187,14 @@ def run_job(job_id: UUID) -> None:
         log.warning("job.already_claimed", extra=fields)
         return
     log.info("job.claimed", extra=fields | {"kind": job.kind})
+    # Whatever happens, what the agent was given and did is kept.
+    with keeping_record(job_id):
+        _run_claimed(job, fields)
+
+
+def _run_claimed(job: Job, fields: dict[str, str]) -> None:
+    """Runs a claimed job and saves its result (or its failure)."""
+    job_id = job.id
     try:
         result = process_job(job)
     except JobDiscarded:

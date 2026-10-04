@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from castle_chef_agent import windows
 from castle_chef_agent.products import ProductCount
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response, status
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -29,6 +30,8 @@ from pydantic import (
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
 
 from castle_chef import booking, failures, orders, push, quotes, ratings, reminders, shopping
 from castle_chef import household as households
@@ -604,6 +607,12 @@ def db() -> Iterator[Session]:
         yield session
 
 
+# A request's session closes before its answer is sent (scope "function"): on
+# Lambda, the environment can freeze as soon as the answer is out, and a session
+# closed after that is left mid-transaction until it thaws or shuts down.
+DbSession = Annotated[Session, Depends(db, scope="function")]
+
+
 def stale_after() -> tuple[timedelta, timedelta]:
     """How long a job may stay pending, and running, before it counts as lost."""
     settings = get_settings()
@@ -892,6 +901,7 @@ def dispatch_booking(session: Session, dispatcher: JobDispatcher, job_id: UUID) 
 
 
 def signed_in(
+    request: Request,
     verifier: Annotated[AuthVerifier, Depends(get_verifier)],
     authorization: Annotated[str | None, Header()] = None,
 ) -> Principal:
@@ -903,7 +913,7 @@ def signed_in(
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        return verifier.verify(token)
+        principal = verifier.verify(token)
     except AuthError as error:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, str(error), headers={"WWW-Authenticate": "Bearer"}
@@ -913,6 +923,9 @@ def signed_in(
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in is unavailable; try again."
         ) from error
+    # Who made the request, for its log line.
+    request.state.user_id = str(principal.user_id)
+    return principal
 
 
 @dataclass(frozen=True)
@@ -935,7 +948,7 @@ def household_of(session: Session, user_id: UUID) -> Household | None:
 
 def member(
     principal: Annotated[Principal, Depends(signed_in)],
-    session: Annotated[Session, Depends(db)],
+    session: DbSession,
 ) -> Member:
     household = household_of(session, principal.user_id)
     if household is None:
@@ -1039,18 +1052,33 @@ def create_app() -> FastAPI:
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         started = monotonic()
-        response = await call_next(request)
-        # The route's template, so the line carries no ids.
-        route = getattr(request.scope.get("route"), "path", None)
-        log.info(
-            "http.request",
-            extra={
+
+        def fields() -> dict[str, object]:
+            return {
                 "method": request.method,
-                "route": route,
-                "status": response.status_code,
+                # The route's template, so the line carries no ids.
+                "route": getattr(request.scope.get("route"), "path", None),
+                "user_id": getattr(request.state, "user_id", None),
                 "ms": round((monotonic() - started) * 1000),
-            },
+            }
+
+        try:
+            response = await call_next(request)
+        except ClientDisconnect:
+            # The caller hung up before its request was read (e.g. Neon Auth giving
+            # up on a slow sign-up check): no defect, and no one to answer.
+            log.warning("http.client_gone", extra=fields())
+            return Response(status_code=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            # A defect: the traceback, with what the request was and whose.
+            log.exception("http.failed", extra=fields())
+            raise
+        refused = (
+            {"detail": getattr(request.state, "detail", None)}
+            if response.status_code >= 400
+            else {}
         )
+        log.info("http.request", extra=fields() | {"status": response.status_code} | refused)
         return response
 
     @api.get("/health")
@@ -1080,7 +1108,7 @@ def create_app() -> FastAPI:
     @api.get("/v1/me")
     def me(
         principal: Annotated[Principal, Depends(signed_in)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> MeOut:
         # Someone invited joins on their first sign-in (and is named, if unnamed).
         household = households.join_if_invited(session, principal.user_id)
@@ -1102,7 +1130,7 @@ def create_app() -> FastAPI:
     def update_personal_settings(
         body: PersonalSettingsIn,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> PersonalSettingsOut:
         """Change the caller's own settings; only the fields sent. A new time or zone
         moves their reminder schedule too, or changes nothing if it can't."""
@@ -1135,7 +1163,7 @@ def create_app() -> FastAPI:
     def register_device(
         token: DeviceToken,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> None:
         """This phone gets the caller's notifications (taken over from whoever
         signed in on it before)."""
@@ -1145,7 +1173,7 @@ def create_app() -> FastAPI:
     def unregister_device(
         token: DeviceToken,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> None:
         """This phone stops getting the caller's notifications (signing out)."""
         push.unregister_device(session, caller.user_id, token.lower())
@@ -1153,7 +1181,7 @@ def create_app() -> FastAPI:
     @api.get("/v1/household")
     def get_household(
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> HouseholdOut:
         """The household's settings and members."""
         return household_out(session, session.get_one(Household, caller.household_id))
@@ -1162,7 +1190,7 @@ def create_app() -> FastAPI:
     def update_household(
         body: HouseholdSettingsIn,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> HouseholdOut:
         """Change the household's settings; only the fields sent, so members changing
         different settings at once don't undo each other."""
@@ -1200,7 +1228,7 @@ def create_app() -> FastAPI:
     def invite_member(
         body: InviteIn,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> HouseholdOut:
         """Invite someone by email: they join when they first sign in with it (and
         only an invited email can make an account)."""
@@ -1212,7 +1240,7 @@ def create_app() -> FastAPI:
     def cancel_invite(
         invite_id: UUID,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> HouseholdOut:
         """Withdraw an invitation not used yet."""
         households.cancel_invite(session, caller.household_id, invite_id)
@@ -1222,7 +1250,7 @@ def create_app() -> FastAPI:
     def remove_member(
         user_id: UUID,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> None:
         """Remove someone from the household, the caller too (leaving); never the last."""
         households.remove_member(session, caller.household_id, user_id)
@@ -1231,7 +1259,7 @@ def create_app() -> FastAPI:
     async def neon_auth_webhook(
         request: Request,
         verifier: Annotated[WebhookVerifier, Depends(get_webhook_verifier)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> SignUpAnswer | dict[str, str]:
         """Neon Auth's webhook: before it makes an account (`user.before_create`), it
         asks whether the email is invited; an account for anyone else is refused."""
@@ -1260,28 +1288,36 @@ def create_app() -> FastAPI:
             ),
         )
 
-    def order_error(_: Request, error: Exception) -> JSONResponse:
+    # Why a request was refused, for its log line (the answer's detail).
+    @api.exception_handler(StarletteHTTPException)
+    async def refused(request: Request, error: StarletteHTTPException) -> Response:
+        request.state.detail = error.detail
+        return await http_exception_handler(request, error)
+
+    def order_error(request: Request, error: Exception) -> JSONResponse:
+        request.state.detail = str(error)
         return JSONResponse({"detail": str(error)}, status_code=ORDER_ERRORS[type(error)])
 
     for error_type in ORDER_ERRORS:
         api.add_exception_handler(error_type, order_error)
 
     @api.exception_handler(RequestValidationError)
-    def invalid_request(_: Request, error: RequestValidationError) -> JSONResponse:
+    def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
         # One message, like every other error the app gets.
         problems = "; ".join(
             f"{'.'.join(str(part) for part in problem['loc'])}: {problem['msg']}"
             for problem in error.errors()
         )
+        request.state.detail = f"Invalid request: {problems}"
         return JSONResponse(
-            {"detail": f"Invalid request: {problems}"},
+            {"detail": request.state.detail},
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
 
     @api.get("/v1/grocery-orders")
     def list_placed(
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         covering_from: date | None = None,
     ) -> list[PlacedOrderOut]:
         """The household's placed orders, oldest first: all of them (History), or
@@ -1306,7 +1342,7 @@ def create_app() -> FastAPI:
     @api.get("/v1/grocery-orders/next")
     def get_next(
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> NextOrderOut:
         """The household's next order, and its draft if someone has started one."""
@@ -1329,7 +1365,7 @@ def create_app() -> FastAPI:
         response: Response,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         """Open the household's draft, created if it has none: its lock is taken
@@ -1344,7 +1380,7 @@ def create_app() -> FastAPI:
     def get_order(
         order_id: UUID,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         order = orders.get_order(session, caller.household_id, order_id)
@@ -1354,7 +1390,7 @@ def create_app() -> FastAPI:
     def discard_draft(
         order_id: UUID,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> None:
         """Discard the draft, unless another member is placing it; or cancel an
         approved order that isn't booked yet."""
@@ -1368,7 +1404,7 @@ def create_app() -> FastAPI:
     def change_order(
         order_id: UUID,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         """Make an approved order that isn't booked yet the household's draft
@@ -1381,7 +1417,7 @@ def create_app() -> FastAPI:
     def book_again(
         order_id: UUID,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
@@ -1396,7 +1432,7 @@ def create_app() -> FastAPI:
         order_id: UUID,
         body: SettleIn,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         """Say whether Instacart has an order booking couldn't confirm."""
@@ -1409,7 +1445,7 @@ def create_app() -> FastAPI:
         body: LockIn,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> OrderLockOut:
         """Take the draft's lock for the caller's ordering session, as the flow
         opens it (its own member's other session gives way); 423 if another
@@ -1423,7 +1459,7 @@ def create_app() -> FastAPI:
         body: LockIn,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> OrderLockOut:
         """Renew the lock the caller's ordering session has, with the step it's at
         (every 30 seconds while the flow is open); 423 if it no longer has it."""
@@ -1435,7 +1471,7 @@ def create_app() -> FastAPI:
         order_id: UUID,
         by: Annotated[orders.Orderer, Depends(orderer)],
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> None:
         """Release the lock if the caller's ordering session has it, as the flow
         closes; otherwise do nothing."""
@@ -1448,7 +1484,7 @@ def create_app() -> FastAPI:
         response: Response,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
     ) -> JobOut:
         """Start a batch of suggestions for the draft."""
@@ -1483,7 +1519,7 @@ def create_app() -> FastAPI:
         response: Response,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
     ) -> JobOut:
         """Start building the draft's shopping list from its picks and servings now;
@@ -1514,7 +1550,7 @@ def create_app() -> FastAPI:
         response: Response,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
     ) -> JobOut:
         """Shop the draft's current list again (after shopping failed); shopping
@@ -1545,7 +1581,7 @@ def create_app() -> FastAPI:
         response: Response,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
     ) -> JobOut:
         """Find out what the draft would cost at the store now (its final review):
@@ -1577,7 +1613,7 @@ def create_app() -> FastAPI:
         body: ItemIn,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         """Take an item off the current list (or put it back), or change how much to buy."""
@@ -1601,7 +1637,7 @@ def create_app() -> FastAPI:
         meal_id: UUID,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         orders.pick(session, caller.household_id, order_id, meal_id, by)
@@ -1615,7 +1651,7 @@ def create_app() -> FastAPI:
         body: ServingsIn,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         """Change how many to make of one of the draft's picks."""
@@ -1629,7 +1665,7 @@ def create_app() -> FastAPI:
         meal_id: UUID,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         orders.unpick(session, caller.household_id, order_id, meal_id, by)
@@ -1642,7 +1678,7 @@ def create_app() -> FastAPI:
         body: DatesIn,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         orders.set_dates(
@@ -1664,7 +1700,7 @@ def create_app() -> FastAPI:
         body: PlaceIn,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
         dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
@@ -1693,7 +1729,7 @@ def create_app() -> FastAPI:
     def get_meal(
         meal_id: UUID,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> MealOut:
         """A recipe: one of the household's suggestions (every pick is one)."""
         meal = orders.household_meal(session, caller.household_id, meal_id, with_ingredients=True)
@@ -1714,7 +1750,7 @@ def create_app() -> FastAPI:
         body: RatingIn,
         caller: Annotated[Member, Depends(member)],
         session_id: Annotated[UUID | None, Depends(order_session)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> None:
         """Set the household's rating of one of its meals. Not for us also unpicks it
         from the draft, which only the ordering session with its lock can do."""
@@ -1725,7 +1761,7 @@ def create_app() -> FastAPI:
     def clear_meal_rating(
         meal_id: UUID,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> None:
         """Set one of the household's meals back to not rated."""
         orders.clear_meal_rating(session, caller.household_id, meal_id)
@@ -1734,7 +1770,7 @@ def create_app() -> FastAPI:
     def send_logs(
         body: LogsIn,
         caller: Annotated[Member, Depends(member)],
-        session: Annotated[Session, Depends(db)],
+        session: DbSession,
     ) -> None:
         email, _ = account(session, caller.user_id)
         batch = {"batch_id": str(uuid4()), "user_id": str(caller.user_id), "email": email}

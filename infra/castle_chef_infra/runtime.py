@@ -27,6 +27,7 @@ from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_lambda_event_sources as lambda_event_sources
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_pipes as pipes
+from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_scheduler as scheduler
 from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sns_subscriptions as sns_subscriptions
@@ -40,6 +41,8 @@ GROK_AUTH_DIR = "/mnt/agent-auth/grok"
 # Codex's login (the household's ChatGPT account, with Instacart connected).
 CODEX_HOME_DIR = "/mnt/agent-auth/codex"
 LOG_RETENTION = logs.RetentionDays.THREE_MONTHS
+# Job records are kept as long as the logs (THREE_MONTHS is 90 days).
+RECORD_RETENTION = Duration.days(90)
 # The APNs auth key (Production, topic com.conncastle.castlechef) and its id.
 APNS_KEY_PARAMETER = "/castle-chef/shared/apns-key-base64"
 APNS_KEY_ID_PARAMETER = "/castle-chef/shared/apns-key-id"
@@ -159,6 +162,16 @@ class RuntimeStack(Stack):
         # Worker: one Fargate task per job.
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
         worker_logs = logs.LogGroup(self, "WorkerLogs", retention=LOG_RETENTION)
+        # Each job's record (what its agent was given and did: castle_chef.records).
+        job_records = s3.Bucket(
+            self,
+            "JobRecords",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            lifecycle_rules=[s3.LifecycleRule(expiration=RECORD_RETENTION)],
+            removal_policy=RemovalPolicy.RETAIN,
+        )
         worker = ecs.FargateTaskDefinition(
             self,
             "Worker",
@@ -229,6 +242,7 @@ class RuntimeStack(Stack):
                 "CASTLE_CHEF_CODEX_HOME": CODEX_HOME_DIR,
                 "CASTLE_CHEF_CODEX_LOCK_FILE": f"{CODEX_HOME_DIR}/codex.lock",
                 "CASTLE_CHEF_INSTACART_SESSION_PARAMETER": INSTACART_SESSION_PARAMETER,
+                "CASTLE_CHEF_JOB_RECORDS_BUCKET": job_records.bucket_name,
             },
         )
         container.add_mount_points(
@@ -264,6 +278,13 @@ class RuntimeStack(Stack):
                 resources=[
                     f"arn:aws:ssm:{self.region}:{self.account}:parameter{INSTACART_SESSION_PARAMETER}"
                 ],
+            )
+        )
+
+        # The worker adds each job's record; it never reads or removes them.
+        worker.task_role.add_to_principal_policy(
+            iam.PolicyStatement(
+                actions=["s3:PutObject"], resources=[job_records.arn_for_objects("jobs/*")]
             )
         )
 
@@ -603,6 +624,7 @@ class RuntimeStack(Stack):
         self.worker_security_group = worker_sg
         self.subnets = vpc.public_subnets
         self.worker_logs = worker_logs
+        self.job_records = job_records
 
     def _alarm(
         self,

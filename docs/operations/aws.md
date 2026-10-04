@@ -34,7 +34,7 @@ have their own roles (the task role, the Lambdas' roles, and GitHub's OIDC role
 Account `123456789012` (profile `conn`), region `us-east-1`, defined in `infra/` (CDK, Python). Releases deploy it ([Releases](../../README.md#releases)); nothing needs a manual deploy. Stacks:
 
 - `CastleChefRepositories`: ECR repositories `castle-chef-api` and `castle-chef-worker` (immutable tags; the last 30 released images `commit-<sha>` and 5 development pushes `dev-…` are kept), and the role `castle-chef-github-deploy`, which only this repository's `main` branch can assume (GitHub OIDC).
-- `CastleChef` (stage `prod`, Neon `main`): a VPC with public subnets only (no NAT), the API, failure-handler, and Reminders Lambdas (Reminders also runs the daily booking), the jobs queue and its dead-letter queue, the Pipe, the ECS cluster and worker task definition, EFS for the agent logins (Grok's and Codex's), the reminder schedule group and the role its schedules run as, log groups, and alarms. Its outputs name the API URL, cluster, task definition, subnets, security group, log group, Pipe, and Reminders function. `CastleChef-dev` (stage `dev`, Neon `dev`) is the same stack for trying infrastructure changes; it is not deployed now.
+- `CastleChef` (stage `prod`, Neon `main`): a VPC with public subnets only (no NAT), the API, failure-handler, and Reminders Lambdas (Reminders also runs the daily booking), the jobs queue and its dead-letter queue, the Pipe, the ECS cluster and worker task definition, EFS for the agent logins (Grok's and Codex's), the reminder schedule group and the role its schedules run as, log groups, the job records bucket, and alarms. Its outputs name the API URL, cluster, task definition, subnets, security group, log group, job records bucket, Pipe, and Reminders function. `CastleChef-dev` (stage `dev`, Neon `dev`) is the same stack for trying infrastructure changes; it is not deployed now.
 
 Costs: nothing runs while idle; EFS, ECR, and alarms are well under $1 a month, a job is a fraction of a cent of Fargate, and Grok is the subscription. Lambda and the Pipe scale to zero.
 
@@ -42,11 +42,11 @@ Secrets never sit in configuration: the Lambdas read `DATABASE_URL` (and Reminde
 
 **Notifications** (push, iPhone only) go straight to Apple's push service with the APNs key (`backend/src/castle_chef/push.py`); the phones' tokens are in `push_device`, registered by the app for whoever is signed in. "Your meal ideas are ready" is sent by the worker when a batch succeeds, to whoever started it. The daily reminders (`reminders.py`): each member with a known time zone has an EventBridge Scheduler schedule `reminder-<user id>` in the group `CastleChef-reminders`, at their notification time in their zone, which invokes the `CastleChef-Reminders` Lambda; it checks the database (the member's "Daily reminders" switch is on, the next order isn't placed, reminders have started, none sent today) and sends. The API creates and updates a member's schedule when their time or zone changes; every deploy rebuilds them all from the database (the deploy's "Rebuild the reminder schedules" step), and a firing that doesn't match the database rebuilds that one. Scheduler skips a time in the hour lost when clocks go forward (that day has no reminder at it) and runs a repeated time once. To check push end to end for someone: `castle-chef household notify-test <email>` with `CASTLE_CHEF_PUSH=apns` and `CASTLE_CHEF_SSM_PARAMETERS='{"DATABASE_URL": "/castle-chef/production/database-url-pooled", "CASTLE_CHEF_APNS_KEY": "/castle-chef/shared/apns-key-base64", "CASTLE_CHEF_APNS_KEY_ID": "/castle-chef/shared/apns-key-id"}'` (AWS profile `conn`); each phone's result is in the log.
 
-**Booking** (`backend/src/castle_chef/booking.py`): an approved order books at Instacart four days before its delivery, at 9:00 AM Eastern, when the schedule `BookingSchedule` (the default group, not the members') invokes the Reminders Lambda with `{"book_due": {}}`; it starts a `book` job for each order that's due and queues it, and settles any booking whose worker was lost. An order approved after its day books right away (the API queues it). Whether the worker presses Place order is the stage's switch, the SSM String `/castle-chef/production/instacart-booking` (`/castle-chef/development/instacart-booking` for `CastleChef-dev`): `off` runs every step up to Place order and marks the order "Not booked: booking at Instacart isn't turned on yet"; `live` orders; `dry_run` (local development's default) stops just before and marks it booked, "Dry run". Each worker task reads it as it starts, so a change applies to the next booking without a deploy. Production stays `off` until the owner says to turn it on (decided 2026-10-01):
+**Booking** (`backend/src/castle_chef/booking.py`): an approved order books at Instacart four days before its delivery, at 9:00 AM Eastern, when the schedule `BookingSchedule` (the default group, not the members') invokes the Reminders Lambda with `{"book_due": {}}`; it starts a `book` job for each order that's due and queues it, and settles any booking whose worker was lost. An order approved after its day books right away (the API queues it). Whether the worker presses Place order is the stage's switch, the SSM String `/castle-chef/production/instacart-booking` (`/castle-chef/development/instacart-booking` for `CastleChef-dev`): `off` runs every step up to Place order and marks the order "Not booked: booking at Instacart isn't turned on yet"; `live` orders; `dry_run` (local development's default) stops just before and marks it booked, "Dry run". Each worker task reads it as it starts, so a change applies to the next booking without a deploy. Production is `live` (turned on 2026-10-04, at the owner's word; it was `off` from 2026-10-01). To stop real orders, set it back to `off`:
 
 ```sh
 aws ssm put-parameter --profile conn --region us-east-1 --overwrite \
-  --name /castle-chef/production/instacart-booking --type String --value live
+  --name /castle-chef/production/instacart-booking --type String --value off
 ```
 
 To run the daily booking now (e.g. after a fix): `castle-chef job book-due` against the database in question.
@@ -93,6 +93,32 @@ npx aws-cdk@2.1143.0 deploy CastleChef-dev -c stage=dev -c apiImageDigest=sha256
 
 A new stack has its own EFS, so run both logins for it once. `cd infra && uv run pytest` checks what the stacks must guarantee (CI runs it).
 
+## Finding a problem
+
+When something goes wrong in the app (the owner reports it, with roughly when and whose phone), the logs say what happened. In CloudWatch Logs Insights, over the time it happened, on the API's log group (which has the app's own lines too):
+
+```
+fields @timestamp, level, event, route, status, detail, user_id, entry.event, entry.message, exception
+| filter level in ["warning", "error", "critical"] or status >= 400
+| sort @timestamp desc
+```
+
+- A member's lines: add `| filter user_id = "<id>"` (`client.batch` lines give the id and email for each phone's uploads). The app's own lines are `client.log`, with what it logged in `entry`.
+- A request that failed unexpectedly is `http.failed` (level error), with its route, member, and traceback in `exception`.
+- An order or job: `filter grocery_order_id = "<id>" or job_id = "<id>"`, on the worker's log group too (and the failure handler's, for a worker that stopped).
+- A job's agent: its record ([Job records](#job-records)) has everything it was given and did.
+- A slow first request after a release: Lambda's `INIT_REPORT … Status: timeout` lines (startup over 10 seconds) happen when a new version first starts, during the release's own checks.
+
+## Job records
+
+Each job's record is kept in the S3 bucket `JobRecordsBucketOutput` for 90 days (like the logs) as `jobs/<job-id>.tar.gz`: the job's directory as `job/` (the prompt, the agent's output and errors, what its tools wrote) and Grok's session files as `grok-sessions/` (every tool call and what it returned). The Instacart session never goes in. The worker saves it every minute while the job runs (so a task that's killed still leaves most of it) and once the job ends, however it ended (`job.record_saved`, with the parts it has; `job.record_failed` if it couldn't, at error level once the job has ended, which changes nothing about the job). The worker can only add records; to read one:
+
+```sh
+mkdir -p /tmp/job-record && aws s3 cp "s3://$(out JobRecordsBucketOutput)/jobs/<job-id>.tar.gz" - --profile conn | tar xz -C /tmp/job-record
+```
+
+(`out` is defined under Agent login.) Locally, a job's files stay on disk (`make worker-job` copies them out).
+
 ## Secrets
 
 **AWS SSM Parameter Store is the source of truth for every secret** (profile `conn`, region `us-east-1`, `SecureString`). GitHub secrets and `.env` files are copies generated from it. The agent manages all of them: creating, storing, copying, rotating, and revoking. Add or rotate a secret in SSM first, then update its copies and this table.
@@ -113,7 +139,7 @@ A new stack has its own EFS, so run both logins for it once. `cd infra && uv run
 | `/castle-chef/shared/apns-key-base64` (APNs auth key `EXAMP12345`, `.p8` base64; Production, topic `com.conncastle.castlechef` only) | the Reminders Lambda (read at startup) and the worker (ECS secret) | set |
 | `/castle-chef/shared/apns-key-id` (`EXAMP12345`, not secret) | the Reminders Lambda and the worker | set |
 | `/castle-chef/shared/instacart-session` (the household's Instacart website session: its instacart.com cookies, gzip then base64) | the worker's browser for checkout (read, and written back as Instacart renews it; the task role may get and put only it), from piece 9 part 3; locally, `make worker-job` passes short-lived `conn` credentials by environment | set |
-| `/castle-chef/production/instacart-booking` (String, not secret: `off`, `live`, or `dry_run`) | the `CastleChef` worker (ECS secret): whether booking presses Place order ([Stack and services](#stack-and-services), Booking) | `off` |
+| `/castle-chef/production/instacart-booking` (String, not secret: `off`, `live`, or `dry_run`) | the `CastleChef` worker (ECS secret): whether booking presses Place order ([Stack and services](#stack-and-services), Booking) | `live` (since 2026-10-04) |
 | `/castle-chef/development/instacart-booking` (String, not secret) | the `CastleChef-dev` worker, when deployed | `dry_run` |
 
 The two credentials not in SSM are the worker's subscription logins on the stack's EFS: Grok's, and Codex's (the household's ChatGPT sign-in, with Instacart connected). Each refreshes itself, so a copy would go stale. `castle-chef agent-login grok` and `agent-login codex` write them ([Stack and services](#stack-and-services)). AWS access from GitHub uses OIDC, so there are no AWS keys.

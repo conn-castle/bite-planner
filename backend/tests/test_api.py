@@ -23,6 +23,8 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import text
 from sqlmodel import Session, col, select
+from starlette.requests import ClientDisconnect
+from starlette.types import Message, Receive, Scope, Send
 
 from castle_chef import api as api_module
 from castle_chef import booking, orders, products
@@ -3241,3 +3243,88 @@ def test_someone_who_already_has_a_name_keeps_it_when_they_join(
     samuel = account(session, "sam@example.com", "Samuel")  # named before, e.g. removed once
 
     assert me(client, samuel)["name"] == "Samuel"
+
+
+def test_a_requests_database_work_is_done_before_its_answer_is_sent(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # On Lambda the environment can freeze as soon as the answer is out: a
+    # session still open then stays mid-transaction until it thaws.
+    events: list[str] = []
+    opened = api_module.get_request_session
+
+    def watched_session() -> Session:
+        session = opened()
+        close = session.close
+
+        def closing() -> None:
+            events.append("session closed")
+            close()
+
+        monkeypatch.setattr(session, "close", closing)
+        return session
+
+    monkeypatch.setattr(api_module, "get_request_session", watched_session)
+
+    async def watched(scope: Scope, receive: Receive, send: Send) -> None:
+        async def sending(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                events.append("answer sent")
+            await send(message)
+
+        await app(scope, receive, sending)
+
+    with TestClient(watched) as watching:
+        assert watching.get("/v1/me", headers=as_user(MOM)).status_code == 200
+
+    assert events == ["session closed", "answer sent"]
+
+
+def test_each_request_says_whose_it_was_and_why_it_was_refused(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="castle_chef.api"):
+        missing = client.get(f"/v1/grocery-orders/{uuid4()}", headers=as_user(MOM))
+        client.get("/v1/me")
+        client.get("/v1/me", headers=as_user(MOM))
+
+    lines = [r.__dict__ for r in caplog.records if r.getMessage() == "http.request"]
+    assert [(line["status"], line["user_id"], line.get("detail")) for line in lines] == [
+        (404, str(MOM), missing.json()["detail"]),
+        (401, None, "Sign in first."),
+        (200, str(MOM), None),
+    ]
+
+
+def test_a_request_that_fails_unexpectedly_is_logged_as_an_error_with_its_traceback(
+    client: TestClient, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_: object) -> None:
+        raise RuntimeError("a defect")
+
+    monkeypatch.setattr(api_module.households, "join_if_invited", broken)
+    with (
+        TestClient(app, raise_server_exceptions=False) as failing,
+        caplog.at_level(logging.INFO, logger="castle_chef.api"),
+    ):
+        assert failing.get("/v1/me", headers=as_user(MOM)).status_code == 500
+
+    [failed] = [r for r in caplog.records if r.getMessage() == "http.failed"]
+    assert failed.levelname == "ERROR"
+    assert (failed.__dict__["route"], failed.__dict__["user_id"]) == ("/v1/me", str(MOM))
+    assert failed.exc_info is not None and "a defect" in str(failed.exc_info[1])
+
+
+def test_a_caller_that_hangs_up_is_not_logged_as_a_defect(
+    client: TestClient, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def gone(*_: object) -> None:
+        raise ClientDisconnect()
+
+    monkeypatch.setattr(api_module.households, "join_if_invited", gone)
+    with caplog.at_level(logging.INFO, logger="castle_chef.api"):
+        client.get("/v1/me", headers=as_user(MOM))
+
+    events = [(r.getMessage(), r.levelname) for r in caplog.records if r.name == "castle_chef.api"]
+    assert ("http.client_gone", "WARNING") in events
+    assert not [event for event in events if event[1] == "ERROR"]

@@ -123,6 +123,9 @@ class Settings(BaseSettings):
     logs_dir: Path = Path.home() / ".local" / "state" / "castle-chef" / "logs"
     # Per-job working directories (prompt, agent output, logs).
     jobs_dir: Path = Path.home() / ".local" / "state" / "castle-chef" / "jobs"
+    # The S3 bucket each job's record goes to once it ends (castle_chef.records); none
+    # on this machine, where the job's files stay on disk.
+    job_records_bucket: str | None = None
 
 
 def load_ssm_parameters() -> None:
