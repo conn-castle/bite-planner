@@ -30,6 +30,7 @@ from castle_chef_agent.checkout import (
 from castle_chef_agent.jobfiles import write_context
 from castle_chef_agent.windows import Window
 
+from tests.conftest import SETTLE_CHECK_MS
 from tests.test_checkout_tools import SESSION, ref
 
 # The stand-in's days are tomorrow and the four after it; its windows on each
@@ -59,6 +60,7 @@ def make_job_dir(tmp_path: Path, site: str, **book: Any) -> Path:
             cart_items=2,
             session_dir=sessions,
             site=site,
+            settle_check_ms=SETTLE_CHECK_MS,
             book=BookTarget(**target),
         ),
     )

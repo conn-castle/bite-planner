@@ -2156,7 +2156,8 @@ def test_members_opening_the_flow_at_once_get_one_lock(client: TestClient) -> No
         ),
         ("post", "/v1/grocery-orders/{order}/jobs", {"job_id": JOB_ID}),
         ("post", "/v1/grocery-orders/{order}/list", {"job_id": JOB_ID}),
-        ("patch", f"/v1/grocery-orders/{{order}}/list/items/{uuid4()}", {"removed": True}),
+        # Any item: the session is checked first.
+        ("patch", f"/v1/grocery-orders/{{order}}/list/items/{UUID(int=1)}", {"removed": True}),
         (
             "post",
             "/v1/grocery-orders/{order}/place",

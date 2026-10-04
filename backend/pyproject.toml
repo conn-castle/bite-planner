@@ -40,6 +40,7 @@ worker = [
 ]
 dev = [
     "pytest>=9.1.1",
+    "pytest-xdist>=3",
     "ruff>=0.16.8",
 ]
 
@@ -63,3 +64,5 @@ allowed-confusables = ["–"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# In parallel, a database per worker (tests/conftest.py); `-n 0` runs them one by one.
+addopts = "-n auto"

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Settling</title></head>
+<body>
+  <!-- A page that loads in place: it changes every 20 ms for 300 ms, then stops. -->
+  <h1 id="status">Loading 0</h1>
+  <script>
+    let ticks = 0
+    const tick = setInterval(() => {
+      ticks += 1
+      const status = document.getElementById('status')
+      if (ticks * 20 >= 300) {
+        clearInterval(tick)
+        status.textContent = 'Your cart'
+        status.insertAdjacentHTML('afterend', '<button>Go to checkout</button>')
+      } else {
+        status.textContent = `Loading ${ticks}`
+      }
+    }, 20)
+  </script>
+</body>
+</html>

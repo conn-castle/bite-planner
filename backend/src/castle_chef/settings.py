@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from castle_chef_agent.checkout import SETTLE_CHECK_MS, SETTLE_MAX_MS
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -107,6 +108,9 @@ class Settings(BaseSettings):
     instacart_session_parameter: str | None = None
     # Instacart's website (tests serve stand-in pages at another address).
     instacart_site: str = "https://www.instacart.com"
+    # How often checkout's tools check a page for having stopped changing after
+    # an action (castle_chef_agent.checkout); tests' stand-in pages settle at once.
+    checkout_settle_check_ms: int = Field(default=SETTLE_CHECK_MS, gt=0, le=SETTLE_MAX_MS // 2)
     # Whether booking presses Place order (castle_chef.booking): `live` orders;
     # `dry_run` (development) stops just before and shows the order as booked,
     # "Dry run"; `off` (production until the owner turns it on, from SSM) stops

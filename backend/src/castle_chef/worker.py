@@ -494,6 +494,7 @@ def process_quote(job: Job) -> Quote:
             )
         context = CheckoutJob(
             site=settings.instacart_site,
+            settle_check_ms=settings.checkout_settle_check_ms,
             store=settings.instacart_store,
             tip_percent=request.tip_percent,
             tip_max_cents=request.tip_max_cents,
@@ -666,6 +667,7 @@ def _book_filled(job: Job, to_book: _ToBook, filled: cart.FilledCart) -> Booked:
     target = to_book.target
     context = CheckoutJob(
         site=settings.instacart_site,
+        settle_check_ms=settings.checkout_settle_check_ms,
         store=store,
         tip_percent=to_book.tip_percent,
         tip_max_cents=to_book.tip_max_cents,

@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from castle_chef_agent import windows
 from castle_chef_agent.jobfiles import locked, read_context, replace_file
@@ -57,7 +57,8 @@ CLICK_ANSWER_CHECK_S = 0.25
 TIMEOUT_MS = 30_000
 NAVIGATION_TIMEOUT_MS = 60_000
 # After an action, the page is shown once its tree stops changing (it loads and
-# updates in place): checked this often, for at most this long.
+# updates in place): checked this often (by default; the worker's setting), for
+# at most this long.
 SETTLE_CHECK_MS = 750
 SETTLE_MAX_MS = 15_000
 # The most of a page's tree shown at once: under what the agent's harness
@@ -96,6 +97,10 @@ class CheckoutJob(BaseModel):
     book: BookTarget | None = None
     # Instacart's website: the worker passes its setting (tests point it at stand-ins).
     site: str = SITE
+    # How often a page is checked for having stopped changing: the worker passes
+    # its setting (tests' stand-in pages settle at once). At least two checks fit
+    # in the longest wait.
+    settle_check_ms: int = Field(default=SETTLE_CHECK_MS, gt=0, le=SETTLE_MAX_MS // 2)
 
 
 class QuoteLine(BaseModel):
@@ -313,8 +318,9 @@ class Browser:
         """The page's tree once it has stopped changing (or as it is after the
         longest wait): a page still loading shows little."""
         previous = None
-        for _ in range(SETTLE_MAX_MS // SETTLE_CHECK_MS):
-            await self.page.wait_for_timeout(SETTLE_CHECK_MS)
+        check = self.job.settle_check_ms
+        for _ in range(SETTLE_MAX_MS // check):
+            await self.page.wait_for_timeout(check)
             tree = await self.page.aria_snapshot(mode="ai")
             if tree == previous:
                 return tree

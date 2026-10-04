@@ -9,41 +9,75 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Connection, create_engine, make_url, text
+from sqlalchemy.pool import NullPool
 from sqlmodel import Session
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
-# Tests only ever run against TEST_DATABASE_URL (the local compose Postgres),
-# never the DATABASE_URL in backend/.env.
+# Tests only ever run on TEST_DATABASE_URL's Postgres (the local compose one), never
+# the DATABASE_URL in backend/.env. Its database is only where the test databases
+# are made from: tests run in their own (below).
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 if not TEST_DATABASE_URL:
     raise pytest.UsageError(
         "Set TEST_DATABASE_URL, e.g. start `docker compose up -d` in backend/ and use "
         "postgresql://postgres:postgres@localhost:54329/castle_chef"
     )
-os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+# Tests run in parallel (pytest-xdist, `-n auto` in pyproject.toml): each worker
+# has a database of its own, made from TEST_DATABASE_URL's name and the worker's
+# (castle_chef_gw0, …; castle_chef_main without workers).
+_BASE_URL = make_url(TEST_DATABASE_URL).set(drivername="postgresql+psycopg")
+DATABASE_NAME = f"{_BASE_URL.database}_{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
+os.environ["DATABASE_URL"] = (
+    make_url(TEST_DATABASE_URL).set(database=DATABASE_NAME).render_as_string(hide_password=False)
+)
 
 from castle_chef.db import get_engine  # noqa: E402
 from castle_chef.dispatch import get_dispatcher  # noqa: E402
 from castle_chef.models import GroceryOrder, Household, Job, JobKind  # noqa: E402
 from castle_chef.settings import get_settings  # noqa: E402
 
+# Held while a worker makes its database: the stubs create cluster-wide roles,
+# which workers creating them at once would collide on.
+_SETUP_LOCK = 4_271_001
+# Held by a test run for as long as it runs: the test databases are remade at the
+# start of every run, so a second run at once would drop the first one's.
+_RUN_LOCK = 4_271_002
+_run: Connection | None = None
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Refuses a second test run on the same Postgres while one is going. Taken
+    by the run itself (not its workers) before any worker starts; Postgres lets
+    go of it when the run ends, however it ends."""
+    global _run
+    if hasattr(session.config, "workerinput"):
+        return
+    _run = create_engine(_BASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool).connect()
+    if not _run.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": _RUN_LOCK}).scalar():
+        pytest.exit(
+            "Another test run is using this Postgres (TEST_DATABASE_URL); wait for it to finish.",
+            returncode=pytest.ExitCode.USAGE_ERROR,
+        )
+
 
 @pytest.fixture(scope="session", autouse=True)
 def migrated_database() -> None:
-    """Rebuild the schema from the migrations once per test run."""
-    with get_engine().begin() as connection:
-        connection.execute(text((BACKEND_DIR / "tests" / "neon_stubs.sql").read_text()))
-        # Drop the schemas the migrations create, and recreate `public` with the
-        # grants a new Postgres database starts with.
-        connection.execute(
-            text(
-                "DROP SCHEMA IF EXISTS app_private CASCADE;"
-                "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner;"
-                "GRANT USAGE ON SCHEMA public TO PUBLIC;"
-            )
-        )
+    """Make this worker's database afresh, with Neon's stubs, and migrate it,
+    once per test run."""
+    admin = create_engine(_BASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+    with admin.connect() as connection:
+        connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": _SETUP_LOCK})
+        try:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{DATABASE_NAME}" WITH (FORCE)'))
+            connection.execute(text(f'CREATE DATABASE "{DATABASE_NAME}"'))
+            with get_engine().begin() as database:
+                database.execute(text((BACKEND_DIR / "tests" / "neon_stubs.sql").read_text()))
+        finally:
+            connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _SETUP_LOCK})
+    admin.dispose()
     subprocess.run(["alembic", "upgrade", "head"], cwd=BACKEND_DIR, check=True)
 
 
@@ -128,6 +162,9 @@ def codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 CHECKOUT_PAGES = Path(__file__).parent / "fixtures" / "checkout"
+# How often checkout's tools check a page for having stopped changing: the
+# stand-in pages are static (but for one test's), so they settle at once.
+SETTLE_CHECK_MS = 50
 
 
 STAND_IN_PAGES = {
@@ -135,6 +172,7 @@ STAND_IN_PAGES = {
     "/store/checkout_v4": "checkout.html",
     "/store/sign-in": "sign-in.html",
     "/store/orders/confirmation": "confirmation.html",
+    "/store/settling": "settling.html",
 }
 
 
@@ -159,6 +197,7 @@ def instacart_site(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     thread.start()
     site = f"http://127.0.0.1:{server.server_address[1]}"
     monkeypatch.setenv("CASTLE_CHEF_INSTACART_SITE", site)
+    monkeypatch.setenv("CASTLE_CHEF_CHECKOUT_SETTLE_CHECK_MS", str(SETTLE_CHECK_MS))
     get_settings.cache_clear()
     yield site
     server.shutdown()

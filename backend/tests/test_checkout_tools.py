@@ -22,7 +22,9 @@ from castle_chef_agent.checkout import (
     load_state,
     tip_cents,
 )
-from castle_chef_agent.jobfiles import write_context
+from castle_chef_agent.jobfiles import read_context, write_context
+
+from tests.conftest import SETTLE_CHECK_MS
 
 SESSION = {
     "cookies": [
@@ -63,6 +65,7 @@ def job_dir(tmp_path: Path, instacart_site: str) -> Path:
             cart_items=2,  # the stand-in cart's onions and sweet onions
             session_dir=sessions,
             site=instacart_site,
+            settle_check_ms=SETTLE_CHECK_MS,
         ),
     )
     (sessions / SESSION_FILE).write_text(json.dumps(SESSION))
@@ -123,6 +126,19 @@ def test_the_agent_sees_the_page_as_elements_with_refs(job_dir: Path) -> None:
 
     assert page.startswith("Page: /store/wegmans/storefront\n")
     assert re.search(r'button "View cart" \[ref=\w+\]', page)
+
+
+def test_a_page_is_shown_once_it_has_stopped_changing(job_dir: Path) -> None:
+    # Checked every 250 ms, not the suite's 50: the page changes every 20 ms, and
+    # a busy machine mustn't stall it long enough to look settled.
+    context = read_context(job_dir, CheckoutJob)
+    write_context(job_dir, context.model_copy(update={"settle_check_ms": 250}))
+
+    page = in_browser(job_dir, lambda opened: opened.open("/store/settling"))
+
+    assert 'heading "Your cart"' in page
+    assert 'button "Go to checkout"' in page
+    assert "Loading" not in page
 
 
 def test_a_reported_checkout_is_read_from_the_elements_pointed_at(job_dir: Path) -> None:
