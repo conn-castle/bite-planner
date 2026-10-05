@@ -1,4 +1,4 @@
-// Shapes returned by the Castle Chef API (backend/src/castle_chef/api.py).
+// Shapes returned by the Castle Chef API, and the request bodies it takes (backend/src/castle_chef/api.py).
 
 /** A calendar date with no time of day or time zone: "2026-09-27". */
 export type ISODate = string
@@ -103,8 +103,8 @@ export interface MealSummary {
 }
 
 /**
- * One run of the agent for an order: a batch of suggestions (20 meals), or
- * building its shopping list.
+ * One run of the agent for an order: a batch of suggestions (20 meals),
+ * building its shopping list or shopping it at the store, a quote, or booking.
  */
 export interface Job {
   id: string
@@ -113,14 +113,13 @@ export interface Job {
   error: string | null
   requested_by: Member
   created_at: ISODateTime
-  /** A batch's meals: empty until it succeeds (and for a list); in a fixed order. */
+  /** A batch's meals: empty until it succeeds (and for every other kind); in a fixed order. */
   meals: MealSummary[]
 }
 
 /** Where an item is in the store, in the store's order. */
 export type Aisle = 'produce' | 'meat_seafood' | 'dairy_eggs' | 'frozen' | 'pantry' | 'other'
 
-/** An item of an order's shopping list. */
 /** A product at the store, and how many of it: packages, bags, or pieces. */
 export interface Product {
   product_id: string
@@ -137,6 +136,7 @@ export interface Product {
   count: number
 }
 
+/** An item of an order's shopping list. */
 export interface ShoppingItem {
   id: string
   name: string
@@ -288,7 +288,7 @@ export interface GroceryOrder extends BookFields {
   next_delivery_date: ISODate | null
   /** The furthest step its flow has reached: where the flow opens again. */
   reached_step: OrderStep
-  /** Its batches of suggestions, oldest first; the suggestions are their meals. */
+  /** Its jobs of every kind, oldest first; the suggestions are its batches' meals. */
   jobs: Job[]
   /** In the order their meals were suggested. */
   picks: MealPick[]
@@ -362,11 +362,77 @@ export interface NextOrder {
   draft: GroceryOrder | null
 }
 
-/** Body of `PUT /v1/grocery-orders/{id}/dates`: both dates and the latest time, every time. */
+/** Body of `PUT /v1/grocery-orders/{id}/dates` (`DatesIn`): both dates and the latest time, every time. */
 export interface OrderDates {
   delivery_date: ISODate | null
   delivery_by: ClockTime | null
   next_delivery_date: ISODate | null
+}
+
+// The other request bodies, named as the API's models are. A PATCH body sends
+// only the fields it changes, at least one, and none of them null.
+
+/** Starts a job the app named, so a resent request can't start a second. */
+export interface JobIn {
+  job_id: string
+}
+
+/** Body of `POST /v1/grocery-orders/{id}/place`: the dates and time shown, and the quote whose total was shown. */
+export interface PlaceIn {
+  delivery_date: ISODate
+  delivery_by: ClockTime
+  next_delivery_date: ISODate
+  quote_id: string
+}
+
+/** Body of `POST /v1/grocery-orders/{id}/settle`: whether Instacart has an order booking couldn't confirm. */
+export interface SettleIn {
+  placed: boolean
+}
+
+/** Body of `POST` and `PUT /v1/grocery-orders/{id}/lock`: the step the flow shows, for the other members. */
+export interface LockIn {
+  step: OrderStep
+}
+
+/** Body of `PATCH /v1/grocery-orders/{id}/list/items/{item_id}`. */
+export interface ItemIn {
+  removed?: boolean
+  quantity?: number
+  count?: number
+  alternative?: string
+}
+
+/** Body of `PUT /v1/grocery-orders/{id}/meals/{meal_id}/servings`. */
+export interface ServingsIn {
+  servings: number
+}
+
+/** Body of `PUT /v1/meals/{id}/rating`. */
+export interface RatingIn {
+  rating: MealRating
+}
+
+/** Body of `POST /v1/household/invites`. */
+export interface InviteIn {
+  name: string
+  email: string
+}
+
+/** Body of `PATCH /v1/household`. */
+export type HouseholdSettingsIn = Partial<HouseholdSettings & Pick<Household, 'name'>>
+
+/** Body of `PATCH /v1/me/settings`. */
+export interface PersonalSettingsIn {
+  notification_time?: ClockTime
+  time_zone?: string
+  reminders_on?: boolean
+}
+
+/** Body of `POST /v1/logs`. */
+export interface LogsIn {
+  device: Record<string, unknown>
+  entries: Record<string, unknown>[]
 }
 
 export interface MealIngredient {
@@ -376,7 +442,7 @@ export interface MealIngredient {
   preparation: string | null
 }
 
-/** The full recipe. */
+/** One step of a recipe. */
 export interface MealStep {
   text: string
   /** How long the cook waits in it, for a timer; null when there's nothing to time. */
@@ -385,6 +451,7 @@ export interface MealStep {
   ingredients: number[]
 }
 
+/** The full recipe. */
 export interface Meal extends MealSummary {
   servings: number
   steps: MealStep[]

@@ -1,4 +1,4 @@
-import type { Member } from '../../lib/api/types'
+import type { Member } from './api/types'
 
 /** "1 meal", "3 meals" */
 export function plural(count: number, word: string): string {
@@ -14,6 +14,11 @@ export function elapsed(from: Date, to: Date): string {
 /** Who did something, from the signed-in member's point of view: "You", their name, or "Someone in your household". */
 export function memberName(member: Member, userId: string | undefined): string {
   if (member.user_id === userId) return 'You'
+  return theirName(member)
+}
+
+/** A member's name, or "Someone in your household" when they have none. */
+export function theirName(member: Member): string {
   return member.name ?? 'Someone in your household'
 }
 

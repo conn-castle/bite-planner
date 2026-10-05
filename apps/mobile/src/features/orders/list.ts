@@ -1,5 +1,5 @@
 import type { GroceryOrder, ShoppingItem, ShoppingList } from '../../lib/api/types'
-import { formatMoney } from '../../lib/products'
+import { formatMoney, isUndecided } from '../../lib/products'
 import { formatQuantity, formatUnit } from '../meals/servings'
 import { isRunning } from './batches'
 
@@ -25,9 +25,14 @@ export function listState(list: ShoppingList | null): ListState {
   return list.job.status === 'failed' ? 'failed' : 'start'
 }
 
-/** The items the store doesn't have that the member hasn't decided on: picked an alternative or skipped. */
+/** The store the order's list is shopped at: "Wegmans", or "the store" before it has a list. */
+export function storeName(order: Pick<GroceryOrder, 'shopping_list'>): string {
+  return order.shopping_list?.store ?? 'the store'
+}
+
+/** The items to buy the store doesn't have that the member hasn't decided on: picked an alternative or skipped. */
 export function undecided(items: ShoppingItem[]): ShoppingItem[] {
-  return items.filter((item) => !item.on_hand && item.not_found && item.product === null && !item.removed)
+  return items.filter((item) => !item.on_hand && isUndecided(item))
 }
 
 /** "2 lb", "8", "1½ cups": how much of an item; nothing when the recipes give no amount. */
@@ -36,19 +41,14 @@ export function itemAmount({ quantity, unit }: Pick<ShoppingItem, 'quantity' | '
   return unit === null ? formatQuantity(quantity) : `${formatQuantity(quantity)} ${formatUnit(unit, quantity)}`
 }
 
-/** How much − and + change an item: one of a counted item, finer steps for small amounts. */
-export function quantityStep({ quantity, unit }: Pick<ShoppingItem, 'quantity' | 'unit'>): number {
-  if (unit === null || quantity === null) return 1
-  return quantity < 2 ? 0.25 : quantity < 10 ? 0.5 : 1
-}
-
-/** "for Fajitas, Curry": the meals an item is for, by their names. */
-export function forMeals(item: Pick<ShoppingItem, 'meal_ids'>, names: ReadonlyMap<string, string>): string {
-  const meals = item.meal_ids.flatMap((id) => {
-    const name = names.get(id)
-    return name === undefined ? [] : [name]
-  })
-  return meals.length > 0 ? `for ${meals.join(', ')}` : ''
+/** "Fajitas, Curry": the meals an item is for, by their names. */
+export function mealNames(item: Pick<ShoppingItem, 'meal_ids'>, names: ReadonlyMap<string, string>): string {
+  return item.meal_ids
+    .flatMap((id) => {
+      const name = names.get(id)
+      return name === undefined ? [] : [name]
+    })
+    .join(', ')
 }
 
 /** The items to buy, and those assumed on hand (shown only on request). */

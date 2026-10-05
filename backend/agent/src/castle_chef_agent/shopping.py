@@ -1,9 +1,10 @@
-"""The shopping list the agent makes (`castle-chef shopping-list …`): items to buy
+"""The shopping list the agent makes (the shopping-list tools): items to buy
 and the staples the meals use, each covering scaled ingredient lines, kept in the
 job directory for the worker. Every change is checked as it's made."""
 
 import math
 from collections.abc import Iterator
+from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
 
@@ -52,7 +53,7 @@ STAPLE_NAMES: dict[str, Staple] = {
 
 
 class ListItemInput(BaseModel):
-    """An item to buy, as the agent adds it (`castle-chef shopping-list add`)."""
+    """An item to buy, as the agent adds it (`add_item`)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -66,7 +67,7 @@ class ListItemInput(BaseModel):
 
 
 class StapleInput(BaseModel):
-    """A staple the meals use (`castle-chef shopping-list staple`)."""
+    """A staple the meals use (`add_staple`)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -75,7 +76,7 @@ class StapleInput(BaseModel):
 
 
 class ListDraft(BaseModel):
-    """The list the agent has made so far (its commands keep it in the job directory)."""
+    """The list the agent has made so far (its tools keep it in the job directory)."""
 
     items: list[ListItemInput] = []
     staples: list[StapleInput] = []
@@ -91,13 +92,13 @@ class IngredientLine(BaseModel):
 
 
 class ListJob(BaseModel):
-    """What a build_list job's commands check against (the worker writes it)."""
+    """What a build_list job's tools check against (the worker writes it)."""
 
     lines: list[IngredientLine]
 
 
 class ListRefused(Exception):
-    """A command's change breaks a rule; the message says which, for the agent."""
+    """A tool's change breaks a rule; the message says which, for the agent."""
 
 
 def _draft_path(job_dir: Path) -> Path:
@@ -109,8 +110,14 @@ def load_draft(job_dir: Path) -> ListDraft:
     return ListDraft.model_validate_json(path.read_text()) if path.exists() else ListDraft()
 
 
-def _save_draft(job_dir: Path, draft: ListDraft) -> None:
-    replace_file(_draft_path(job_dir), draft.model_dump_json(indent=2))
+@contextmanager
+def _changing(job_dir: Path) -> Iterator[ListDraft]:
+    """The list so far, to change under the job directory's lock: saved when the
+    block ends, unless it raises."""
+    with locked(job_dir):
+        draft = load_draft(job_dir)
+        yield draft
+        replace_file(_draft_path(job_dir), draft.model_dump_json(indent=2))
 
 
 def _covered(draft: ListDraft) -> Iterator[tuple[str, str]]:
@@ -147,7 +154,7 @@ def _rounded(item: ListItemInput) -> ListItemInput:
     unit keep two decimals."""
     if item.quantity is None:
         if item.unit is not None:
-            raise ListRefused("--unit needs --quantity.")
+            raise ListRefused("A unit needs a quantity.")
         return item
     if item.unit is None:
         # Rounded first so float noise (2.0000000001) isn't a whole one more.
@@ -170,16 +177,14 @@ def add_item(job_dir: Path, item: ListItemInput) -> ListItemInput:
         raise ListRefused(f"Invalid item:\n{error}") from error
     if (staple := STAPLE_NAMES.get(key(item.name))) is not None:
         raise ListRefused(
-            f'"{item.name}" is the staple {staple.value}: add it with '
-            f"`castle-chef shopping-list staple '{staple.value}'` instead."
+            f'"{item.name}" is the staple {staple.value}: add it as a staple with '
+            "`add_staple` instead."
         )
     job = read_context(job_dir, ListJob)
-    with locked(job_dir):
-        draft = load_draft(job_dir)
+    with _changing(job_dir) as draft:
         if any(key(other.name) == key(item.name) for other in draft.items):
             raise ListRefused(
-                f'"{item.name}" is already on the list. To change it, remove it '
-                f"(`castle-chef shopping-list remove '{item.name}'`) and add it again."
+                f'"{item.name}" is already on the list. To change it, `remove` it and add it again.'
             )
         problems = _line_problems(job, draft, item.lines)
         if (problem := _amount_problem(job, item)) is not None:
@@ -187,35 +192,31 @@ def add_item(job_dir: Path, item: ListItemInput) -> ListItemInput:
         if problems:
             raise ListRefused(" ".join(problems))
         draft.items.append(item)
-        _save_draft(job_dir, draft)
     return item
 
 
 def add_staple(job_dir: Path, staple: StapleInput) -> None:
     """Record a staple the meals use, or raise ListRefused with the reason."""
     job = read_context(job_dir, ListJob)
-    with locked(job_dir):
-        draft = load_draft(job_dir)
+    with _changing(job_dir) as draft:
         if any(other.staple == staple.staple for other in draft.staples):
             raise ListRefused(
-                f"{staple.staple.value} is already added. To change its lines, remove it "
-                f"(`castle-chef shopping-list remove '{staple.staple.value}'`) and add it again."
+                f"{staple.staple.value} is already added. To change its lines, `remove` it "
+                "and add it again."
             )
         if problems := _line_problems(job, draft, staple.lines):
             raise ListRefused(" ".join(problems))
         draft.staples.append(staple)
-        _save_draft(job_dir, draft)
 
 
 def remove(job_dir: Path, name: str) -> None:
     """Take an item or staple off the job's list, or raise ListRefused."""
-    with locked(job_dir):
-        draft = load_draft(job_dir)
+    with _changing(job_dir) as draft:
         items = [item for item in draft.items if key(item.name) != key(name)]
         staples = [staple for staple in draft.staples if staple.staple.value != key(name)]
         if len(items) + len(staples) == len(draft.items) + len(draft.staples):
             raise ListRefused(f'"{name}" is not on the list.')
-        _save_draft(job_dir, ListDraft(items=items, staples=staples))
+        draft.items, draft.staples = items, staples
 
 
 def list_problems(job: ListJob, draft: ListDraft) -> list[str]:

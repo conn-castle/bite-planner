@@ -1,4 +1,4 @@
-"""CDK app: `uv run cdk deploy` from infra/ (see README "Infrastructure").
+"""CDK app: released by .github/actions/deploy; by hand, docs/operations/aws.md "Deploying by hand".
 
 Context:
   stage              dev | prod (cdk.json `stages`); default prod
@@ -8,7 +8,6 @@ Context:
 """
 
 import aws_cdk as cdk
-from aws_cdk import CfnOutput
 
 from castle_chef_infra.repositories import RepositoriesStack
 from castle_chef_infra.runtime import RuntimeConfig, RuntimeStack
@@ -21,9 +20,9 @@ stage_name = app.node.try_get_context("stage") or "prod"
 stage = app.node.get_context("stages")[stage_name]
 
 
-def required(name: str) -> str:
+def image_digest(name: str) -> str:
     value = app.node.try_get_context(name)
-    if not value or not str(value).startswith("sha256:"):
+    if not isinstance(value, str) or not value.startswith("sha256:"):
         raise SystemExit(f"Pass -c {name}=sha256:… (the image digest in ECR).")
     return value
 
@@ -48,21 +47,10 @@ if app.node.try_get_context("repositoriesOnly") != "true":
             cors_origins=stage["corsOrigins"],
             alarm_email=app.node.get_context("alarmEmail"),
             release=app.node.get_context("release"),
-            api_image_digest=required("apiImageDigest"),
-            worker_image_digest=required("workerImageDigest"),
+            api_image_digest=image_digest("apiImageDigest"),
+            worker_image_digest=image_digest("workerImageDigest"),
         ),
     )
-    CfnOutput(runtime, "ApiUrlOutput", value=runtime.api_url)
-    CfnOutput(runtime, "RemindersFunctionOutput", value=runtime.reminders.function_name)
-    CfnOutput(runtime, "ClusterNameOutput", value=runtime.cluster.cluster_name)
-    CfnOutput(runtime, "JobsPipeOutput", value=runtime.pipe_name)
-    CfnOutput(runtime, "WorkerTaskDefinitionOutput", value=runtime.worker.task_definition_arn)
-    CfnOutput(
-        runtime, "WorkerSecurityGroupOutput", value=runtime.worker_security_group.security_group_id
-    )
-    CfnOutput(runtime, "WorkerSubnetsOutput", value=",".join(s.subnet_id for s in runtime.subnets))
-    CfnOutput(runtime, "WorkerLogGroupOutput", value=runtime.worker_logs.log_group_name)
-    CfnOutput(runtime, "JobRecordsBucketOutput", value=runtime.job_records.bucket_name)
     cdk.Tags.of(runtime).add("project", "castle-chef")
     cdk.Tags.of(runtime).add("stage", stage_name)
 cdk.Tags.of(repositories).add("project", "castle-chef")

@@ -1,6 +1,9 @@
 import type { GroceryOrder, Job, MealSummary } from '../../lib/api/types'
 
-/** An order's batches of suggestions (its `generate_meals` jobs) and the meals they made. */
+/**
+ * An order's batches of suggestions (its `generate_meals` jobs) and the meals
+ * they made, and whether any of its jobs is still running.
+ */
 
 type Batches = Pick<GroceryOrder, 'jobs'>
 
@@ -11,8 +14,13 @@ export function suggestions({ jobs }: Batches): MealSummary[] {
   return jobs.filter((job) => job.kind === 'generate_meals').flatMap((job) => job.meals)
 }
 
-/** Whether a batch is still being made, so the order is worth checking again. */
-export function hasRunningBatch({ jobs }: Batches): boolean {
+/**
+ * Whether any of the order's jobs is still running, so the order is worth
+ * checking again: a batch of suggestions, or its list being built or shopped,
+ * or a quote. This is what keeps the order polled while the list and review
+ * steps wait, so it counts every kind of job, not just batches.
+ */
+export function hasRunningJob({ jobs }: Batches): boolean {
   return jobs.some(isRunning)
 }
 

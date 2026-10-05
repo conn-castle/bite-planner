@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useRef } from 'react'
 import type { Checkout, ClockTime, GroceryOrder, ISODate } from '../../lib/api/types'
 import { addDays, formatClockTime, formatDate, formatWindow } from '../../lib/dates'
+import { elapsed, plural } from '../../lib/format'
 import { haptics } from '../../lib/haptics'
 import { logger } from '../../lib/log'
 import { formatMoney } from '../../lib/products'
@@ -21,8 +22,7 @@ import { pickedMeals } from './batches'
 import { coveredDays, dayRange } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
-import { elapsed, plural } from './format'
-import { listCounts, productTotals } from './list'
+import { listCounts, productTotals, storeName } from './list'
 import { useOrderSession } from './lock'
 import { useEditsPending, usePlaceOrder, useQuoteOrder } from './orders'
 import { quoteState, replacementShown, totalParts } from './quote'
@@ -54,7 +54,7 @@ export function ReviewStep({ order, delivery, by, next, onOpenMeal, onChange, on
   const quote = useQuoteOrder()
   const { mutate: startQuote } = quote
   const state = quoteState(order.quote)
-  const store = order.shopping_list?.store ?? 'the store'
+  const store = storeName(order)
 
   // Read a total, once for each one it replaces: when there's none for the order
   // as it is now (the first time here, or it changed since), and when coming
@@ -182,8 +182,7 @@ function QuoteWait({ order, store, failed, signedOut, startFailed, retrying, onR
   )
 }
 
-interface ReviewedProps extends Omit<ReviewStepProps, 'order'> {
-  order: GroceryOrder
+interface ReviewedProps extends ReviewStepProps {
   checkout: Checkout | null
   /** Why Instacart won't check the cart out (below the store's minimum); null when it will. */
   blocked: string | null
@@ -214,7 +213,7 @@ function Reviewed({
   const items = order.shopping_list?.items ?? []
   const counts = listCounts(items)
   const products = productTotals(items)
-  const store = order.shopping_list?.store ?? 'the store'
+  const store = storeName(order)
   const covered = coveredDays(delivery, next)
   const arrives = by ? `${formatDate(delivery, 'medium')} by ${formatClockTime(by)}` : formatDate(delivery, 'medium')
   const fallback = order.fallback_window

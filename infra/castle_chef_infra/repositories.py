@@ -2,7 +2,7 @@
 monthly budget. Deployed before the runtime stack, so images can be pushed
 before anything references them."""
 
-from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import Duration, Environment, RemovalPolicy, Stack
 from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_iam as iam
@@ -19,9 +19,9 @@ class RepositoriesStack(Stack):
         *,
         github_subject: str,
         budget_email: str,
-        **kwargs,
+        env: Environment | None = None,
     ) -> None:
-        super().__init__(scope, construct_id, **kwargs)
+        super().__init__(scope, construct_id, env=env)
 
         self.repositories = {
             name: ecr.Repository(

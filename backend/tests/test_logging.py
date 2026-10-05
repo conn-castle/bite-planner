@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+from castle_chef.api import create_app
 from castle_chef.cli import app
 from castle_chef.models import Job
 
@@ -55,3 +56,21 @@ logging.getLogger("uvicorn.access").info("127.0.0.1 - GET /health 200")
     [crash] = [line for line in lines if line["event"] == "Exception in ASGI application"]
     assert crash["level"] == "error" and "RuntimeError: a defect" in crash["exception"]
     assert not [line for line in lines if line["logger"] == "uvicorn.access"]
+
+
+def test_the_api_logs_the_release_it_runs_when_it_starts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # As on Lambda: the image sets the commit, and the deploy the release.
+    monkeypatch.setenv("CASTLE_CHEF_RELEASE", "2026.10.4.1")
+    monkeypatch.setenv("CASTLE_CHEF_COMMIT", "abc123")
+
+    create_app()
+
+    lines = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    [started] = [line for line in lines if line["event"] == "api.started"]
+    assert (started["level"], started["release"], started["commit"]) == (
+        "info",
+        "2026.10.4.1",
+        "abc123",
+    )

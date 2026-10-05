@@ -78,9 +78,9 @@ test: db ## Run all tests: backend, app, infra
 	cd apps/mobile && pnpm test
 	cd infra && uv run pytest
 
-lint: ## Lint and check formatting
-	cd backend && uv run ruff check . && uv run ruff format --check .
-	cd infra && uv run ruff check . && uv run ruff format --check .
+lint: ## Lint, check formatting, and type-check
+	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy
+	cd infra && uv run ruff check . && uv run ruff format --check . && uv run mypy
 	cd apps/mobile && pnpm lint
 
 format: ## Format Python code

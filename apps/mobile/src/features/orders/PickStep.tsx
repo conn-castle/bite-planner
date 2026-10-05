@@ -1,6 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useContext, useState } from 'react'
+import { BATCH_SIZE } from '../../lib/api/limits'
 import type { GroceryOrder, Job, MealSummary } from '../../lib/api/types'
+import { errorMessage } from '../../lib/errorMessage'
+import { elapsed, plural } from '../../lib/format'
 import { haptics } from '../../lib/haptics'
 import { errorFields, logger } from '../../lib/log'
 import { usePressIntent } from '../../lib/usePressIntent'
@@ -12,15 +15,15 @@ import { Icon } from '../../ui/Icon'
 import { Note } from '../../ui/Note'
 import { Notice } from '../../ui/Notice'
 import { usePrefetchMeal } from '../meals/cached'
-import { formatMinutes } from '../meals/facts'
+import { formatMinutes, mealMinutes } from '../meals/facts'
 import { householdQuery } from '../settings/settings'
 import { newestBatchState, suggestions } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
-import { elapsed, plural } from './format'
 import { useEditsPending, useGenerateMeals, useSetMeal, useSetNotForUs } from './orders'
 import { useOrderSession } from './lock'
 import styles from './PickStep.module.css'
+import { stepIndex } from './steps'
 
 // Placeholder cards shown below the grid while more suggestions are made.
 const PLACEHOLDER_CARDS = 4
@@ -54,7 +57,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
   async function toggle(meal: MealSummary) {
     haptics.tap()
     if (picked.has(meal.id)) {
-      setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: false, session })
+      setMeal.mutate({ kind: 'meal', orderId: order.id, mealId: meal.id, picked: false, session })
       return
     }
     // A new pick starts at the household's default servings (cached from launch;
@@ -66,21 +69,27 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
       // Offline on a phone that has never loaded the household: nothing to show yet.
       logger.warn('orders.pick_needs_household', errorFields(error))
       haptics.error()
-      setPickProblem(error instanceof Error ? error.message : String(error))
+      setPickProblem(errorMessage(error))
       return
     }
     setPickProblem(null)
-    setMeal.mutate({ orderId: order.id, mealId: meal.id, picked: true, servings, session })
+    setMeal.mutate({ kind: 'meal', orderId: order.id, mealId: meal.id, picked: true, servings, session })
   }
 
   function dismiss(meal: MealSummary) {
     haptics.tap()
-    setNotForUs.mutate({ orderId: order.id, mealId: meal.id, notForUs: meal.rating !== 'not_for_us', session })
+    setNotForUs.mutate({
+      kind: 'not-for-us',
+      orderId: order.id,
+      mealId: meal.id,
+      notForUs: meal.rating !== 'not_for_us',
+      session,
+    })
   }
 
   return (
     <FlowFrame
-      step={0}
+      step={stepIndex('pick')}
       onClose={onClose}
       notice={
         pickProblem ? (
@@ -145,7 +154,7 @@ interface MealCardProps {
  * this"), which also takes it out of the order and can be undone.
  */
 function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
-  const minutes = meal.total_time_minutes ?? meal.active_time_minutes
+  const minutes = mealMinutes(meal)
   const prefetch = usePrefetchMeal()
   const press = usePressIntent(() => prefetch(meal.id))
   // A meal marked "not for us" is never picked (see edits.ts), so it's never also added.
@@ -210,7 +219,7 @@ function MoreMeals({ order }: { order: GroceryOrder }) {
             <Icon name="spark" />
             Generate more
           </Button>
-          <p className={styles.hint}>20 more ideas below · takes a minute or two</p>
+          <p className={styles.hint}>{BATCH_SIZE} more ideas below · takes a minute or two</p>
         </>
       )}
     </div>
@@ -223,7 +232,7 @@ function MoreRunning({ job }: { job: Job }) {
     <div className={styles.more} aria-busy="true">
       <span className={styles.progress} aria-hidden="true" />
       <p className={styles.hint}>
-        <b>Generating 20 more</b> · {elapsed(new Date(job.created_at), now)}
+        <b>Generating {BATCH_SIZE} more</b> · {elapsed(new Date(job.created_at), now)}
       </p>
       <p className={styles.hint}>You can close this; they'll be here when you come back.</p>
     </div>

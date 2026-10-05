@@ -2,8 +2,8 @@
 
 A release migrates Neon `main` while the previous release's app and worker keep
 running against it, and TestFlight builds already on phones can't be rolled
-back. So `upgrade()` may add, but may not drop or rename tables or columns,
-unless the statement is marked on the line above with
+back. So `upgrade()`, and the helpers it calls, may add, but may not drop or
+rename tables or columns, unless the statement is marked on the line above with
 `# contract: <why the previous release no longer uses it>`.
 Replacing RLS policies, constraints, and indexes is allowed.
 """
@@ -45,21 +45,36 @@ def _is_destructive(call: ast.Call) -> bool:
     return False
 
 
+def _upgrade_functions(module: ast.Module) -> list[ast.FunctionDef]:
+    """`upgrade()` and the module's functions it calls, directly or through each other."""
+    functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
+    reached: dict[str, ast.FunctionDef] = {}
+    calls = ["upgrade"]
+    while calls:
+        name = calls.pop()
+        if name in reached or name not in functions:
+            continue
+        reached[name] = functions[name]
+        calls += [
+            node.func.id
+            for node in ast.walk(functions[name])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+    return list(reached.values())
+
+
 def unmarked_destructive_statements(source: str) -> list[int]:
-    """Line numbers of destructive statements in `upgrade()` without a `# contract:` mark."""
+    """Line numbers of destructive statements without a `# contract:` mark, in
+    `upgrade()` and the helpers it calls."""
     lines = source.splitlines()
-    upgrade = next(
-        node
-        for node in ast.parse(source).body
-        if isinstance(node, ast.FunctionDef) and node.name == "upgrade"
-    )
-    return [
+    return sorted(
         node.lineno
-        for node in ast.walk(upgrade)
+        for function in _upgrade_functions(ast.parse(source))
+        for node in ast.walk(function)
         if isinstance(node, ast.Call)
         and _is_destructive(node)
         and not (node.lineno >= 2 and lines[node.lineno - 2].strip().startswith("# contract:"))
-    ]
+    )
 
 
 @pytest.mark.parametrize("path", sorted(VERSIONS_DIR.glob("*.py")), ids=lambda path: path.name)
@@ -115,3 +130,23 @@ def test_guard_accepts_a_marked_contract_step_and_ignores_downgrade() -> None:
         '    op.drop_table("meal")\n'
     )
     assert unmarked_destructive_statements(source) == []
+
+
+def test_guard_looks_inside_the_helpers_upgrade_calls_and_only_those() -> None:
+    source = (
+        "def _retype() -> None:\n"
+        '    op.execute("ALTER TYPE order_step RENAME TO order_step_old")\n'
+        "\n"
+        "def _rebuild() -> None:\n"
+        "    _retype()\n"
+        "\n"
+        "def _drop_lists() -> None:\n"
+        '    op.drop_table("shopping_list_item")\n'
+        "\n"
+        "def upgrade() -> None:\n"
+        "    _rebuild()\n"
+        "\n"
+        "def downgrade() -> None:\n"
+        "    _drop_lists()\n"
+    )
+    assert unmarked_destructive_statements(source) == [2]

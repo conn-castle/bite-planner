@@ -69,6 +69,12 @@ export async function refreshPermission(): Promise<Permission> {
   return current
 }
 
+// Counts sign-outs: setup and registrations begun before the latest one are
+// stale (the phone was unregistered meanwhile) and must not register it again.
+let signIn = 0
+// The sign-in that last asked Apple to register this phone.
+let registeredFor: number | null = null
+
 /** iOS's "Allow notifications?" prompt (only the first time: iOS asks once), then registers if allowed. */
 export async function askPermission(): Promise<void> {
   const mine = signIn
@@ -76,12 +82,6 @@ export async function askPermission(): Promise<void> {
   logger.info('push.permission_answered', { receive })
   if ((await refreshPermission()) === 'on') await registerPhone(mine)
 }
-
-// Counts sign-outs: setup and registrations begun before the latest one are
-// stale (the phone was unregistered meanwhile) and must not register it again.
-let signIn = 0
-// The sign-in that last asked Apple to register this phone.
-let registeredFor: number | null = null
 
 /** Asks Apple for this phone's token (see the `registration` listener), unless its sign-in has ended. */
 async function registerPhone(mine: number): Promise<void> {
@@ -194,6 +194,9 @@ export type Delivered =
   | { kind: 'booking'; orderId: string }
   | { kind: 'test' }
 
+/** A notification whose tap opens something (a test one only opens the app). */
+export type Openable = Exclude<Delivered, { kind: 'test' }>
+
 /** A notification about the household's draft (or the next order): what the flow opens for. */
 export type AboutDraft = Exclude<Delivered, { kind: 'test' } | { kind: 'booking' }>
 
@@ -291,7 +294,7 @@ export async function resolveTap(about: AboutDraft): Promise<TapResult> {
 
 /** A notification the member tapped: what it's about, and when (to log how long opening it takes). */
 export interface Tap {
-  about: Delivered
+  about: Openable
   at: number
 }
 
@@ -374,7 +377,7 @@ export interface Toast {
   title: string
   body: string
   /** What tapping it does (like tapping the notification). */
-  delivered: Delivered
+  delivered: Openable
 }
 
 const toast = store<Toast | null>(null)
@@ -394,11 +397,16 @@ export function tapToast(shown: Toast) {
   tapped.set({ about: shown.delivered, at: Date.now() })
 }
 
-// Whether the order flow is open: "ideas ready" and "list ready" need no toast then (they're showing).
-let orderFlowOpen = false
+// How many order flows are open (Home's, and one per order page): while any is,
+// "ideas ready" and "list ready" need no toast (they're showing).
+let openFlows = 0
 
-export function setOrderFlowOpen(open: boolean) {
-  orderFlowOpen = open
+/** An order flow has opened; call what it returns as it closes. */
+export function orderFlowOpened(): () => void {
+  openFlows += 1
+  return () => {
+    openFlows -= 1
+  }
 }
 
 function received(notification: PushNotificationSchema, queryClient: QueryClient) {
@@ -412,7 +420,7 @@ function received(notification: PushNotificationSchema, queryClient: QueryClient
     delivered?.kind === 'list_ready' ||
     delivered?.kind === 'list_failed' ||
     delivered?.kind === 'booking'
-  if (delivered && aboutAnOrder && !orderFlowOpen) {
+  if (delivered && aboutAnOrder && openFlows === 0) {
     toast.set({
       id: ++toastCount,
       title: notification.title ?? '',

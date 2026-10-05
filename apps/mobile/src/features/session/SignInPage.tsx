@@ -1,7 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useRef, useState } from 'react'
 import { auth } from '../../lib/auth/auth'
+import { errorMessage } from '../../lib/errorMessage'
 import { haptics } from '../../lib/haptics'
+import { isRecord } from '../../lib/isRecord'
 import { errorFields, logger } from '../../lib/log'
 import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
@@ -11,7 +13,7 @@ import styles from './SignInPage.module.css'
 import { Welcome } from './Welcome'
 
 function describeError(error: unknown): string {
-  return (error as { message?: string } | null)?.message || 'Something went wrong. Try again.'
+  return (isRecord(error) && 'message' in error && errorMessage(error)) || 'Something went wrong. Try again.'
 }
 
 /**

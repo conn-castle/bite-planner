@@ -5,6 +5,7 @@ import { onlineManager } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { apiRequest } from './api/client'
 import { ApiError } from './api/errors'
+import type { LogsIn } from './api/types'
 import { errorFields, flushLogs, logger, nextLogBatch } from './log'
 
 /**
@@ -40,7 +41,7 @@ async function uploadPending() {
     const batch = await nextLogBatch(BATCH_SIZE)
     if (batch.entries.length === 0) return
     try {
-      await apiRequest<void>('POST', '/v1/logs', { device, entries: batch.entries })
+      await apiRequest<void>('POST', '/v1/logs', { device, entries: batch.entries } satisfies LogsIn)
     } catch (error) {
       // A batch the API refuses as invalid (e.g. over 1 MB) would be refused
       // forever and block every later one: drop it and say so.

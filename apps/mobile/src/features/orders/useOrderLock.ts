@@ -1,12 +1,12 @@
 import { App } from '@capacitor/app'
-import { useQueryClient } from '@tanstack/react-query'
+import { type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiRequest } from '../../lib/api/client'
 import { ApiError } from '../../lib/api/errors'
-import type { GroceryOrder, OrderLock, OrderStep } from '../../lib/api/types'
+import type { GroceryOrder, LockIn, OrderLock, OrderStep } from '../../lib/api/types'
 import { errorFields, logger } from '../../lib/log'
 import { queryKeys } from '../../lib/query/keys'
-import { LOCK_RENEW_MS, type LockedOut, lockHolder, lockRequest, withLock } from './lock'
+import { LOCK_RENEW_MS, type LockedOut, type LockHolder, lockHolder, lockRequest, withLock } from './lock'
 import { FlowClosed, takeLock } from './orders'
 
 interface OrderLockState {
@@ -38,52 +38,12 @@ export function useOrderLock(
   if (holder === 'this' && sessionWithLock !== session) setSessionWithLock(session)
   const hadLock = sessionWithLock === session
 
-  const latest = useRef({ orderId, holder, hadLock, step })
+  const latest = useRef<LockView>({ orderId, session, holder, hadLock, step })
   useEffect(() => {
-    latest.current = { orderId, holder, hadLock, step }
-  }, [orderId, holder, hadLock, step])
-  const sending = useRef(false)
-  // The order was placed or discarded (409, 404): nothing more to send about it.
-  const ended = useRef(false)
-
-  const send = useCallback(
-    async (how: 'take' | 'renew') => {
-      const { orderId, step } = latest.current
-      if (orderId === undefined || sending.current) return
-      sending.current = true
-      try {
-        if (how === 'take') {
-          // After the changes still being saved, and before a release as the flow closes.
-          await takeLock(queryClient, { orderId, session, step })
-          logger.info('orders.lock_taken', { orderId })
-        } else {
-          const lock = await apiRequest<OrderLock>('PUT', `/v1/grocery-orders/${orderId}/lock`, { step }, session)
-          queryClient.setQueryData<GroceryOrder>(queryKeys.order(orderId), (cached) => cached && withLock(cached, lock))
-        }
-      } catch (error) {
-        if (error instanceof FlowClosed) return
-        if (error instanceof ApiError && [404, 409, 423].includes(error.status)) {
-          // Someone else has it (423), or the order was placed or discarded: show why.
-          logger.info('orders.lock_lost', { orderId, how, status: error.status })
-          if (error.status !== 423) ended.current = true
-          void queryClient.invalidateQueries({ queryKey: queryKeys.order(orderId) })
-        } else {
-          // Offline, say: the next tick tries again.
-          logger.warn('orders.lock_failed', { orderId, how, ...errorFields(error) })
-        }
-      } finally {
-        sending.current = false
-      }
-    },
-    [queryClient, session],
-  )
-
-  const tick = useCallback(() => {
-    if (ended.current) return
-    const { holder, hadLock } = latest.current
-    const request = lockRequest(holder, hadLock)
-    if (request) void send(request)
-  }, [send])
+    latest.current = { orderId, session, holder, hadLock, step }
+  }, [orderId, session, holder, hadLock, step])
+  const [requests] = useState(() => lockRequests(queryClient))
+  const tick = useCallback(() => requests.tick(latest.current), [requests])
 
   // At once when who has it or the step changes; then every 30 seconds, and on
   // coming back to the foreground (iOS stops timers while the app is away).
@@ -108,5 +68,65 @@ export function useOrderLock(
       : lock && holder === 'you elsewhere' && hadLock
         ? { by: 'you elsewhere', lock }
         : null
-  return { lockedOut, takeOver: () => void send('take') }
+  return { lockedOut, takeOver: () => requests.takeOver(latest.current) }
+}
+
+/** What the flow shows about the order's lock now, in its ordering session. */
+export interface LockView {
+  orderId: string | undefined
+  session: string
+  holder: LockHolder | null
+  hadLock: boolean
+  step: OrderStep
+}
+
+/**
+ * The flow's requests about the lock, one at a time: `tick` sends what the
+ * flow's view calls for (lockRequest), `takeOver` takes it whoever has it.
+ */
+export function lockRequests(queryClient: QueryClient) {
+  let sending = false
+  // The draft was discarded (404): nothing more to send about it. A placed one
+  // (409) needs no such stop: fetched again, it isn't a draft, so nothing is
+  // sent, and if it's changed back into the draft its lock is taken again.
+  let gone = false
+
+  async function send(how: 'take' | 'renew', { orderId, session, step }: LockView) {
+    if (orderId === undefined || sending) return
+    sending = true
+    try {
+      if (how === 'take') {
+        // After the changes still being saved, and before a release as the flow closes.
+        await takeLock(queryClient, { orderId, session, step })
+        logger.info('orders.lock_taken', { orderId })
+      } else {
+        const lock = await apiRequest<OrderLock>('PUT', `/v1/grocery-orders/${orderId}/lock`, { step } satisfies LockIn, session)
+        queryClient.setQueryData<GroceryOrder>(queryKeys.order(orderId), (cached) => cached && withLock(cached, lock))
+      }
+    } catch (error) {
+      if (error instanceof FlowClosed) return
+      if (error instanceof ApiError && [404, 409, 423].includes(error.status)) {
+        // Someone else has it (423), or the order was placed or discarded: show why.
+        logger.info('orders.lock_lost', { orderId, how, status: error.status })
+        if (error.status === 404) gone = true
+        void queryClient.invalidateQueries({ queryKey: queryKeys.order(orderId) })
+      } else {
+        // Offline, say: the next tick tries again.
+        logger.warn('orders.lock_failed', { orderId, how, ...errorFields(error) })
+      }
+    } finally {
+      sending = false
+    }
+  }
+
+  return {
+    tick(view: LockView) {
+      if (gone) return
+      const request = lockRequest(view.holder, view.hadLock)
+      if (request) void send(request, view)
+    },
+    takeOver(view: LockView) {
+      void send('take', view)
+    },
+  }
 }

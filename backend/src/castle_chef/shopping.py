@@ -1,12 +1,11 @@
 """A draft's shopping list (spec/requirements.md "Shopping list"): stage 1 scales
 each picked meal's ingredients to its servings (here, deterministic); stage 2 is
 the agent combining them into one list (a `build_list` job) through the
-`castle-chef shopping-list` commands, which check each change, and the worker
-checks and saves. The order's list is its newest build's items."""
+shopping-list tools, which check each change, and the worker checks and saves.
+The order's list is its newest build's items."""
 
 from dataclasses import dataclass
 from pathlib import Path
-from string import Template
 from uuid import UUID
 
 from castle_chef_agent.shopping import (
@@ -20,6 +19,8 @@ from castle_chef_agent.shopping import (
 from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
 
+from castle_chef import prompts
+from castle_chef.jobs import newest_job
 from castle_chef.models import (
     GroceryOrderMeal,
     Job,
@@ -30,8 +31,6 @@ from castle_chef.models import (
     Meal,
     ShoppingListItem,
 )
-
-PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # What each aisle holds, for the agent (in the store's order, as the list shows them).
 AISLE_MEANINGS: dict[Aisle, str] = {
@@ -133,7 +132,8 @@ def build_list_prompt(scaled: list[ScaledMeal]) -> str:
         + "\n".join(f"- {line.id}: {line.text}" for line in meal.lines)
         for meal in scaled
     )
-    return Template(PROMPTS_DIR.joinpath("build_list.md").read_text()).substitute(
+    return prompts.fill(
+        "build_list",
         meals=meals,
         staples=", ".join(Staple),
         aisles="\n".join(
@@ -199,26 +199,17 @@ def add_items(session: Session, job_id: UUID, entries: list[ListEntry], source: 
 
 
 def newest_build(session: Session, order_id: UUID) -> Job | None:
-    return session.exec(
-        select(Job)
-        .where(Job.grocery_order_id == order_id, Job.kind == JobKind.BUILD_LIST)
-        .order_by(col(Job.created_at).desc(), col(Job.id).desc())
-        .limit(1)
-    ).first()
+    return newest_job(session, order_id, JobKind.BUILD_LIST)
 
 
 def newest_built(session: Session, order_id: UUID) -> Job | None:
     """The newest build that succeeded: its items are the list shown."""
-    return session.exec(
-        select(Job)
-        .where(
-            Job.grocery_order_id == order_id,
-            Job.kind == JobKind.BUILD_LIST,
-            Job.status == JobStatus.SUCCEEDED,
-        )
-        .order_by(col(Job.created_at).desc(), col(Job.id).desc())
-        .limit(1)
-    ).first()
+    return newest_job(session, order_id, JobKind.BUILD_LIST, JobStatus.SUCCEEDED)
+
+
+def ordered_quantity(item: ShoppingListItem) -> float | None:
+    """How much of the item is ordered: the member's amount, or else the recipes'."""
+    return item.quantity if item.changed_quantity is None else item.changed_quantity
 
 
 def items_of(session: Session, job_id: UUID) -> list[ShoppingListItem]:
@@ -240,6 +231,13 @@ def is_current(session: Session, order_id: UUID, newest: Job | None) -> bool:
         and newest.status == JobStatus.SUCCEEDED
         and newest.list_source == current_source(session, order_id)
     )
+
+
+def current_build(session: Session, order_id: UUID) -> Job | None:
+    """The order's list for its picks: its newest build, if that succeeded from
+    the picks and servings the order has now; None if there's no such list."""
+    newest = newest_build(session, order_id)
+    return newest if is_current(session, order_id, newest) else None
 
 
 def placed_lists(session: Session, order_ids: list[UUID]) -> dict[UUID, list[ShoppingListItem]]:

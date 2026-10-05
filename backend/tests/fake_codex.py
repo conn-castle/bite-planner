@@ -196,7 +196,7 @@ for line in sys.stdin:
     if config.get("stop_on") == method:
         sys.exit(3)
     try:
-        result = answer(method, message.get("params") or {})
+        result: dict[str, Any] | list[object] = answer(method, message.get("params") or {})
     except (ValueError, FileNotFoundError) as error:
         error_reply = {"code": -32001, "message": f"Unknown: {error}"}
         send({"jsonrpc": "2.0", "id": message["id"], "error": error_reply})

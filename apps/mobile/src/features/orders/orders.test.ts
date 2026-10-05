@@ -13,7 +13,7 @@ import {
   type PlacedDates,
   type PlaceOrder,
   registerOrderMutations,
-  type StartList,
+  type StartJob,
   takeLock,
 } from './orders'
 
@@ -70,7 +70,7 @@ describe('marking a suggestion "not for us"', () => {
   it('saves the rating, then shows the order as the server now has it', async () => {
     const after = draft(['soup'])
     request.mockImplementation(async (method) => (method === 'GET' ? after : undefined))
-    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true, session })
+    await setNotForUs({ kind: 'not-for-us', orderId: 'draft', mealId: 'tacos', notForUs: true, session })
 
     expect(request.mock.calls).toEqual([
       ['PUT', '/v1/meals/tacos/rating', { rating: 'not_for_us' }, session],
@@ -91,7 +91,7 @@ describe('marking a suggestion "not for us"', () => {
       draft: shownDraft,
     })
     request.mockImplementation(async (method) => (method === 'GET' ? { ...draft([]), status: 'placed' } : undefined))
-    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true, session })
+    await setNotForUs({ kind: 'not-for-us', orderId: 'draft', mealId: 'tacos', notForUs: true, session })
 
     expect(queryClient.getQueryData<NextOrder>(nextQuery.queryKey)?.draft).toBe(shownDraft)
     expect(queryClient.getQueryState(nextQuery.queryKey)?.isInvalidated).toBe(true)
@@ -110,14 +110,14 @@ describe('marking a suggestion "not for us"', () => {
       ingredients: [],
     })
     request.mockImplementation(async (method) => (method === 'GET' ? draft([]) : undefined))
-    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true, session })
+    await setNotForUs({ kind: 'not-for-us', orderId: 'draft', mealId: 'tacos', notForUs: true, session })
 
     expect(queryClient.getQueryData<Meal>(queryKeys.meal('tacos'))?.rating).toBe('not_for_us')
   })
 
   it('undoes it by clearing the rating', async () => {
     request.mockImplementation(async (method) => (method === 'GET' ? draft([]) : undefined))
-    await setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: false, session })
+    await setNotForUs({ kind: 'not-for-us', orderId: 'draft', mealId: 'tacos', notForUs: false, session })
 
     expect(request.mock.calls[0]).toEqual(['DELETE', '/v1/meals/tacos/rating'])
   })
@@ -131,8 +131,8 @@ describe('marking a suggestion "not for us"', () => {
     })
     const pick = new MutationObserver<GroceryOrder, Error, SetMeal>(queryClient, {
       mutationKey: ['orders', 'set-meal'],
-    }).mutate({ orderId: 'draft', mealId: 'soup', picked: true, servings: 4, session })
-    await Promise.all([pick, setNotForUs({ orderId: 'draft', mealId: 'tacos', notForUs: true, session })])
+    }).mutate({ kind: 'meal', orderId: 'draft', mealId: 'soup', picked: true, servings: 4, session })
+    await Promise.all([pick, setNotForUs({ kind: 'not-for-us', orderId: 'draft', mealId: 'tacos', notForUs: true, session })])
 
     expect(order).toEqual([
       'PUT /v1/grocery-orders/draft/meals/soup',
@@ -171,7 +171,7 @@ describe('opening the draft', () => {
     }).mutate({ jobId: 'job', session })
     const pick = new MutationObserver<GroceryOrder, Error, SetMeal>(queryClient, {
       mutationKey: ['orders', 'set-meal'],
-    }).mutate({ orderId: 'draft', mealId: 'soup', picked: true, servings: 4, session })
+    }).mutate({ kind: 'meal', orderId: 'draft', mealId: 'soup', picked: true, servings: 4, session })
     await Promise.all([open, pick])
 
     expect(calls).toEqual(['POST /v1/grocery-orders', 'PUT /v1/grocery-orders/draft/meals/soup'])
@@ -187,7 +187,7 @@ describe('placing the order', () => {
       quoteId: 'quote-1',
       session,
     })
-  const dates: PlacedDates = { delivery_date: '2026-09-27', delivery_by: '18:00', next_delivery_date: '2026-09-30' }
+  const dates: PlacedDates = { delivery_date: '2026-09-27', delivery_by: '18:00:00', next_delivery_date: '2026-09-30' }
 
   it('sends the dates and time shown with it, and the total it was placed for, and keeps the placed order', async () => {
     request.mockResolvedValue({ ...draft(['soup']), ...dates, status: 'placed' })
@@ -271,7 +271,7 @@ describe('the order lock', () => {
     })
     const pick = new MutationObserver<GroceryOrder, Error, SetMeal>(queryClient, {
       mutationKey: ['orders', 'set-meal'],
-    }).mutate({ orderId: 'draft', mealId: 'soup', picked: true, servings: 4, session: closing })
+    }).mutate({ kind: 'meal', orderId: 'draft', mealId: 'soup', picked: true, servings: 4, session: closing })
     closeFlowSession(queryClient, closing, 'draft')
     await pick
     await vi.waitFor(() => expect(calls).toHaveLength(2))
@@ -336,8 +336,8 @@ describe('the shopping list', () => {
     queryClient.setQueryData(queryKeys.order('draft'), draft([]))
     const servings = new MutationObserver<GroceryOrder, Error, SetServings>(queryClient, {
       mutationKey: ['orders', 'set-servings'],
-    }).mutate({ orderId: 'draft', mealId: 'soup', servings: 6, session })
-    const start = new MutationObserver<Job, Error, StartList>(queryClient, {
+    }).mutate({ kind: 'servings', orderId: 'draft', mealId: 'soup', servings: 6, session })
+    const start = new MutationObserver<Job, Error, StartJob>(queryClient, {
       mutationKey: ['orders', 'start-list'],
     }).mutate({ orderId: 'draft', jobId: 'build', session })
     await Promise.all([servings, start])

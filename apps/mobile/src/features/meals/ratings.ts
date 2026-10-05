@@ -1,7 +1,7 @@
 import { type QueryClient, useMutation, useMutationState } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api/client'
 import { isRetryable } from '../../lib/api/errors'
-import type { Meal, MealRating, MealSummary, PlacedOrder } from '../../lib/api/types'
+import type { Meal, MealRating, MealSummary, PlacedOrder, RatingIn } from '../../lib/api/types'
 import { isRecord } from '../../lib/isRecord'
 import { queryKeys } from '../../lib/query/keys'
 
@@ -61,7 +61,7 @@ export function registerRatingMutations(queryClient: QueryClient) {
   queryClient.setMutationDefaults(RATE, {
     mutationFn: ({ mealId, rating }: RateMeal) =>
       rating
-        ? apiRequest<void>('PUT', `/v1/meals/${mealId}/rating`, { rating })
+        ? apiRequest<void>('PUT', `/v1/meals/${mealId}/rating`, { rating } satisfies RatingIn)
         : apiRequest<void>('DELETE', `/v1/meals/${mealId}/rating`),
     retry: (failureCount: number, error: Error) => isRetryable(error, failureCount),
     scope: RATINGS,

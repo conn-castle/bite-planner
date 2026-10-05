@@ -1,10 +1,10 @@
-import { plural } from '../orders/format'
 import type { ReactNode } from 'react'
 import type { MealSummary } from '../../lib/api/types'
+import { plural } from '../../lib/format'
 import { MealArt } from '../../ui/art'
 import { ListRow } from '../../ui/Group'
 import { usePrefetchMeal } from './cached'
-import { formatMinutes } from './facts'
+import { formatMinutes, mealMinutes } from './facts'
 import { MealRatingMark } from './MealRating'
 
 interface MealRowProps {
@@ -21,7 +21,7 @@ interface MealRowProps {
 /** A meal in a list of meals: its picture, time, and name, and the rating once it's been ordered. */
 export function MealRow({ meal, onOpen, rated = false, servings, control }: MealRowProps) {
   const prefetch = usePrefetchMeal()
-  const minutes = meal.total_time_minutes ?? meal.active_time_minutes
+  const minutes = mealMinutes(meal)
   return (
     <ListRow
       art={<MealArt />}

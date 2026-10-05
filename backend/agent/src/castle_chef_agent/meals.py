@@ -1,4 +1,4 @@
-"""The meals the agent adds (`castle-chef meal add`), kept in the job directory
+"""The meals the agent adds (the `add_meal` tool), kept in the job directory
 for the worker."""
 
 from collections import Counter
@@ -89,24 +89,24 @@ def _quoted(names: list[str]) -> str:
 
 
 class MealsJob(BaseModel):
-    """What a generate_meals job's commands check against (the worker writes it)."""
+    """What a generate_meals job's tools check against (the worker writes it)."""
 
     count: int
 
 
 class MealRefused(Exception):
-    """`meal add` refused a meal; the message says why, for the agent."""
+    """`add_meal` refused a meal; the message says why, for the agent."""
 
 
 def meals_dir(job_dir: Path) -> Path:
-    """Where `castle-chef meal add` saves the agent's meals for the worker."""
+    """Where `add_meal` saves the agent's meals for the worker."""
     return job_dir / "meals"
 
 
 def save_meal(job_dir: Path, meal_input: MealInput) -> Path:
     """Save a validated meal as the next numbered JSON file in the job directory,
     or raise MealRefused: a meal named like one already added, or one more than
-    the job asks for. The agent may run several `meal add` commands at once."""
+    the job asks for. The agent may call several `add_meal`s at once."""
     count = read_context(job_dir, MealsJob).count
     with locked(job_dir):
         saved = load_meals(job_dir)

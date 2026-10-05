@@ -1,11 +1,11 @@
 import type { ISODate, Member, NextOrder, PlacedOrder } from '../../lib/api/types'
 import { addDays, dateRange, daysBetween, formatDate, localDate, relativeDay } from '../../lib/dates'
+import { memberName, plural } from '../../lib/format'
 import type { BarDay, DayMark } from '../../ui/DateBar'
 import type { TrackPhase } from '../../ui/OrderTrack'
 import { newestBatchState, suggestions } from '../orders/batches'
 import { needsAttention } from '../orders/booking'
 import { lockedByOther } from '../orders/lock'
-import { memberName, plural } from '../orders/format'
 
 /**
  * Home: the household's orders around today. The day strip runs from 10 days

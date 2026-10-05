@@ -10,8 +10,6 @@ vi.mock('../../lib/api/client', () => ({ apiRequest: vi.fn() }))
 vi.mock('../../lib/log', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, errorFields: () => ({}) }))
 // The session module these import signs in through Neon Auth, which a test doesn't have.
 vi.mock('../../lib/auth/auth', () => ({ auth: {} }))
-vi.mock('../../lib/logUpload', () => ({ uploadLogs: vi.fn() }))
-vi.mock('../../lib/query/queryClient', () => ({ persister: {} }))
 vi.mock('@capacitor/core', () => ({ Capacitor: { getPlatform: () => 'ios', isNativePlatform: () => true } }))
 vi.mock('@capacitor/app-launcher', () => ({ AppLauncher: { openUrl: vi.fn() } }))
 
@@ -197,14 +195,24 @@ describe('a notification arriving while the app is open', () => {
   })
 
   it('shows nothing for "ideas ready" while the order flow is open, or for a reminder', () => {
-    push.setOrderFlowOpen(true)
+    const closeFlow = push.orderFlowOpened()
     fire('pushNotificationReceived', ideas)
-    push.setOrderFlowOpen(false)
+    closeFlow()
     fire('pushNotificationReceived', {
       title: 'Pick meals for Order 4',
       body: 'Decide by Saturday.',
       data: { kind: 'reminder', order_number: 4 },
     })
+
+    expect(currentToast()).toBeNull()
+  })
+
+  it('shows nothing for "ideas ready" while a flow is open, though another opened and closed meanwhile', () => {
+    const closeHomeFlow = push.orderFlowOpened()
+    // A booking notification tapped meanwhile opens an order page, whose flow opens and closes.
+    push.orderFlowOpened()()
+    fire('pushNotificationReceived', ideas)
+    closeHomeFlow()
 
     expect(currentToast()).toBeNull()
   })

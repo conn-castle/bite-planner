@@ -9,6 +9,7 @@ import subprocess
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from typing import Any
 from uuid import NAMESPACE_OID, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ from castle_chef_agent.checkout import Checkout, QuoteLine
 from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ItemChoice, ProductCount
+from castle_chef_agent.shopping import Aisle
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import text
@@ -27,15 +29,24 @@ from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive, Scope, Send
 
 from castle_chef import api as api_module
-from castle_chef import booking, orders, products
+from castle_chef import booking, household, orders, products
 from castle_chef.api import app, create_app
 from castle_chef.auth import AuthError, AuthUnavailable, Principal, WebhookRejected
 from castle_chef.checkout import SIGNED_OUT_ERROR, Quote
-from castle_chef.db import get_engine
+from castle_chef.db import get_engine, get_request_session
 from castle_chef.dispatch import DispatchError, LocalDispatcher, SqsDispatcher, get_dispatcher
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, create_shop, fail_job, finish_job
 from castle_chef.meals import add_meals
-from castle_chef.models import Aisle, GroceryOrder, Job, JobStatus, Meal, ShoppingListItem
+from castle_chef.models import (
+    BookState,
+    GroceryOrder,
+    Household,
+    Job,
+    JobStatus,
+    Meal,
+    OrderStep,
+    ShoppingListItem,
+)
 from castle_chef.settings import get_settings, load_ssm_parameters
 from castle_chef.shopping import ListEntry, add_items
 
@@ -581,7 +592,7 @@ def test_each_request_is_logged_without_ids(
     assert not [line for line in lines if str(order_id) in str(line)]
 
 
-MEMBER_ENDPOINTS = [
+MEMBER_ENDPOINTS: list[tuple[str, str, dict[str, Any] | None]] = [
     ("get", "/v1/grocery-orders/next", None),
     ("get", "/v1/grocery-orders?covering_from=2026-09-01", None),
     ("post", "/v1/grocery-orders", None),
@@ -696,7 +707,7 @@ def test_members_opening_the_flow_at_once_share_one_draft(
 ) -> None:
     responses = run_at_once(
         [
-            lambda user=user: client.post("/v1/grocery-orders", headers=as_user(user))
+            partial(client.post, "/v1/grocery-orders", headers=as_user(user))
             for user in [MOM, DAD] * 4
         ]
     )
@@ -1862,8 +1873,8 @@ def test_a_pick_and_a_not_for_us_mark_at_once_never_leave_the_meal_picked(
     for meal_id in meal_ids:
         picking, marked = run_at_once(
             [
-                lambda meal_id=meal_id: pick(client, order_id, meal_id),
-                lambda meal_id=meal_id: rate(client, meal_id, "not_for_us"),
+                partial(pick, client, order_id, meal_id),
+                partial(rate, client, meal_id, "not_for_us"),
             ]
         )
         assert picking.status_code in (200, 409), picking.text
@@ -2103,6 +2114,26 @@ def test_discarding_waits_for_the_member_ordering(client: TestClient, session: S
     assert next_order(client)["draft"] is None
 
 
+def test_a_draft_another_member_opens_just_as_it_is_discarded_is_kept(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order_id = open_draft(client)["id"]
+    close_flow(client, order_id)
+    discard = orders.discard
+
+    def opened_then_discarded(session: Session, household_id: UUID, *args: Any) -> None:
+        # Dad opens the order after this request read it, before it's locked.
+        with Session(get_engine()) as other:
+            dad = orders.Orderer(user_id=DAD, session=phone(DAD))
+            orders.take_lock(other, household_id, UUID(order_id), dad, OrderStep.PICK)
+        discard(session, household_id, *args)
+
+    monkeypatch.setattr(orders, "discard", opened_then_discarded)
+
+    detail(client.delete(f"/v1/grocery-orders/{order_id}", headers=as_user(MOM)), 423)
+    assert next_order(client)["draft"]["id"] == order_id
+
+
 def test_not_for_us_outside_the_flow_leaves_a_pick_to_the_member_ordering(
     client: TestClient,
 ) -> None:
@@ -2129,7 +2160,7 @@ def test_members_opening_the_flow_at_once_get_one_lock(client: TestClient) -> No
 
     responses = run_at_once(
         [
-            lambda user=user: client.post("/v1/grocery-orders", headers=as_user(user))
+            partial(client.post, "/v1/grocery-orders", headers=as_user(user))
             for user in [MOM, DAD] * 2
         ]
     )
@@ -2649,14 +2680,14 @@ def test_app_logs_are_written_as_structured_log_lines(
 
     assert response.status_code == 204
     batch, *lines = [r for r in caplog.records if r.name == "castle_chef.client"]
-    assert (batch.getMessage(), batch.email, batch.device, batch.entries) == (
+    assert (batch.getMessage(), *(vars(batch)[key] for key in ("email", "device", "entries"))) == (
         "client.batch",
         "mom@example.com",
         {"platform": "ios"},
         2,
     )
-    assert [line.entry for line in lines] == entries
-    assert {line.batch_id for line in lines} == {batch.batch_id}
+    assert [vars(line)["entry"] for line in lines] == entries
+    assert {vars(line)["batch_id"] for line in lines} == {vars(batch)["batch_id"]}
 
 
 def test_only_app_errors_are_logged_at_error_level(
@@ -2674,7 +2705,7 @@ def test_only_app_errors_are_logged_at_error_level(
         client.post("/v1/logs", headers=as_user(MOM), json={"device": {}, "entries": entries})
 
     lines = [r for r in caplog.records if r.getMessage() == "client.log"]
-    assert [(line.entry["event"], line.levelname) for line in lines] == [
+    assert [(vars(line)["entry"]["event"], line.levelname) for line in lines] == [
         ("render.crashed", "ERROR"),
         ("query.failed", "WARNING"),
         ("app.start", "INFO"),
@@ -2878,6 +2909,40 @@ def test_placing_needs_the_current_quote(client: TestClient, grocer: list[UUID])
     assert grocer == [UUID(order_id)]
 
 
+def test_a_tip_rule_changed_just_as_the_order_is_placed_needs_the_new_total(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, grocer: list[UUID]
+) -> None:
+    order_id, _ = shopped_draft(client)
+    quote_id = ready_quote(client, order_id)
+    place = orders.place
+
+    def tip_changed_then_placed(session: Session, household_id: UUID, *args: Any) -> Any:
+        # Another member changes the tip after this request found its household.
+        with Session(get_engine()) as other:
+            household = other.get_one(Household, household_id)
+            household.tip_percent = 20
+            other.add(household)
+            other.commit()
+        return place(session, household_id, *args)
+
+    monkeypatch.setattr(orders, "place", tip_changed_then_placed)
+
+    response = client.post(
+        f"/v1/grocery-orders/{order_id}/place",
+        headers=as_user(MOM),
+        json={
+            "delivery_date": tomorrow().isoformat(),
+            "delivery_by": "15:00",
+            "next_delivery_date": (tomorrow() + timedelta(days=2)).isoformat(),
+            "quote_id": quote_id,
+        },
+    )
+
+    assert detail(response, 409) == "The total changed; check the new one."
+    assert get_order(client, order_id)["status"] == "draft"
+    assert grocer == []
+
+
 def test_an_order_below_the_stores_minimum_cant_be_placed(
     client: TestClient, grocer: list[UUID]
 ) -> None:
@@ -2940,7 +3005,7 @@ def test_a_renewal_whose_lock_was_released_meanwhile_says_the_order_isnt_open_he
         session.refresh(order)
         return order
 
-    monkeypatch.setattr(api_module.orders, "renew_lock", renewed_then_closed)
+    monkeypatch.setattr(orders, "renew_lock", renewed_then_closed)
 
     response = client.put(
         f"/v1/grocery-orders/{order_id}/lock", headers=as_user(MOM), json={"step": "pick"}
@@ -3026,6 +3091,23 @@ def test_a_waiting_order_can_only_be_cancelled_once_the_next_order_is_started(
     assert (next_order(client)["number"], next_order(client)["draft"]["id"]) == (1, following)
 
 
+def test_a_waiting_order_can_only_be_cancelled_once_a_later_order_is_placed(
+    client: TestClient,
+) -> None:
+    # As the draft again, it would come before an order already placed.
+    later = tomorrow() + timedelta(days=5)
+    first = placed_order(client, later, later + timedelta(days=3))
+    second = placed_order(client, later + timedelta(days=3), later + timedelta(days=6), DAD)
+
+    assert detail(change(client, first["id"]), 409) == (
+        "The next order has been placed, so this one can only be cancelled now."
+    )
+    unchanged = get_order(client, first["id"])
+    assert (unchanged["status"], unchanged["book_state"]) == ("placed", "waiting")
+    # The newest one can still be changed.
+    assert ok(change(client, second["id"], DAD))["status"] == "draft"
+
+
 def test_an_order_being_booked_or_booked_cant_be_changed_or_cancelled(
     client: TestClient, session: Session
 ) -> None:
@@ -3043,11 +3125,15 @@ def test_an_order_being_booked_or_booked_cant_be_changed_or_cancelled(
 
 
 def test_an_order_that_wasnt_booked_is_booked_again_on_request(
-    client: TestClient, session: Session, dispatcher: RecordingDispatcher
+    client: TestClient, session: Session, dispatcher: RecordingDispatcher, grocer: list[UUID]
 ) -> None:
     later = tomorrow() + timedelta(days=5)
     waiting = placed_order(client, later, later + timedelta(days=3))
+    # Waiting for its day: Try again doesn't book it early.
+    queued = list(dispatcher.dispatched)
     detail(client.post(f"/v1/grocery-orders/{waiting['id']}/book", headers=as_user(MOM)), 409)
+    assert (grocer, dispatcher.dispatched) == ([], queued)
+    assert get_order(client, waiting["id"])["book_state"] == "waiting"
     book_state_of(session, waiting["id"], "not_booked")
 
     again = ok(client.post(f"/v1/grocery-orders/{waiting['id']}/book", headers=as_user(DAD)))
@@ -3057,6 +3143,63 @@ def test_an_order_that_wasnt_booked_is_booked_again_on_request(
     # For whoever approved it, who hears how it goes.
     assert book["requested_by"]["user_id"] == str(MOM)
     assert dispatcher.dispatched[-1] == UUID(book["id"])
+
+
+def store_time(day: date, hour: int, minute: int = 0) -> datetime:
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=ZoneInfo(ZONE))
+
+
+def test_an_order_still_waiting_two_hours_after_its_booking_time_is_shown_not_booked(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch, grocer: list[UUID]
+) -> None:
+    later = tomorrow() + timedelta(days=5)
+    order_id = placed_order(client, later, later + timedelta(days=3))["id"]
+    book_day = later - timedelta(days=4)
+
+    def shown_at(hour: int, minute: int = 0) -> list[dict[str, Any]]:
+        """The order as it's shown then, alone and in the placed orders."""
+        monkeypatch.setattr(booking, "store_now", lambda: store_time(book_day, hour, minute))
+        [listed] = placed_orders(client)
+        return [get_order(client, order_id), listed]
+
+    # Its 9:00 run, and the one at 10:00, may still book it.
+    for shown in shown_at(10, 59):
+        assert (shown["book_state"], shown["book_issue"]) == ("waiting", None)
+    for shown in shown_at(11):
+        assert (shown["book_state"], shown["book_on"], shown["book_issue"]) == (
+            "not_booked",
+            book_day.isoformat(),
+            {
+                "message": f"It didn't book on {book_day:%a, %b} {book_day.day} as planned.",
+                "item_ids": [],
+            },
+        )
+    # Only shown so: nothing was written or started, and the next run may still book it.
+    session.expire_all()
+    assert session.get_one(GroceryOrder, UUID(order_id)).book_state == BookState.WAITING
+    assert grocer == []
+
+
+def test_try_again_books_an_order_whose_booking_is_late(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, dispatcher: RecordingDispatcher
+) -> None:
+    later = tomorrow() + timedelta(days=5)
+    order_id = placed_order(client, later, later + timedelta(days=3))["id"]
+    book_day = later - timedelta(days=4)
+    monkeypatch.setattr(booking, "store_now", lambda: store_time(book_day, 15))
+
+    again = ok(client.post(f"/v1/grocery-orders/{order_id}/book", headers=as_user(DAD)))
+
+    assert (again["book_state"], again["book_issue"]) == ("booking", None)
+    [book] = [job for job in again["jobs"] if job["kind"] == "book"]
+    assert book["requested_by"]["user_id"] == str(MOM)
+    assert dispatcher.dispatched[-1] == UUID(book["id"])
+    queued = list(dispatcher.dispatched)
+    # Being booked now: a second Try again is refused, and starts nothing.
+    assert detail(
+        client.post(f"/v1/grocery-orders/{order_id}/book", headers=as_user(MOM)), 409
+    ) == ("It's being booked at the store right now.")
+    assert dispatcher.dispatched == queued
 
 
 def test_someone_says_whether_instacart_has_an_order_booking_couldnt_confirm(
@@ -3251,7 +3394,7 @@ def test_a_requests_database_work_is_done_before_its_answer_is_sent(
     # On Lambda the environment can freeze as soon as the answer is out: a
     # session still open then stays mid-transaction until it thaws.
     events: list[str] = []
-    opened = api_module.get_request_session
+    opened = get_request_session
 
     def watched_session() -> Session:
         session = opened()
@@ -3302,7 +3445,7 @@ def test_a_request_that_fails_unexpectedly_is_logged_as_an_error_with_its_traceb
     def broken(*_: object) -> None:
         raise RuntimeError("a defect")
 
-    monkeypatch.setattr(api_module.households, "join_if_invited", broken)
+    monkeypatch.setattr(household, "join_if_invited", broken)
     with (
         TestClient(app, raise_server_exceptions=False) as failing,
         caplog.at_level(logging.INFO, logger="castle_chef.api"),
@@ -3321,7 +3464,7 @@ def test_a_caller_that_hangs_up_is_not_logged_as_a_defect(
     def gone(*_: object) -> None:
         raise ClientDisconnect()
 
-    monkeypatch.setattr(api_module.households, "join_if_invited", gone)
+    monkeypatch.setattr(household, "join_if_invited", gone)
     with caplog.at_level(logging.INFO, logger="castle_chef.api"):
         client.get("/v1/me", headers=as_user(MOM))
 

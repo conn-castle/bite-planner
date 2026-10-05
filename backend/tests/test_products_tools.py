@@ -16,6 +16,7 @@ from castle_chef_agent.products import ShopItem, ShopJob
 from castle_chef_agent.server import products_server
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult
 
 from tests.conftest import FAKE_CODEX
 
@@ -50,6 +51,7 @@ def call(tools: MCPServer, tool: str, **arguments: Any) -> tuple[bool, str]:
         result = asyncio.run(tools.call_tool(tool, arguments))
     except ToolError as error:
         return True, str(error)
+    assert isinstance(result, CallToolResult)  # these tools never ask for input
     text = " ".join(getattr(part, "text", "") for part in result.content)
     return bool(result.is_error), text
 

@@ -17,9 +17,6 @@ import { ingredientAmount } from './servings'
 
 const MAX_SERVINGS = 24
 
-// Servings picked per meal, kept while the app is open so going back and forth doesn't reset them.
-const pickedServings = new Map<string, number>()
-
 interface MealPageProps {
   mealId: string
   tab?: { href: string }
@@ -27,10 +24,9 @@ interface MealPageProps {
   rateable?: boolean
   /**
    * Where the quantities start: an order's servings for the meal, or null for the
-   * recipe's own (a meal of an order whose servings aren't known). Without it,
-   * at the servings last chosen for this recipe.
+   * recipe's own (a meal of an order whose servings aren't known).
    */
-  servings?: number | null
+  servings: number | null
   /**
    * A suggestion not picked yet: its servings are the recipe's, with no control
    * to change them (only a pick has servings to choose).
@@ -53,7 +49,7 @@ export function MealPage({ mealId, tab, rateable = false, servings, suggestion =
   const [chosen, setChosen] = useState<number | null>(null)
   const [cooking, setCooking] = useState(false)
   const recipe = meal.data
-  const shownServings = recipe && (chosen ?? startingServings(recipe, startAt))
+  const shownServings = recipe && (chosen ?? startAt ?? recipe.servings)
   // Cooking is for a meal on its way or eaten (from Orders or History), not one being picked.
   const cookable = tab !== undefined && recipe !== undefined && recipe.steps.length > 0
 
@@ -84,11 +80,8 @@ export function MealPage({ mealId, tab, rateable = false, servings, suggestion =
             <RecipeBody
               meal={recipe}
               servings={shownServings}
-              chosenServings={typeof startAt === 'number' ? startAt : recipe.servings}
-              onServings={(value) => {
-                pickedServings.set(recipe.id, value)
-                setChosen(value)
-              }}
+              chosenServings={startAt ?? recipe.servings}
+              onServings={setChosen}
               fixed={suggestion}
             />
           ) : (
@@ -115,14 +108,6 @@ export function MealPage({ mealId, tab, rateable = false, servings, suggestion =
       )}
     </NavPage>
   )
-}
-
-/**
- * Where a recipe's servings start: an order's (or, with null, the recipe's
- * own), or else the servings last chosen for it.
- */
-function startingServings(meal: Meal, startAt: number | null | undefined): number {
-  return startAt === undefined ? (pickedServings.get(meal.id) ?? meal.servings) : (startAt ?? meal.servings)
 }
 
 /** The name, description, and facts: all but the ingredient count come with the meal's summary. */

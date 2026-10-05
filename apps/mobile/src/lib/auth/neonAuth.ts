@@ -1,6 +1,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
 import { createInternalNeonAuth } from '@neondatabase/neon-js/auth'
 import type { AuthClient, User } from './auth'
+import { isRecord } from '../isRecord'
 import { logger } from '../log'
 
 /** Neon Auth (Better Auth, emailed one-time codes) implementation of `AuthClient`. */
@@ -31,7 +32,7 @@ const client = neon.adapter
 async function call<T extends { error?: unknown }>(action: () => Promise<T>, failure = 'Sign-in failed.'): Promise<T> {
   const result = await action()
   if (result.error) {
-    const message = (result.error as { message?: string }).message
+    const message = isRecord(result.error) && typeof result.error.message === 'string' ? result.error.message : undefined
     if (message === 'Invalid OTP') {
       throw new Error('That code is wrong or has expired. Send a new one.')
     }

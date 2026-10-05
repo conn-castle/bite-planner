@@ -3,18 +3,14 @@ the worker fills the household's cart with the list's products and reads
 checkout (castle_chef.cart, castle_chef.checkout). A quote is current while the
 list's products and counts, and the household's tip rule, are the ones it read."""
 
-import logging
-from datetime import timedelta
 from uuid import UUID
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session
 
 from castle_chef import products, shopping
 from castle_chef.checkout import CartLine, QuoteRequest
-from castle_chef.jobs import ACTIVE, JobIdTaken, fail_stale_jobs
+from castle_chef.jobs import ACTIVE, add_job, fail_stale_jobs, newest_job, retried
 from castle_chef.models import GroceryOrder, Household, Job, JobKind, JobStatus
-
-log = logging.getLogger(__name__)
 
 
 class NothingToQuote(Exception):
@@ -24,8 +20,8 @@ class NothingToQuote(Exception):
 def request_for(session: Session, order: GroceryOrder) -> QuoteRequest:
     """What a quote of the order would price now: its current list's products to
     buy and their counts, and the household's tip rule."""
-    build = shopping.newest_build(session, order.id)
-    if build is None or not shopping.is_current(session, order.id, build):
+    build = shopping.current_build(session, order.id)
+    if build is None:
         raise NothingToQuote("The shopping list isn't ready yet.")
     counts: dict[str, int] = {}
     for item in products.items_to_buy(session, build.id):
@@ -54,42 +50,25 @@ def current(session: Session, order: GroceryOrder) -> Job | None:
 
 
 def newest_quote(session: Session, order_id: UUID) -> Job | None:
-    return session.exec(
-        select(Job)
-        .where(Job.grocery_order_id == order_id, Job.kind == JobKind.QUOTE)
-        .order_by(col(Job.created_at).desc(), col(Job.id).desc())
-        .limit(1)
-    ).first()
+    return newest_job(session, order_id, JobKind.QUOTE)
 
 
 def submit_quote(
-    session: Session,
-    order: GroceryOrder,
-    member_id: UUID,
-    job_id: UUID,
-    stale_after: tuple[timedelta, timedelta],
+    session: Session, order: GroceryOrder, member_id: UUID, job_id: UUID
 ) -> tuple[Job, bool]:
     """Start a quote of the draft as it is now, and commit. Returns (job,
     created): a quote waiting, running, or done for the same products, counts,
     and tip rule is returned rather than started again, and a retried request
     (the client picks the id) gets the job it made. The caller holds the
     order's row lock."""
-    existing = session.get(Job, job_id)
-    if existing is not None:
-        session.rollback()
-        if (existing.grocery_order_id, existing.requested_by, existing.kind) != (
-            order.id,
-            member_id,
-            JobKind.QUOTE,
-        ):
-            raise JobIdTaken(f"Job id {job_id} is taken.")
+    if (existing := retried(session, job_id, order, member_id, JobKind.QUOTE)) is not None:
         return existing, False
     try:
         request = request_for(session, order)
     except NothingToQuote:
         session.rollback()
         raise
-    fail_stale_jobs(session, order.id, *stale_after)
+    fail_stale_jobs(session, order.id)
     newest = newest_quote(session, order.id)
     if (
         newest is not None
@@ -105,14 +84,7 @@ def submit_quote(
         requested_by=member_id,
         quote_request=request,
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    log.info(
-        "job.created",
-        extra={"job_id": str(job.id), "kind": job.kind, "grocery_order_id": str(order.id)},
-    )
-    return job, True
+    return add_job(session, job), True
 
 
 def product_names(session: Session, order_id: UUID) -> dict[str, str]:

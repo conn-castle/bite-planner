@@ -25,6 +25,7 @@ NEW_STEPS = ("pick", "servings", "delivery", "next", "review")
 def _retype(steps: tuple[str, ...], mapping: str) -> None:
     """Rebuild the order_step type with these values, mapping the column's old
     ones by `mapping` (a CASE expression over lock_step)."""
+    # contract: pre-release (no real users yet); the previous release wrote lock_step 'dates'
     op.execute("ALTER TYPE order_step RENAME TO order_step_old")
     sa.Enum(*steps, name="order_step").create(op.get_bind())
     op.execute(

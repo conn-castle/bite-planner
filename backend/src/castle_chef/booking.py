@@ -3,7 +3,9 @@ stage 3; spec/README.md "Delivery, booking, and tip").
 
 An approved order (status `placed`) waits until four days before its delivery,
 when Instacart has offered its day for a day, and books at 9:00 AM store time
-(a daily scheduled run), or right away when approved after that. A `book` job
+(a scheduled run, repeated each hour to 9 PM so a run that failed is made up),
+or right away when approved after that. One still waiting two hours after its
+time is shown as not booked, so a member can try again. A `book` job
 fills the cart, has the agent choose the window and read checkout in the browser,
 checks it, and presses Place order once (castle_chef.worker). Where the order is
 with the store is its `book_state`; what happens next is said to whoever approved
@@ -15,14 +17,17 @@ unless a member says it wasn't placed after all.
 """
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import literal, or_, tuple_
 from sqlmodel import Session, col, func, select, update
 
+from castle_chef import orders
 from castle_chef.checkout import Booking, BookIssue
-from castle_chef.jobs import ACTIVE, STALE_ERROR, fail_job, is_stale
+from castle_chef.db import for_update
+from castle_chef.jobs import STALE_ERROR, fail_if_stale
 from castle_chef.models import (
     BookState,
     GroceryOrder,
@@ -30,7 +35,6 @@ from castle_chef.models import (
     Job,
     JobKind,
     JobStatus,
-    utc_now,
 )
 from castle_chef.settings import get_settings
 
@@ -40,6 +44,10 @@ log = logging.getLogger(__name__)
 # day five days ahead, at midnight), at this hour of the store's day.
 BOOK_DAYS_BEFORE = 4
 BOOK_HOUR = 9
+# An order still waiting this long after its booking time is late: the hourly run
+# after the one that failed has had its turn, so something is wrong that waiting
+# won't fix, and a member is shown it as not booked, to try again (castle_chef.api).
+LATE_AFTER = timedelta(hours=2)
 
 # The states a member can still change or cancel (nothing is under way at the
 # store, and nothing was clicked).
@@ -67,10 +75,19 @@ def store_now() -> datetime:
 
 def is_due(delivery: date, now: datetime) -> bool:
     """Whether an order for `delivery` books now (`now` in the store's time zone):
-    its day has come and the day's run has been (an order approved before 9:00
-    AM that day waits for it)."""
+    its day has come and that day's first run has been (an order approved before
+    9:00 AM that day waits for it)."""
     day = book_on(delivery)
     return now.date() > day or (now.date() == day and now.hour >= BOOK_HOUR)
+
+
+def is_late(order: GroceryOrder, now: datetime) -> bool:
+    """Whether an approved order is still waiting LATE_AFTER past its booking time
+    (its book day at BOOK_HOUR, store time; `now` in the store's time zone)."""
+    if order.book_state != BookState.WAITING or order.delivery_date is None:
+        return False
+    book_at = datetime.combine(book_on(order.delivery_date), time(BOOK_HOUR), now.tzinfo)
+    return now >= book_at + LATE_AFTER
 
 
 def start(session: Session, order: GroceryOrder) -> Job:
@@ -104,9 +121,9 @@ def start_if_due(session: Session, order: GroceryOrder, now: datetime) -> Job | 
 
 
 def start_due(session: Session, now: datetime) -> list[UUID]:
-    """The daily run: start booking every waiting order whose day has come, and
+    """The hourly run: start booking every waiting order whose day has come, and
     settle bookings whose job stopped without saying how it went (its worker was
-    lost). Returns the book jobs to dispatch."""
+    lost, and can no longer be running). Returns the book jobs to dispatch."""
     started: list[UUID] = []
     waiting = session.exec(
         select(GroceryOrder.id).where(GroceryOrder.book_state == BookState.WAITING)
@@ -117,32 +134,22 @@ def start_due(session: Session, now: datetime) -> list[UUID]:
             started.append(job.id)
         else:
             session.rollback()
-    settings = get_settings()
-    stale_after = (
-        timedelta(seconds=settings.pending_timeout_seconds),
-        # The agent's limit, and the cart before and after it.
-        timedelta(seconds=settings.agent_timeout_seconds + 600),
-    )
     booking = session.exec(
         select(GroceryOrder.book_job_id).where(GroceryOrder.book_state == BookState.BOOKING)
     ).all()
     for job_id in booking:
-        job = session.get(Job, job_id) if job_id is not None else None
-        if job is None:
+        if job_id is None:
             continue
-        if job.status in ACTIVE and is_stale(job, utc_now(), *stale_after):
-            fail_job(session, job.id, STALE_ERROR)
-            log.error("booking.job_stale", extra={"job_id": str(job.id)})
-            session.refresh(job)
-        if job.status == JobStatus.FAILED:
+        if fail_if_stale(session, job_id):
+            log.error("booking.job_stale", extra={"job_id": str(job_id)})
+        job = session.get(Job, job_id)
+        if job is not None and job.status == JobStatus.FAILED:
             job_failed(session, job.id, job.error or STALE_ERROR)
     return started
 
 
 def _lock(session: Session, order_id: UUID) -> GroceryOrder | None:
-    return session.exec(
-        select(GroceryOrder).where(GroceryOrder.id == order_id).with_for_update()
-    ).first()
+    return session.exec(for_update(select(GroceryOrder).where(GroceryOrder.id == order_id))).first()
 
 
 def _booking_order(session: Session, job_id: UUID, expected: bool = True) -> GroceryOrder | None:
@@ -150,9 +157,11 @@ def _booking_order(session: Session, job_id: UUID, expected: bool = True) -> Gro
     (cancelled, or settled meanwhile), or isn't a book job (`expected` false:
     nothing to warn about)."""
     order = session.exec(
-        select(GroceryOrder)
-        .where(GroceryOrder.book_job_id == job_id, GroceryOrder.book_state == BookState.BOOKING)
-        .with_for_update()
+        for_update(
+            select(GroceryOrder).where(
+                GroceryOrder.book_job_id == job_id, GroceryOrder.book_state == BookState.BOOKING
+            )
+        )
     ).first()
     if order is None:
         session.rollback()
@@ -166,7 +175,7 @@ def claim_click(session: Session, job_id: UUID) -> bool:
     it mustn't (the order isn't being booked by it, or was clicked before, or the
     job is no longer running)."""
     running = select(Job.id).where(Job.id == job_id, Job.status == JobStatus.RUNNING).exists()
-    claimed = session.execute(
+    claimed = session.exec(
         update(GroceryOrder)
         .where(
             col(GroceryOrder.book_job_id) == job_id,
@@ -195,7 +204,7 @@ def _settle(
     session.add(order)
     session.commit()
     # What Instacart confirmed, when it did: which order, when, and what it charged.
-    confirmed = (
+    confirmed: dict[str, object] = (
         {
             "instacart_order": booking.order_number,
             "window": booking.window and booking.window.model_dump(mode="json"),
@@ -251,23 +260,17 @@ def job_failed(session: Session, job_id: UUID, error: str) -> GroceryOrder | Non
 
 
 def _locked_placed(session: Session, household_id: UUID, order_id: UUID) -> GroceryOrder:
-    from castle_chef.orders import OrderNotFound
-
-    order = session.exec(
-        select(GroceryOrder)
-        .where(GroceryOrder.id == order_id, GroceryOrder.household_id == household_id)
-        .with_for_update()
-    ).first()
+    order = orders.lock_order(session, household_id, order_id)
     if order is None:
         session.rollback()
-        raise OrderNotFound("No such order.")
+        raise orders.OrderNotFound("No such order.")
     if order.status != GroceryOrderStatus.PLACED:
         session.rollback()
         raise NotChangeable("This order hasn't been placed.")
     return order
 
 
-def _refuse_unless(order: GroceryOrder, session: Session, *states: BookState) -> None:
+def _refuse_unless(session: Session, order: GroceryOrder, *states: BookState) -> None:
     if order.book_state in states:
         return
     session.rollback()
@@ -282,20 +285,31 @@ def _refuse_unless(order: GroceryOrder, session: Session, *states: BookState) ->
 
 def change(session: Session, household_id: UUID, order_id: UUID) -> GroceryOrder:
     """Make an approved order not booked yet the household's draft again (to go
-    through the flow and approve it again): only while the following order has
-    no draft."""
+    through the flow and approve it again): only while it's the household's newest
+    order. Once the next order is started, that's the draft; once it's placed, this
+    one as the draft would come before an order already placed (decided 2026-10-04)."""
     order = _locked_placed(session, household_id, order_id)
-    _refuse_unless(order, session, *UNBOOKED)
-    draft = session.exec(
-        select(GroceryOrder.id).where(
+    _refuse_unless(session, order, *UNBOOKED)
+    # One read: an order being placed meanwhile is seen as the draft or as placed.
+    following = session.exec(
+        select(col(GroceryOrder.status)).where(
             GroceryOrder.household_id == household_id,
-            GroceryOrder.status == GroceryOrderStatus.DRAFT,
+            or_(
+                col(GroceryOrder.status) == GroceryOrderStatus.DRAFT,
+                tuple_(col(GroceryOrder.created_at), col(GroceryOrder.id))
+                > tuple_(literal(order.created_at), literal(order.id)),
+            ),
         )
-    ).first()
-    if draft is not None:
+    ).all()
+    if GroceryOrderStatus.DRAFT in following:
         session.rollback()
         raise NotChangeable(
             "The next order has been started, so this one can only be cancelled now."
+        )
+    if following:
+        session.rollback()
+        raise NotChangeable(
+            "The next order has been placed, so this one can only be cancelled now."
         )
     order.status, order.placed_at, order.placed_by = GroceryOrderStatus.DRAFT, None, None
     order.book_state, order.quote_id, order.book_issue = None, None, None
@@ -309,16 +323,25 @@ def change(session: Session, household_id: UUID, order_id: UUID) -> GroceryOrder
 def cancel(session: Session, household_id: UUID, order_id: UUID) -> None:
     """Cancel an approved order not booked yet: it's deleted, like a discarded draft."""
     order = _locked_placed(session, household_id, order_id)
-    _refuse_unless(order, session, *UNBOOKED)
+    _refuse_unless(session, order, *UNBOOKED)
     session.delete(order)
     session.commit()
     log.info("grocery_order.cancelled", extra={"grocery_order_id": str(order_id)})
 
 
 def book_again(session: Session, household_id: UUID, order_id: UUID) -> Job:
-    """Try booking again after it wasn't booked (the caller dispatches the job)."""
+    """Try booking again after it wasn't booked, or when it's late (shown as not
+    booked): a waiting order is booked once it's due, as the run would (the caller
+    dispatches the job). Whichever of this and the run locks the order first starts
+    it; the other finds it being booked."""
     order = _locked_placed(session, household_id, order_id)
-    _refuse_unless(order, session, BookState.NOT_BOOKED)
+    due = (
+        order.book_state == BookState.WAITING
+        and order.delivery_date is not None
+        and is_due(order.delivery_date, store_now())
+    )
+    if not due:
+        _refuse_unless(session, order, BookState.NOT_BOOKED)
     return start(session, order)
 
 
@@ -326,7 +349,7 @@ def settle(session: Session, household_id: UUID, order_id: UUID, placed: bool) -
     """A member says whether Instacart has an order that booking couldn't confirm:
     booked (with nothing confirmed), or not booked (and it may be booked again)."""
     order = _locked_placed(session, household_id, order_id)
-    _refuse_unless(order, session, BookState.CHECK_INSTACART)
+    _refuse_unless(session, order, BookState.CHECK_INSTACART)
     if placed:
         _settle(
             session,

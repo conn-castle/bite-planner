@@ -1,3 +1,4 @@
+import { BATCH_SIZE } from '../../lib/api/limits'
 import type { ISODate, NextOrder, PlacedOrder } from '../../lib/api/types'
 import { addDays, daysBetween, formatDate, relativeDay } from '../../lib/dates'
 import { MealArt } from '../../ui/art'
@@ -198,7 +199,7 @@ function WelcomeCard({ onStart }: { onStart: () => void }) {
         </div>
         <h2 className={styles.title}>Let's plan your first meals</h2>
         <p className={styles.subtitle}>
-          Chef suggests 20 easy meals. Add the ones you want, choose a delivery date, and the order shows up here as a
+          Chef suggests {BATCH_SIZE} easy meals. Add the ones you want, choose a delivery date, and the order shows up here as a
           card you can track.
         </p>
         <Button variant="accent" block className={styles.start} onClick={onStart}>

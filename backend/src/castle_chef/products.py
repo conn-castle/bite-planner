@@ -6,7 +6,6 @@ checks each choice; the worker checks the result and saves it on the items."""
 
 from dataclasses import dataclass
 from pathlib import Path
-from string import Template
 from uuid import UUID
 
 from castle_chef_agent.products import (
@@ -18,10 +17,8 @@ from castle_chef_agent.products import (
 )
 from sqlmodel import Session, col, select
 
-from castle_chef import shopping
+from castle_chef import prompts, shopping
 from castle_chef.models import Job, ShoppingListItem
-
-PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
 class InvalidProducts(Exception):
@@ -58,7 +55,7 @@ def shop_context(session: Session, build: Job, store: str) -> ShopContext:
         ShopItem(
             number=number,
             name=item.name,
-            quantity=item.changed_quantity or item.quantity,
+            quantity=shopping.ordered_quantity(item),
             unit=item.unit,
             meals=[names[meal_id] for meal_id in item.meal_ids if meal_id in names],
         )
@@ -70,7 +67,8 @@ def shop_context(session: Session, build: Job, store: str) -> ShopContext:
             return ""
         return ": " + " ".join([f"{item.quantity:g}", *filter(None, [item.unit])])
 
-    prompt = Template(PROMPTS_DIR.joinpath("shop_list.md").read_text()).substitute(
+    prompt = prompts.fill(
+        "shop_list",
         store=store,
         items="\n".join(
             f"{item.number}. {item.name}{amount(item)} ({', '.join(item.meals)})"

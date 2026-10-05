@@ -3,10 +3,12 @@ import { useIonAlert, useIonRouter, useIonViewDidEnter, useIonViewDidLeave } fro
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GroceryOrder, ISODate, NextOrder, PlacedMeal, PlacedOrder } from '../../lib/api/types'
-import { addDays, formatDate, localDate, toLocalDate } from '../../lib/dates'
+import { addDays, formatDate, toLocalDate } from '../../lib/dates'
+import { errorMessage } from '../../lib/errorMessage'
+import { plural } from '../../lib/format'
 import { errorFields, logger } from '../../lib/log'
 import { queryKeys } from '../../lib/query/keys'
-import { useNow } from '../../lib/useNow'
+import { useToday } from '../../lib/useNow'
 import { IconButton } from '../../ui/Button'
 import { CardStack } from '../../ui/CardStack'
 import { DateBar, type DayCaption } from '../../ui/DateBar'
@@ -16,7 +18,6 @@ import { Page } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { suggestions } from '../orders/batches'
 import { DraftCard } from '../orders/DraftCard'
-import { plural } from '../orders/format'
 import { LOCK_RENEW_MS, lockedByOther } from '../orders/lock'
 import { LockedCard } from '../orders/LockedCard'
 import { OrderFlowModal } from '../orders/OrderFlow'
@@ -36,17 +37,14 @@ import { NextCard } from './NextCard'
 import { PlacedCard } from './PlacedCard'
 import styles from './WeekPage.module.css'
 
-// How often the page checks whether the phone's calendar day has changed.
-const DAY_CHECK_MS = 60_000
-
 /**
  * Orders (Home): the days around today and the orders covering them, then the
  * orders as cards, the next step first: start or continue the next order, or
  * follow a placed one.
  */
 export function WeekPage() {
-  // Checked every minute, so Home moves on at midnight while the tab stays open.
-  const today = localDate(useNow(DAY_CHECK_MS))
+  // Home moves on at midnight while the tab stays open.
+  const today = useToday()
   const queryClient = useQueryClient()
   const shownDay = useRef(today)
   const [flowOpen, setFlowOpen] = useState(false)
@@ -99,7 +97,6 @@ export function WeekPage() {
     // none is, and the tap stays for the next Home to handle.
     let handling: Tap | null = null
     const stop = onTap((tapped) => {
-      if (tapped.about.kind === 'test') return
       handling = tapped
       if (tapped.about.kind === 'booking') {
         // How booking went: that order's page says, with what can be done.
@@ -146,7 +143,7 @@ export function WeekPage() {
           if (early) return
           void presentAlert({
             header: "Couldn't open the order",
-            message: error instanceof Error ? error.message : String(error),
+            message: errorMessage(error),
             buttons: ['OK'],
           })
         })

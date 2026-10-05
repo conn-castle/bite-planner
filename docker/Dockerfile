@@ -41,7 +41,7 @@ COPY backend/migrations ./migrations
 COPY backend/src ./src
 RUN uv sync --frozen --no-default-groups --group worker
 
-# The agent's own environment: only its commands (castle_chef_agent) and their
+# The agent's own environment: only its tools (castle_chef_agent) and their
 # dependencies, installed as a package (no source tree), with a `castle-chef` launcher.
 FROM build AS agent-build
 COPY backend/agent ./agent
@@ -142,6 +142,7 @@ ARG CASTLE_CHEF_COMMIT=unknown
 ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
 # A hard cap above two agent runs (15 min each: a list, then its shopping) plus
 # saving: a hung process can't keep the task (and its bill) running.
+# castle_chef.jobs.WORKER_LIMIT is this limit: a booking isn't counted lost before it.
 ENTRYPOINT ["timeout", "--kill-after=30s", "2400s", "castle-chef"]
 # One job (the task gets CASTLE_CHEF_JOB_ID); `agent-login grok` signs the agent in,
 # and `agent-login codex` connects Instacart (CODEX_HOME on EFS, set by the task).

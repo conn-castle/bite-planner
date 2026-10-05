@@ -1,4 +1,4 @@
-"""`castle-chef` command line: the agent's meal tool, the job worker, and admin helpers."""
+"""`castle-chef` command line: the job worker, the agent's tools (`mcp`), and admin helpers."""
 
 import logging
 from collections.abc import Iterator
@@ -8,11 +8,11 @@ from typing import Annotated
 from uuid import UUID
 
 import typer
-from castle_chef_agent.cli import mcp_serve, meal_app, shopping_list_app
+from castle_chef_agent.cli import mcp_serve
 from castle_chef_agent.instacart import InstacartError, Product, describe
 from sqlmodel import Session
 
-from castle_chef import checkout, household, instacart, push, reminders, worker
+from castle_chef import checkout, harness, household, instacart, push, reminders, worker
 from castle_chef import log as logging_config
 from castle_chef.checkout import CheckoutError
 from castle_chef.db import get_session
@@ -28,8 +28,6 @@ instacart_app = typer.Typer(
     no_args_is_help=True,
     help="Check the household's Instacart store (read-only), or sign in to its website.",
 )
-app.add_typer(meal_app, name="meal")
-app.add_typer(shopping_list_app, name="shopping-list")
 app.add_typer(job_app, name="job")
 app.add_typer(household_app, name="household")
 app.add_typer(instacart_app, name="instacart")
@@ -56,10 +54,11 @@ def main(ctx: typer.Context) -> None:
     # Secrets named in CASTLE_CHEF_SSM_PARAMETERS, before settings are first read
     # (e.g. the APNs key for `household notify-test`).
     load_ssm_parameters()
-    # The agent's commands (`meal …`, `shopping-list …`, and its MCP server) run in its sandbox,
-    # which can only write the job directory, so they log to stderr only.
-    in_sandbox = ctx.invoked_subcommand in ("meal", "shopping-list", "mcp")
-    log_file = None if in_sandbox else get_settings().logs_dir / "castle-chef.jsonl"
+    # The agent's tools (`mcp`) run in its sandbox, which can only write the job directory,
+    # so they log to stderr only.
+    log_file = (
+        None if ctx.invoked_subcommand == "mcp" else get_settings().logs_dir / "castle-chef.jsonl"
+    )
     logging_config.configure(log_file)
 
 
@@ -80,8 +79,8 @@ def job_run(
 
 @job_app.command("book-due")
 def job_book_due() -> None:
-    """Run the daily booking run now: start booking the approved orders that are
-    due (in AWS, the 9:00 AM schedule does this)."""
+    """Run the booking run now: start booking the approved orders that are due
+    (in AWS, a schedule does this each hour from 9:00 AM to 9 PM store time)."""
     queued = reminders.book_due()
     typer.echo(f"Started booking {len(queued)} order(s).")
 
@@ -94,7 +93,7 @@ def agent_login(
     Codex in to the household's ChatGPT account with Instacart connected. In AWS this
     runs as a one-off worker task with the command `agent-login grok` (or codex)."""
     try:
-        status = worker.login_agent(provider)
+        status = harness.login_agent(provider)
     except ValueError as error:  # an unknown provider
         typer.echo(str(error), err=True)
         raise typer.Exit(2) from error

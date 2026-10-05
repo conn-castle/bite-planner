@@ -1,11 +1,9 @@
 import { queryOptions, type QueryClient, useQuery } from '@tanstack/react-query'
 import { apiRequest, phoneTimeZone } from '../../lib/api/client'
-import type { HouseholdRef, Me, PersonalSettings } from '../../lib/api/types'
+import type { HouseholdRef, Me, PersonalSettings, PersonalSettingsIn } from '../../lib/api/types'
 import { auth, type User } from '../../lib/auth/auth'
 import { errorFields, logger } from '../../lib/log'
-import { uploadLogs } from '../../lib/logUpload'
-import { persister } from '../../lib/query/queryClient'
-import { forgetThisPhone } from '../notifications/notifications'
+import { queryKeys } from '../../lib/query/keys'
 
 /** Who is signed in, and the household they belong to (null: not invited yet). */
 export interface Session {
@@ -26,7 +24,9 @@ async function withPhoneTimeZone(settings: PersonalSettings): Promise<PersonalSe
   const timeZone = phoneTimeZone()
   if (settings.time_zone === timeZone) return settings
   try {
-    const updated = await apiRequest<PersonalSettings>('PATCH', '/v1/me/settings', { time_zone: timeZone })
+    const updated = await apiRequest<PersonalSettings>('PATCH', '/v1/me/settings', {
+      time_zone: timeZone,
+    } satisfies PersonalSettingsIn)
     logger.info('settings.time_zone_updated', { from: settings.time_zone, to: timeZone })
     return updated
   } catch (error) {
@@ -36,7 +36,7 @@ async function withPhoneTimeZone(settings: PersonalSettings): Promise<PersonalSe
 }
 
 export const sessionQuery = queryOptions({
-  queryKey: ['session'],
+  queryKey: queryKeys.session,
   queryFn: async (): Promise<Session | null> => {
     const user = await auth.getUser()
     if (!user) return null
@@ -60,8 +60,8 @@ export function useSession() {
 
 // Drops cached data that belongs to an account. The session entry is updated in
 // place instead: `queryClient.clear()` would detach the components watching it.
-function removeAccountData(queryClient: QueryClient) {
-  queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== 'session' })
+export function removeAccountData(queryClient: QueryClient) {
+  queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== queryKeys.session[0] })
 }
 
 /** Start clean for the account that just signed in, then load its session. */
@@ -90,21 +90,4 @@ export async function afterLeaving(queryClient: QueryClient) {
     // It stays in no household; the session is checked again on the next launch.
     logger.warn('session.refresh_failed', errorFields(error))
   }
-}
-
-export async function signOut(queryClient: QueryClient) {
-  // Upload this account's logs while it still can, so they aren't sent later as
-  // whoever signs in next. uploadLogs never throws; what it can't send stays queued.
-  await uploadLogs()
-  // While still signed in: this phone stops getting this account's notifications.
-  await forgetThisPhone(queryClient)
-  await auth.signOut()
-  // A fetch on its way would put the signed-out session back when it lands.
-  await queryClient.cancelQueries({ queryKey: sessionQuery.queryKey })
-  queryClient.setQueryData(sessionQuery.queryKey, null)
-  removeAccountData(queryClient)
-  // A request made offline must not be sent later as whoever signs in next.
-  queryClient.getMutationCache().clear()
-  await persister.removeClient()
-  logger.info('auth.signed_out')
 }

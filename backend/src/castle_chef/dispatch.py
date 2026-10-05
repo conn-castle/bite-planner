@@ -35,7 +35,8 @@ class JobDispatcher(Protocol):
 
 class SqsDispatcher:
     def __init__(self, queue_url: str) -> None:
-        # Only the API sends to the queue; the worker image doesn't install boto3.
+        # boto3 is in the images' dependency groups (api, worker), not the package's
+        # dependencies: imported where it's used, as elsewhere.
         import boto3
         from botocore.config import Config
 

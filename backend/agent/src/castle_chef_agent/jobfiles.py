@@ -1,6 +1,6 @@
-"""Files a job's worker and the agent's commands share in the job directory:
-the worker's context for the commands' checks, and a lock so commands the
-agent runs at once don't interleave."""
+"""Files a job's worker and the agent's tools share in the job directory:
+the worker's context for the tools' checks, and a lock so tool calls the
+agent makes at once don't interleave."""
 
 import fcntl
 import os
@@ -30,7 +30,7 @@ def read_context[T: BaseModel](job_dir: Path, model: type[T]) -> T:
 
 @contextmanager
 def locked(job_dir: Path) -> Iterator[None]:
-    """Hold the job directory's lock: one command reads and changes its files at a time."""
+    """Hold the job directory's lock: one tool call reads and changes its files at a time."""
     with (job_dir / ".lock").open("a") as lock:  # closing it releases the lock
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield

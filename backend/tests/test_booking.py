@@ -1,7 +1,8 @@
-"""When approved orders book (castle_chef.booking): the daily run at 9:00 AM store
-time, four days before delivery; Place order claimed at most once; and bookings
-whose worker stopped, through the failure handler's events."""
+"""When approved orders book (castle_chef.booking): the run at 9:00 AM store time,
+four days before delivery, repeated each hour; Place order claimed at most once;
+and bookings whose worker stopped, through the failure handler's events."""
 
+import re
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 from uuid import UUID, uuid4
@@ -11,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from castle_chef import booking, push, reminders
+from castle_chef import booking, jobs, push, reminders
 from castle_chef.api import create_app
 from castle_chef.checkout import BookIssue, CartLine, QuoteRequest
 from castle_chef.jobs import STALE_ERROR
@@ -29,6 +30,7 @@ from castle_chef.models import (
 )
 from castle_chef.push import Notification, Outcome, Sent
 from castle_chef.settings import get_settings
+from tests.test_checkout_tools import DOCKERFILE
 from tests.test_failures import task_stopped
 
 STORE = ZoneInfo("America/New_York")
@@ -93,7 +95,7 @@ def queue(monkeypatch: pytest.MonkeyPatch) -> Queue:
     return queued
 
 
-def run_daily(monkeypatch: pytest.MonkeyPatch, now: datetime) -> dict[str, list[str]]:
+def run_booking(monkeypatch: pytest.MonkeyPatch, now: datetime) -> dict[str, list[str]]:
     """The booking schedule's firing, at `now` (the store's time)."""
     monkeypatch.setattr(booking, "store_now", lambda: now)
     return reminders.handle_event({"book_due": {}})
@@ -108,13 +110,13 @@ def test_an_order_books_at_nine_in_the_morning_four_days_before_delivery() -> No
     assert booking.is_due(delivery, at(TODAY + timedelta(days=2), 7))
 
 
-def test_the_daily_run_starts_booking_the_orders_due_and_leaves_the_rest_waiting(
+def test_the_run_starts_booking_the_orders_due_and_leaves_the_rest_waiting(
     session: Session, household_id: UUID, queue: Queue, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     due = approved(session, household_id, TODAY + timedelta(days=4))
     later = approved(session, another_household(session), TODAY + timedelta(days=5))
 
-    result = run_daily(monkeypatch, at(TODAY, 9))
+    result = run_booking(monkeypatch, at(TODAY, 9))
 
     started = reloaded(session, due)
     assert started.book_state == BookState.BOOKING and started.book_job_id is not None
@@ -128,28 +130,76 @@ def test_the_daily_run_starts_booking_the_orders_due_and_leaves_the_rest_waiting
     )
     assert reloaded(session, later).book_state == BookState.WAITING
     # The next day's run starts it, and nothing twice.
-    run_daily(monkeypatch, at(TODAY + timedelta(days=1), 9))
+    run_booking(monkeypatch, at(TODAY + timedelta(days=1), 9))
     assert reloaded(session, later).book_state == BookState.BOOKING
     assert len(queue.dispatched) == 2
 
 
-def stale(session: Session, order: GroceryOrder, clicked: bool) -> None:
-    """Its book job started long ago and its worker was lost, maybe after the click."""
+def test_the_run_each_hour_starts_an_order_an_earlier_run_missed_once(
+    session: Session, household_id: UUID, queue: Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The 9:00 run failed: the one at 10:00 makes it up, and the ones after find
+    # nothing more to start.
+    due = approved(session, household_id, TODAY + timedelta(days=4))
+
+    made_up = run_booking(monkeypatch, at(TODAY, 10))
+    again = run_booking(monkeypatch, at(TODAY, 11))
+
+    started = reloaded(session, due)
+    assert started.book_state == BookState.BOOKING
+    assert made_up == {"queued": [str(started.book_job_id)]}
+    assert again == {"queued": []}
+    assert queue.dispatched == [started.book_job_id]
+
+
+def running(
+    session: Session, order: GroceryOrder, clicked: bool, since: timedelta = timedelta(hours=3)
+) -> None:
+    """Its book job's worker claimed it `since` ago, maybe pressing Place order since."""
     job = session.get_one(Job, order.book_job_id)
-    job.status, job.started_at = JobStatus.RUNNING, utc_now() - timedelta(hours=3)
+    job.status, job.started_at = JobStatus.RUNNING, utc_now() - since
     session.add(job)
     if clicked:
         order = session.get_one(GroceryOrder, order.id)
-        order.clicked_at = utc_now() - timedelta(hours=3)
+        order.clicked_at = utc_now()
         session.add(order)
     session.commit()
+
+
+@pytest.mark.parametrize("clicked", [False, True])
+@pytest.mark.parametrize(
+    "since",
+    # Waiting for the agent behind another job, or close to the worker's own limit
+    # (stopped at 40 minutes, killed 30 seconds later).
+    [timedelta(minutes=35), timedelta(minutes=40)],
+)
+def test_the_run_leaves_a_booking_alone_while_its_worker_may_still_be_running(
+    session: Session,
+    household_id: UUID,
+    queue: Queue,
+    monkeypatch: pytest.MonkeyPatch,
+    clicked: bool,
+    since: timedelta,
+) -> None:
+    order = approved(session, household_id, TODAY + timedelta(days=4))
+    run_booking(monkeypatch, at(TODAY, 9))
+    running(session, reloaded(session, order), clicked, since)
+    sender = RecordingSender()
+    monkeypatch.setattr(push, "get_sender", lambda: sender)
+
+    run_booking(monkeypatch, at(TODAY, 10))
+
+    still = reloaded(session, order)
+    assert still.book_state == BookState.BOOKING and still.book_job_id is not None
+    assert session.get_one(Job, still.book_job_id).status == JobStatus.RUNNING
+    assert sender.sent == []
 
 
 @pytest.mark.parametrize(
     ("clicked", "state"),
     [(False, BookState.NOT_BOOKED), (True, BookState.CHECK_INSTACART)],
 )
-def test_the_daily_run_settles_a_booking_whose_worker_was_lost(
+def test_the_run_settles_a_booking_whose_worker_was_lost(
     session: Session,
     household_id: UUID,
     queue: Queue,
@@ -158,10 +208,11 @@ def test_the_daily_run_settles_a_booking_whose_worker_was_lost(
     state: BookState,
 ) -> None:
     order = approved(session, household_id, TODAY + timedelta(days=4))
-    run_daily(monkeypatch, at(TODAY, 9))
-    stale(session, reloaded(session, order), clicked)
+    run_booking(monkeypatch, at(TODAY, 9))
+    # Started by the 9:00 run, and an hour later its worker is long gone.
+    running(session, reloaded(session, order), clicked, timedelta(hours=1))
 
-    run_daily(monkeypatch, at(TODAY + timedelta(days=1), 9))
+    run_booking(monkeypatch, at(TODAY, 10))
 
     settled = reloaded(session, order)
     assert (settled.book_state, settled.book_job_id) == (state, None)
@@ -169,11 +220,24 @@ def test_the_daily_run_settles_a_booking_whose_worker_was_lost(
         assert settled.book_issue == BookIssue(message=STALE_ERROR)
 
 
+def test_a_bookings_worker_counts_as_lost_by_the_worker_images_own_limit() -> None:
+    entrypoint = re.search(
+        r'ENTRYPOINT \["timeout", "--kill-after=(\d+)s", "(\d+)s", "castle-chef"\]',
+        DOCKERFILE.read_text(),
+    )
+    assert entrypoint, "docker/Dockerfile no longer says how long the worker may run."
+    kill_after, limit = (int(seconds) for seconds in entrypoint.groups())
+
+    assert timedelta(seconds=limit + kill_after) == jobs.WORKER_LIMIT, (
+        "Update castle_chef.jobs.WORKER_LIMIT to docker/Dockerfile's timeout."
+    )
+
+
 def test_place_order_is_claimed_once(
     session: Session, household_id: UUID, queue: Queue, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     order = approved(session, household_id, TODAY + timedelta(days=4))
-    run_daily(monkeypatch, at(TODAY, 9))
+    run_booking(monkeypatch, at(TODAY, 9))
     job_id = reloaded(session, order).book_job_id
     assert job_id is not None
     # Not before its worker has it.
@@ -227,9 +291,9 @@ def test_a_booking_whose_worker_stopped_is_settled_and_whoever_approved_it_told(
     title: str,
 ) -> None:
     order = approved(session, household_id, TODAY + timedelta(days=4))
-    run_daily(monkeypatch, at(TODAY, 9))
+    run_booking(monkeypatch, at(TODAY, 9))
     order = reloaded(session, order)
-    stale(session, order, clicked)
+    running(session, order, clicked)
     assert order.placed_by is not None
     session.add(AppUser(user_id=order.placed_by, household_id=household_id))
     session.add(PushDevice(token="cd" * 32, user_id=order.placed_by))

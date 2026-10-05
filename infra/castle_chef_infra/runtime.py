@@ -1,10 +1,10 @@
-"""The Castle Chef runtime (.agent-layer/tmp/architecture-plan.md):
+"""The Castle Chef runtime (docs/operations/aws.md "Stack and services"):
 
   app ─► API Lambda (Function URL) ─► Neon; SQS jobs queue
          jobs queue ─► EventBridge Pipe ─► one Fargate worker task per job
          failures (jobs DLQ, ECS "task stopped") ─► failure-handler Lambda
   one EventBridge Scheduler schedule per member ─► Reminders Lambda ─► APNs
-  the daily booking schedule (9 AM store time) ─► Reminders Lambda ─► jobs queue
+  the booking schedule (hourly, 9 AM-9 PM store time) ─► Reminders Lambda ─► jobs queue
          CloudWatch alarms ─► SNS email
 
 Nothing runs or polls while idle.
@@ -12,8 +12,9 @@ Nothing runs or polls while idle.
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
-from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import CfnOutput, Duration, Environment, RemovalPolicy, Stack
 from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_cloudwatch_actions as cloudwatch_actions
 from aws_cdk import aws_ec2 as ec2
@@ -40,6 +41,8 @@ AGENT_UID = 65532  # the image's agent user (CASTLE_CHEF_AGENT_UID)
 GROK_AUTH_DIR = "/mnt/agent-auth/grok"
 # Codex's login (the household's ChatGPT account, with Instacart connected).
 CODEX_HOME_DIR = "/mnt/agent-auth/codex"
+# Each agent's login directory, by provider (its EFS access point, volume, and mount).
+LOGIN_DIRS = {"grok": GROK_AUTH_DIR, "codex": CODEX_HOME_DIR}
 LOG_RETENTION = logs.RetentionDays.THREE_MONTHS
 # Job records are kept as long as the logs (THREE_MONTHS is 90 days).
 RECORD_RETENTION = Duration.days(90)
@@ -49,8 +52,16 @@ APNS_KEY_ID_PARAMETER = "/castle-chef/shared/apns-key-id"
 # The household's Instacart website session (browser cookies), which the worker
 # reads for checkout and writes back as Instacart renews it.
 INSTACART_SESSION_PARAMETER = "/castle-chef/shared/instacart-session"
-# When booking runs each day (castle_chef.booking): 9:00 AM in the store's time zone.
-BOOKING_SCHEDULE = "cron(0 9 * * ? *)"
+# When booking runs (castle_chef.booking), in the store's time zone: at 9:00 AM,
+# when orders become due, and each hour after it to 9 PM, so a run that failed is
+# made up an hour later.
+BOOKING_SCHEDULE = "cron(0 9-21 * * ? *)"
+# Its name in the members' group: not `reminder-…`, so the reminder sync never
+# touches it. Name is create-only: setting it makes the move from the default
+# group (where its name was generated) a replacement, a new schedule in the
+# members' group, not an in-place update of the old one, which Scheduler (finding
+# schedules by group and name) wouldn't find there.
+BOOKING_SCHEDULE_NAME = "booking"
 STORE_TIME_ZONE = "America/New_York"
 
 
@@ -77,9 +88,9 @@ class RuntimeStack(Stack):
         construct_id: str,
         *,
         config: RuntimeConfig,
-        **kwargs,
+        env: Environment | None = None,
     ) -> None:
-        super().__init__(scope, construct_id, **kwargs)
+        super().__init__(scope, construct_id, env=env)
 
         # Looked up by name (created by the repositories stack), so the two stacks
         # share no CloudFormation exports.
@@ -129,22 +140,17 @@ class RuntimeStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,
         )
         logins.connections.allow_default_port_from(worker_sg, "Worker tasks mount agent logins")
-        grok_logins = logins.add_access_point(
-            "GrokLogin",
-            path="/grok",
-            create_acl=efs.Acl(
-                owner_uid=str(AGENT_UID), owner_gid=str(AGENT_UID), permissions="700"
-            ),
-            posix_user=efs.PosixUser(uid=str(AGENT_UID), gid=str(AGENT_UID)),
-        )
-        codex_logins = logins.add_access_point(
-            "CodexLogin",
-            path="/codex",
-            create_acl=efs.Acl(
-                owner_uid=str(AGENT_UID), owner_gid=str(AGENT_UID), permissions="700"
-            ),
-            posix_user=efs.PosixUser(uid=str(AGENT_UID), gid=str(AGENT_UID)),
-        )
+        login_access_points = {
+            provider: logins.add_access_point(
+                f"{provider.capitalize()}Login",
+                path=f"/{provider}",
+                create_acl=efs.Acl(
+                    owner_uid=str(AGENT_UID), owner_gid=str(AGENT_UID), permissions="700"
+                ),
+                posix_user=efs.PosixUser(uid=str(AGENT_UID), gid=str(AGENT_UID)),
+            )
+            for provider in LOGIN_DIRS
+        }
 
         # Jobs queue. The Pipe removes a message once RunTask accepts it; messages
         # it can't start a task for are retried, then dead-lettered.
@@ -182,26 +188,17 @@ class RuntimeStack(Stack):
                 operating_system_family=ecs.OperatingSystemFamily.LINUX,
             ),
         )
-        worker.add_volume(
-            name="grok-login",
-            efs_volume_configuration=ecs.EfsVolumeConfiguration(
-                file_system_id=logins.file_system_id,
-                transit_encryption="ENABLED",
-                authorization_config=ecs.AuthorizationConfig(
-                    access_point_id=grok_logins.access_point_id, iam="ENABLED"
+        for provider, access_point in login_access_points.items():
+            worker.add_volume(
+                name=f"{provider}-login",
+                efs_volume_configuration=ecs.EfsVolumeConfiguration(
+                    file_system_id=logins.file_system_id,
+                    transit_encryption="ENABLED",
+                    authorization_config=ecs.AuthorizationConfig(
+                        access_point_id=access_point.access_point_id, iam="ENABLED"
+                    ),
                 ),
-            ),
-        )
-        worker.add_volume(
-            name="codex-login",
-            efs_volume_configuration=ecs.EfsVolumeConfiguration(
-                file_system_id=logins.file_system_id,
-                transit_encryption="ENABLED",
-                authorization_config=ecs.AuthorizationConfig(
-                    access_point_id=codex_logins.access_point_id, iam="ENABLED"
-                ),
-            ),
-        )
+            )
         worker.add_volume(name="tmp")
         linux = ecs.LinuxParameters(self, "WorkerLinux", init_process_enabled=True)
         # The worker (root) needs CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, and
@@ -246,11 +243,11 @@ class RuntimeStack(Stack):
             },
         )
         container.add_mount_points(
-            ecs.MountPoint(
-                source_volume="grok-login", container_path=GROK_AUTH_DIR, read_only=False
-            ),
-            ecs.MountPoint(
-                source_volume="codex-login", container_path=CODEX_HOME_DIR, read_only=False
+            *(
+                ecs.MountPoint(
+                    source_volume=f"{provider}-login", container_path=login_dir, read_only=False
+                )
+                for provider, login_dir in LOGIN_DIRS.items()
             ),
             ecs.MountPoint(source_volume="tmp", container_path="/tmp", read_only=False),
         )
@@ -262,8 +259,8 @@ class RuntimeStack(Stack):
                 conditions={
                     "StringEquals": {
                         "elasticfilesystem:AccessPointArn": [
-                            grok_logins.access_point_arn,
-                            codex_logins.access_point_arn,
+                            access_point.access_point_arn
+                            for access_point in login_access_points.values()
                         ]
                     }
                 },
@@ -360,9 +357,10 @@ class RuntimeStack(Stack):
             ),
         )
 
-        # API and failure handler: the same image. The failure handler has no URL;
-        # the Lambda Web Adapter posts its events to `/events`.
-        api_logs = logs.LogGroup(self, "ApiLogs", retention=LOG_RETENTION)
+        # API, failure handler, and Reminders: the same image; only the API has a URL.
+        api_image = lambda_.DockerImageCode.from_ecr(
+            repositories["api"], tag_or_digest=config.api_image_digest
+        )
         common_environment = {
             "CASTLE_CHEF_SSM_PARAMETERS": json.dumps(
                 {"DATABASE_URL": config.database_url_parameter}
@@ -370,17 +368,33 @@ class RuntimeStack(Stack):
             "AWS_LWA_READINESS_CHECK_TIMEOUT_SECONDS": "20",
             "CASTLE_CHEF_RELEASE": config.release,
         }
-        api = lambda_.DockerImageFunction(
-            self,
-            "Api",
-            code=lambda_.DockerImageCode.from_ecr(
-                repositories["api"], tag_or_digest=config.api_image_digest
+        # The failure handler and Reminders send push (a booking that stopped tells
+        # whoever approved the order).
+        push_parameters = (database_url, apns_key, apns_key_id)
+        push_environment = {
+            "CASTLE_CHEF_SSM_PARAMETERS": json.dumps(
+                {
+                    "DATABASE_URL": config.database_url_parameter,
+                    "CASTLE_CHEF_APNS_KEY": APNS_KEY_PARAMETER,
+                    "CASTLE_CHEF_APNS_KEY_ID": APNS_KEY_ID_PARAMETER,
+                }
             ),
-            architecture=lambda_.Architecture.X86_64,
+            "CASTLE_CHEF_PUSH": "apns",
+        }
+        # They are invoked with events, which the Lambda Web Adapter posts to
+        # `/events`. A failed event fails the invocation, so it is retried (the
+        # adapter otherwise returns the error response as a success, and the event
+        # is dropped).
+        event_environment = {
+            "AWS_LWA_PASS_THROUGH_PATH": "/events",
+            "AWS_LWA_ERROR_STATUS_CODES": "500-599",
+        }
+        api = self._api_image_function(
+            "Api",
+            api_image,
             memory_size=2048,  # more CPU with it: faster cold starts
             timeout=Duration.seconds(30),
             reserved_concurrent_executions=5,  # bounds connections to Neon's pooler
-            log_group=api_logs,
             environment=common_environment
             | {
                 "CASTLE_CHEF_NEON_AUTH_URL": config.neon_auth_url,
@@ -393,35 +407,21 @@ class RuntimeStack(Stack):
         database_url.grant_read(api)
         jobs.grant_send_messages(api)
 
-        failures_logs = logs.LogGroup(self, "FailureHandlerLogs", retention=LOG_RETENTION)
-        failure_handler = lambda_.DockerImageFunction(
-            self,
+        failure_handler = self._api_image_function(
             "FailureHandler",
-            code=lambda_.DockerImageCode.from_ecr(
-                repositories["api"], tag_or_digest=config.api_image_digest
-            ),
-            architecture=lambda_.Architecture.X86_64,
+            api_image,
             memory_size=512,
             timeout=Duration.seconds(30),
             reserved_concurrent_executions=2,
-            log_group=failures_logs,
             environment=common_environment
             | {
-                # A booking that stopped tells whoever approved the order.
-                "CASTLE_CHEF_SSM_PARAMETERS": json.dumps(
-                    {
-                        "DATABASE_URL": config.database_url_parameter,
-                        "CASTLE_CHEF_APNS_KEY": APNS_KEY_PARAMETER,
-                        "CASTLE_CHEF_APNS_KEY_ID": APNS_KEY_ID_PARAMETER,
-                    }
-                ),
-                "CASTLE_CHEF_PUSH": "apns",
+                **push_environment,
                 "CASTLE_CHEF_FAILURE_HANDLER": "true",
-                "AWS_LWA_PASS_THROUGH_PATH": "/events",
+                **event_environment,
             },
         )
-        for grant in (database_url, apns_key, apns_key_id):
-            grant.grant_read(failure_handler)
+        for parameter in push_parameters:
+            parameter.grant_read(failure_handler)
         failure_handler.add_event_source(
             lambda_event_sources.SqsEventSource(dead_letters, batch_size=10)
         )
@@ -442,8 +442,9 @@ class RuntimeStack(Stack):
         # Named, so the API and the function itself can be told its ARN without a
         # circular reference.
         reminders_arn = f"arn:aws:lambda:{self.region}:{self.account}:function:{reminders_name}"
+        schedule_group_name = f"{self.stack_name}-reminders"
         schedule_group = scheduler.CfnScheduleGroup(
-            self, "ReminderSchedules", name=f"{self.stack_name}-reminders"
+            self, "ReminderSchedules", name=schedule_group_name
         )
         scheduler_role = iam.Role(
             self,
@@ -458,7 +459,7 @@ class RuntimeStack(Stack):
         )
         scheduler_environment = {
             "CASTLE_CHEF_REMINDER_SCHEDULER": "aws",
-            "CASTLE_CHEF_REMINDER_SCHEDULE_GROUP": schedule_group.name or "",
+            "CASTLE_CHEF_REMINDER_SCHEDULE_GROUP": schedule_group_name,
             "CASTLE_CHEF_REMINDER_FUNCTION_ARN": reminders_arn,
             "CASTLE_CHEF_REMINDER_ROLE_ARN": scheduler_role.role_arn,
         }
@@ -471,7 +472,7 @@ class RuntimeStack(Stack):
                     "scheduler:GetSchedule",
                 ],
                 resources=[
-                    f"arn:aws:scheduler:{self.region}:{self.account}:schedule/{schedule_group.name}/*"
+                    f"arn:aws:scheduler:{self.region}:{self.account}:schedule/{schedule_group_name}/*"
                 ],
             ),
             iam.PolicyStatement(
@@ -480,19 +481,13 @@ class RuntimeStack(Stack):
                 conditions={"StringEquals": {"iam:PassedToService": "scheduler.amazonaws.com"}},
             ),
         ]
-        reminders_logs = logs.LogGroup(self, "RemindersLogs", retention=LOG_RETENTION)
-        reminders = lambda_.DockerImageFunction(
-            self,
+        reminders = self._api_image_function(
             "Reminders",
+            api_image,
             function_name=reminders_name,
-            code=lambda_.DockerImageCode.from_ecr(
-                repositories["api"], tag_or_digest=config.api_image_digest
-            ),
-            architecture=lambda_.Architecture.X86_64,
             memory_size=512,
             timeout=Duration.seconds(60),
             reserved_concurrent_executions=2,
-            log_group=reminders_logs,
             # Scheduler invokes it asynchronously: Lambda's own retries of a
             # failed firing, and how late it may still run one.
             retry_attempts=2,
@@ -500,33 +495,26 @@ class RuntimeStack(Stack):
             environment=common_environment
             | scheduler_environment
             | {
-                "CASTLE_CHEF_SSM_PARAMETERS": json.dumps(
-                    {
-                        "DATABASE_URL": config.database_url_parameter,
-                        "CASTLE_CHEF_APNS_KEY": APNS_KEY_PARAMETER,
-                        "CASTLE_CHEF_APNS_KEY_ID": APNS_KEY_ID_PARAMETER,
-                    }
-                ),
                 "CASTLE_CHEF_REMINDERS_HANDLER": "true",
-                "CASTLE_CHEF_PUSH": "apns",
-                # The daily booking run starts book jobs.
+                **push_environment,
+                # The booking run starts book jobs.
                 "CASTLE_CHEF_JOB_DISPATCH": "sqs",
                 "CASTLE_CHEF_JOBS_QUEUE_URL": jobs.queue_url,
-                "AWS_LWA_PASS_THROUGH_PATH": "/events",
-                # A failed firing fails the invocation, so Lambda retries it (the
-                # adapter otherwise returns the error response as a success).
-                "AWS_LWA_ERROR_STATUS_CODES": "500-599",
+                **event_environment,
             },
         )
-        for grant in (database_url, apns_key, apns_key_id):
-            grant.grant_read(reminders)
+        for parameter in push_parameters:
+            parameter.grant_read(reminders)
         jobs.grant_send_messages(reminders)
-        # The daily booking run: outside the members' group, which the deploy's
-        # sync keeps to one schedule per member.
-        scheduler.CfnSchedule(
+        # The booking run, in the members' group so the Scheduler alarms (below)
+        # watch it too. The deploy's sync leaves it alone: it lists and deletes only
+        # the schedules named `reminder-<user id>` (AwsReminderScheduler.user_ids).
+        booking_schedule = scheduler.CfnSchedule(
             self,
             "BookingSchedule",
+            name=BOOKING_SCHEDULE_NAME,
             description="Books approved orders that are due (castle_chef.booking)",
+            group_name=schedule_group_name,
             schedule_expression=BOOKING_SCHEDULE,
             schedule_expression_timezone=STORE_TIME_ZONE,
             flexible_time_window=scheduler.CfnSchedule.FlexibleTimeWindowProperty(mode="OFF"),
@@ -536,6 +524,8 @@ class RuntimeStack(Stack):
                 input=json.dumps({"book_due": {}}),
             ),
         )
+        # The group is named, not referenced: created first.
+        booking_schedule.add_dependency(schedule_group)
         for statement in manage_schedules:
             reminders.add_to_role_policy(statement)
             api.add_to_role_policy(statement)
@@ -552,10 +542,10 @@ class RuntimeStack(Stack):
         alarms.add_subscription(sns_subscriptions.EmailSubscription(config.alarm_email))
         notify = cloudwatch_actions.SnsAction(alarms)
         for name, log_group in {
-            "Api": api_logs,
+            "Api": api.log_group,
             "Worker": worker_logs,
-            "FailureHandler": failures_logs,
-            "Reminders": reminders_logs,
+            "FailureHandler": failure_handler.log_group,
+            "Reminders": reminders.log_group,
         }.items():
             errors = logs.MetricFilter(
                 self,
@@ -600,15 +590,15 @@ class RuntimeStack(Stack):
         )
 
         for metric_name, description in {
-            "TargetErrorCount": "Castle Chef reminder schedules could not invoke Reminders",
-            "InvocationDroppedCount": "Castle Chef reminder schedules dropped a reminder",
+            "TargetErrorCount": "Castle Chef reminder or booking schedule couldn't run Reminders",
+            "InvocationDroppedCount": "Castle Chef reminder or booking schedule dropped a firing",
         }.items():
             self._alarm(
                 f"Reminders{metric_name}",
                 cloudwatch.Metric(
                     namespace="AWS/Scheduler",
                     metric_name=metric_name,
-                    dimensions_map={"ScheduleGroup": schedule_group.name or ""},
+                    dimensions_map={"ScheduleGroup": schedule_group_name},
                     statistic="Sum",
                     period=Duration.minutes(5),
                 ),
@@ -616,15 +606,33 @@ class RuntimeStack(Stack):
                 notify,
             )
 
-        self.api_url = api_url.url
-        self.reminders = reminders
-        self.cluster = cluster
-        self.pipe_name = pipe.ref
-        self.worker = worker
-        self.worker_security_group = worker_sg
-        self.subnets = vpc.public_subnets
-        self.worker_logs = worker_logs
-        self.job_records = job_records
+        # What the workflows and docs/operations/aws.md read (`<id>` in cdk-outputs.json
+        # and describe-stacks).
+        for output_id, value in {
+            "ApiUrlOutput": api_url.url,
+            "RemindersFunctionOutput": reminders.function_name,
+            "ClusterNameOutput": cluster.cluster_name,
+            "JobsPipeOutput": pipe.ref,
+            "WorkerTaskDefinitionOutput": worker.task_definition_arn,
+            "WorkerSecurityGroupOutput": worker_sg.security_group_id,
+            "WorkerSubnetsOutput": ",".join(subnet.subnet_id for subnet in vpc.public_subnets),
+            "WorkerLogGroupOutput": worker_logs.log_group_name,
+            "JobRecordsBucketOutput": job_records.bucket_name,
+        }.items():
+            CfnOutput(self, output_id, value=value)
+
+    def _api_image_function(
+        self, construct_id: str, image: lambda_.DockerImageCode, **options: Any
+    ) -> lambda_.DockerImageFunction:
+        """A function from the api image, logging to its own group (`<id>Logs`)."""
+        return lambda_.DockerImageFunction(
+            self,
+            construct_id,
+            code=image,
+            architecture=lambda_.Architecture.X86_64,
+            log_group=logs.LogGroup(self, f"{construct_id}Logs", retention=LOG_RETENTION),
+            **options,
+        )
 
     def _alarm(
         self,

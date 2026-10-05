@@ -1,15 +1,15 @@
 import type { ReactNode } from 'react'
 import type { ISODate, NextOrder, PlacedMeal, PlacedOrder } from '../../lib/api/types'
 import { addDays, daysBetween, formatDate, relativeDay } from '../../lib/dates'
+import { plural } from '../../lib/format'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { Icon } from '../../ui/Icon'
 import { MealStack } from '../../ui/MealStack'
 import { OrderCard, OrderCardBody, OrderCardDivider, OrderCardNote } from '../../ui/OrderCard'
-import { OrderTrack, type TrackDate } from '../../ui/OrderTrack'
+import { OrderTrack, type TrackDates } from '../../ui/OrderTrack'
 import { MealRow } from '../meals/MealRow'
 import { BOOK_STATE_ICON, BOOK_STATE_LABEL, bookingLine, needsAttention } from '../orders/booking'
-import { plural } from '../orders/format'
 import { byWhom, coverage, followingOrder, phase, placedOn, placedTitle } from './home'
 import styles from './PlacedCard.module.css'
 
@@ -184,7 +184,7 @@ export function PlacedTrack({
 }) {
   const days = daysBetween(order.delivery_date, order.next_delivery_date)
   const on = placedOn(order)
-  const dates: TrackDate[] | undefined = dated
+  const dates: TrackDates | undefined = dated
     ? [
         { date: formatDate(on, 'short'), note: plural(order.meals.length, 'meal') },
         { date: formatDate(on, 'short') },
@@ -208,7 +208,7 @@ export function PlacedTrack({
 }
 
 /** What comes after an order's meals: the next order and when its groceries come. */
-export function NextLine({ order, placed, next }: { order: PlacedOrder; placed: PlacedOrder[]; next: NextOrder }) {
+function NextLine({ order, placed, next }: { order: PlacedOrder; placed: PlacedOrder[]; next: NextOrder }) {
   const date = <b>{formatDate(order.next_delivery_date, 'short')}</b>
   const following = followingOrder(order, placed, next)
   if (following?.kind === 'placed') {

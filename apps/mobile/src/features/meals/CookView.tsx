@@ -1,7 +1,8 @@
 import { KeepAwake } from '@capacitor-community/keep-awake'
 import { IonContent, IonFooter, IonHeader, IonModal, IonToolbar } from '@ionic/react'
 import { useEffect, useRef, useState } from 'react'
-import type { Meal } from '../../lib/api/types'
+import type { Meal, MealIngredient } from '../../lib/api/types'
+import { errorMessage } from '../../lib/errorMessage'
 import { errorFields, logger } from '../../lib/log'
 import { useNow } from '../../lib/useNow'
 import { Button, IconButton } from '../../ui/Button'
@@ -85,7 +86,7 @@ export function CookView({ meal, servings, isOpen, onClose }: CookViewProps) {
       else await startTimer(meal, at, minutes)
     } catch (error) {
       logger.warn('cooking.timer_failed', errorFields(error))
-      setProblem(error instanceof Error ? error.message : String(error))
+      setProblem(errorMessage(error))
     }
   }
 
@@ -134,7 +135,9 @@ export function CookView({ meal, servings, isOpen, onClose }: CookViewProps) {
               <h3>You'll need</h3>
               <ul>
                 {step.ingredients.map((position) => {
-                  const ingredient = meal.ingredients[position]
+                  // The API checks every position is one of the meal's ingredients; one that isn't is left out.
+                  const ingredient: MealIngredient | undefined = meal.ingredients[position]
+                  if (ingredient === undefined) return null
                   return (
                     <li key={position}>
                       {[ingredientAmount(ingredient, meal.servings, servings), ingredient.name]

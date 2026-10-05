@@ -210,14 +210,15 @@ def test_place_order_is_never_pressed_and_pages_stay_on_instacart(job_dir: Path)
         orders = re.findall(r'button "Place order" \[ref=(\w+)\]', page)
         assert len(orders) == 4
         refused = []
-        for action in (
+        actions: list[Callable[[], Awaitable[str]]] = [
             lambda: opened.click(orders[0]),
             lambda: opened.click(orders[1]),
             lambda: opened.click(orders[2]),
             lambda: opened.click(ref(page, 'img "Lock"')),
             lambda: opened.open("https://example.com/"),
             lambda: opened.open("//example.com/"),
-        ):
+        ]
+        for action in actions:
             try:
                 await action()
             except CheckoutRefused as error:
@@ -342,3 +343,33 @@ def test_an_open_dialog_is_shown_alone_and_find_looks_everywhere(job_dir: Path) 
     assert re.fullmatch(
         r'Page: /store/wegmans/storefront\n- button "Go to checkout" \[ref=\w+\]', found
     )
+
+
+# The worker image's browser: Playwright runs only the build it was released with.
+
+DOCKERFILE = Path(__file__).resolve().parents[2] / "docker" / "Dockerfile"
+
+
+def browser_in_image(dockerfile: str) -> tuple[str, str]:
+    """The Chrome Headless Shell build the worker image downloads, and the revision
+    directory it puts it in (where Playwright looks for it)."""
+    build = re.search(r"/cft/([\d.]+)/linux64/chrome-headless-shell-linux64\.zip", dockerfile)
+    revision = re.search(r"/opt/ms-playwright/chromium_headless_shell-(\d+)\b", dockerfile)
+    assert build and revision, "The Dockerfile no longer says which browser build it installs."
+    return build.group(1), revision.group(1)
+
+
+def test_the_worker_image_has_the_browser_the_locked_playwright_runs() -> None:
+    import playwright
+
+    browsers = Path(playwright.__file__).parent / "driver" / "package" / "browsers.json"
+    [wanted] = [
+        browser
+        for browser in json.loads(browsers.read_text())["browsers"]
+        if browser["name"] == "chromium-headless-shell"
+    ]
+
+    assert browser_in_image(DOCKERFILE.read_text()) == (
+        wanted["browserVersion"],
+        wanted["revision"],
+    ), "Update docker/Dockerfile's Chrome Headless Shell (its build, checksum, and directory)."

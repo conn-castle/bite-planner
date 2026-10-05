@@ -11,6 +11,13 @@ import {
 } from '@tanstack/react-query'
 import { errorFields, logger } from '../log'
 
+declare module '@tanstack/react-query' {
+  interface Register {
+    // `persist: false`: a request never saved to be sent after a relaunch (see App.tsx).
+    mutationMeta: { persist?: boolean }
+  }
+}
+
 /**
  * Server state lives in TanStack Query: cached, shown instantly (including
  * after a relaunch, via the persisted cache), and refreshed in the background.

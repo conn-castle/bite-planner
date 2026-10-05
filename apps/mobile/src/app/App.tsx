@@ -27,7 +27,10 @@ export function App() {
       persistOptions={{
         persister,
         maxAge: PERSIST_MAX_AGE_MS,
-        buster: __APP_VERSION__,
+        // Dropped on every release, so data saved in an older shape is never restored. The cost: the first
+        // launch after an update starts from an empty cache, and requests queued offline are dropped.
+        // A local build's release is always `dev`, so local builds never drop it on their own.
+        buster: __APP_RELEASE__,
         // Requests made offline are kept, except those only the open flow can send (e.g. taking the order's lock).
         dehydrateOptions: {
           shouldDehydrateMutation: (mutation) =>

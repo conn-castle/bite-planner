@@ -538,7 +538,9 @@ def test_apns_gets_a_signed_alert_for_the_app(apns_key: str) -> None:
     assert "apns-collapse-id" not in first.headers
     bearer = first.headers["authorization"].removeprefix("bearer ")
     assert jwt.get_unverified_header(bearer)["kid"] == "KEY1234567"
-    public = serialization.load_pem_private_key(apns_key.encode(), None).public_key()
+    private = serialization.load_pem_private_key(apns_key.encode(), None)
+    assert isinstance(private, ec.EllipticCurvePrivateKey)
+    public = private.public_key()
     assert jwt.decode(bearer, public, algorithms=["ES256"])["iss"] == "EXAMP12345"
     # The signed token is reused, not made per request.
     assert second.headers["authorization"] == first.headers["authorization"]

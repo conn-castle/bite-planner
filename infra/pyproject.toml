@@ -10,6 +10,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "mypy>=2.4.0",
     "pytest>=9.1.1",
     "ruff>=0.16.8",
 ]
@@ -26,3 +27,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.mypy]
+files = ["app.py", "castle_chef_infra", "tests"]
+strict = true

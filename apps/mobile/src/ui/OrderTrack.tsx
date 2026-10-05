@@ -10,6 +10,9 @@ export interface TrackDate {
   note?: string
 }
 
+/** The date under each of the five nodes. */
+export type TrackDates = [TrackDate, TrackDate, TrackDate, TrackDate, TrackDate]
+
 interface OrderTrackProps {
   phase: TrackPhase
   /** Days its meals cover. */
@@ -17,7 +20,7 @@ interface OrderTrackProps {
   /** Covered days begun so far, today included (while its meals are on hand). */
   day: number
   /** The date under each of the five nodes, in the order's own view. */
-  dates?: TrackDate[]
+  dates?: TrackDates
   /** Booked at the store; until it is, Placed is the step it's at (not checked). */
   booked?: boolean
 }

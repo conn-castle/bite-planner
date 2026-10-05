@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import type { GroceryOrder, ShoppingItem } from '../../lib/api/types'
+import { elapsed, plural } from '../../lib/format'
 import { haptics } from '../../lib/haptics'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
@@ -16,8 +17,7 @@ import { useNotifiedOfJob } from '../notifications/notifications'
 import { pickedMeals } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
-import { elapsed, plural } from './format'
-import { forMeals, type ListState, listState, productTotals, splitList, totalShown, undecided } from './list'
+import { type ListState, listState, mealNames, productTotals, splitList, storeName, totalShown, undecided } from './list'
 import styles from './ListStep.module.css'
 import { useOrderSession } from './lock'
 import { useEditsPending, useSetItem, useSetItemError, useShopList, useStartList } from './orders'
@@ -102,7 +102,7 @@ function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClos
   // One problem on screen: the flow's own (the order couldn't be refreshed) comes first.
   const flowProblem = useContext(FlowNotice)
   const meals = pickedMeals(order).length
-  const store = list?.store ?? 'the store'
+  const store = storeName(order)
 
   // What went wrong is for the logs (the screen says it plainly): once per failed job.
   const failedJob = state === 'failed' || state === 'shopFailed' ? job : undefined
@@ -198,7 +198,7 @@ function ListReview({ order, onOpenProduct, onBack, onNext, onClose }: ListRevie
   const saving = useEditsPending()
   const [showOnHand, setShowOnHand] = useState(false)
   const list = order.shopping_list
-  const store = list?.store ?? 'the store'
+  const store = storeName(order)
   const meals = pickedMeals(order)
   const names = new Map(meals.map(({ meal }) => [meal.id, meal.name]))
   const { toBuy, onHand } = splitList(list?.items ?? [])
@@ -207,7 +207,7 @@ function ListReview({ order, onOpenProduct, onBack, onNext, onClose }: ListRevie
 
   function change(item: ShoppingItem, edit: { removed?: boolean; count?: number; alternative?: string }) {
     haptics.tap()
-    setItem.mutate({ orderId: order.id, itemId: item.id, session, ...edit })
+    setItem.mutate({ kind: 'item', orderId: order.id, itemId: item.id, session, ...edit })
   }
 
   return (
@@ -263,8 +263,7 @@ function ListReview({ order, onOpenProduct, onBack, onNext, onClose }: ListRevie
       )}
       <ShoppingList
         items={toBuy}
-        amount={() => ''}
-        forMeals={(item) => forMeals(item, names).replace(/^for /, '')}
+        forMeals={(item) => mealNames(item, names)}
         shop={{
           onOpen: (item) => onOpenProduct(item.id),
           edit: {

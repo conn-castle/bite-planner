@@ -2,7 +2,8 @@ import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiRequest } from '../../lib/api/client'
 import type { Me } from '../../lib/api/types'
-import { sessionQuery, signOut } from './session'
+import { sessionQuery } from './session'
+import { signOut } from './signOut'
 
 vi.mock('../../lib/api/client', () => ({ apiRequest: vi.fn(), phoneTimeZone: () => 'Europe/Lisbon' }))
 vi.mock('../../lib/log', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, errorFields: () => ({}) }))

@@ -1,5 +1,7 @@
+import { BATCH_SIZE } from '../../lib/api/limits'
 import type { GroceryOrder, ISODate } from '../../lib/api/types'
 import { formatDate, relativeMoment } from '../../lib/dates'
+import { elapsed, memberName, plural } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
@@ -10,10 +12,6 @@ import { useNotifiedOfJob, useYourReminder } from '../notifications/notification
 import { newestBatchState, suggestions } from './batches'
 import { defaultDeliveryDate } from './dates'
 import styles from './DraftCard.module.css'
-import { elapsed, memberName, plural } from './format'
-
-// The meals in a batch of suggestions, as the backend makes them.
-const BATCH_SIZE = 20
 
 interface DraftCardProps {
   order: GroceryOrder

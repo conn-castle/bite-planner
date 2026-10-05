@@ -89,6 +89,17 @@ describe('log outbox', () => {
     expect((await nextLogBatch(10)).entries).toEqual([])
   })
 
+  it('reports a saved outbox it cannot read, and still queues what is logged after', async () => {
+    stored.set('castle-chef.log-outbox', JSON.stringify({ entries: [{ event: 'no level or time' }], dropped: 0 }))
+    const { logger, nextLogBatch } = await freshLog()
+    logger.info('after launch')
+
+    expect((await nextLogBatch(10)).entries.map((entry) => [entry.level, entry.event])).toEqual([
+      ['error', 'logs.saved_outbox_unreadable'],
+      ['info', 'after launch'],
+    ])
+  })
+
   it('restores entries saved before a relaunch', async () => {
     vi.useFakeTimers()
     const first = await freshLog()

@@ -1,9 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { errorMessage } from '../../lib/errorMessage'
 import { errorFields, logger } from '../../lib/log'
 import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
-import { signOut, type Session } from './session'
+import type { Session } from './session'
+import { signOut } from './signOut'
 import { Welcome } from './Welcome'
 
 /** A signed-in account in no household: never invited, or removed since. */
@@ -16,7 +18,7 @@ export function NotInHousehold({ session }: { session: Session }) {
       await signOut(queryClient)
     } catch (e) {
       logger.warn('auth.sign_out_failed', errorFields(e))
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorMessage(e))
     }
   }
 

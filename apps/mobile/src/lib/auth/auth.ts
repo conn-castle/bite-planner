@@ -2,7 +2,7 @@ import { neonAuth } from './neonAuth'
 
 /**
  * Sign-in, behind an interface so the provider can be replaced. The app only
- * uses these calls; `api.ts` sends `getToken()` to the Castle Chef API, which
+ * uses these calls; `lib/api/client.ts` sends `getToken()` to the Castle Chef API, which
  * verifies it with the matching backend verifier (castle_chef.auth).
  */
 

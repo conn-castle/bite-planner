@@ -5,7 +5,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from functools import lru_cache
 from time import monotonic
 from typing import Annotated, Any, Self
@@ -13,7 +13,9 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from castle_chef_agent import windows
+from castle_chef_agent.checkout import Checkout
 from castle_chef_agent.products import ProductCount
+from castle_chef_agent.shopping import Aisle
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -46,7 +48,7 @@ from castle_chef.auth import (
     WebhookRejected,
     WebhookVerifier,
 )
-from castle_chef.checkout import SIGNED_OUT_ERROR, Booking, BookIssue, Checkout
+from castle_chef.checkout import SIGNED_OUT_ERROR, Booking, BookIssue
 from castle_chef.db import get_request_session
 from castle_chef.dispatch import DispatchError, JobDispatcher, get_dispatcher
 from castle_chef.jobs import (
@@ -68,7 +70,6 @@ from castle_chef.models import (
     SERVINGS,
     TIP_MAX_CENTS,
     TIP_PERCENT,
-    Aisle,
     AppUser,
     BookState,
     GroceryOrder,
@@ -83,7 +84,7 @@ from castle_chef.models import (
     ProductGone,
     ShoppingListItem,
 )
-from castle_chef.settings import get_settings, load_ssm_parameters
+from castle_chef.settings import current_release, get_settings, load_ssm_parameters
 
 log = logging.getLogger(__name__)
 client_log = logging.getLogger("castle_chef.client")
@@ -115,7 +116,8 @@ class MealSummaryOut(BaseModel):
 
 
 class JobOut(BaseModel):
-    """One batch of suggestions."""
+    """One of an order's jobs: a batch of suggestions, its shopping list's build or
+    shopping, a quote of its total, or its booking."""
 
     id: UUID
     kind: JobKind
@@ -439,6 +441,8 @@ HouseholdName = Annotated[
 
 
 class HouseholdSettingsIn(PartialUpdate):
+    """Named as the household's columns: the fields sent are copied to them."""
+
     name: HouseholdName | None = None
     decide_by_offset_days: int | None = Field(
         default=None, ge=DECIDE_BY_OFFSET_DAYS.low, le=DECIDE_BY_OFFSET_DAYS.high
@@ -456,6 +460,8 @@ class HouseholdSettingsIn(PartialUpdate):
 
 
 class PersonalSettingsIn(PartialUpdate):
+    """Named as the member's columns: the fields sent are copied to them."""
+
     notification_time: time | None = None
     time_zone: str | None = None
     reminders_on: bool | None = None
@@ -593,6 +599,7 @@ def get_webhook_verifier() -> WebhookVerifier:
     return NeonWebhookVerifier(settings.neon_auth_url)
 
 
+@lru_cache
 def get_verifier() -> AuthVerifier:
     settings = get_settings()
     if not settings.neon_auth_url:
@@ -611,15 +618,6 @@ def db() -> Iterator[Session]:
 # Lambda, the environment can freeze as soon as the answer is out, and a session
 # closed after that is left mid-transaction until it thaws or shuts down.
 DbSession = Annotated[Session, Depends(db, scope="function")]
-
-
-def stale_after() -> tuple[timedelta, timedelta]:
-    """How long a job may stay pending, and running, before it counts as lost."""
-    settings = get_settings()
-    return (
-        timedelta(seconds=settings.pending_timeout_seconds),
-        timedelta(seconds=settings.agent_timeout_seconds + 300),
-    )
 
 
 def today(time_zone: Annotated[str | None, Header(alias="Time-Zone")] = None) -> date:
@@ -672,7 +670,7 @@ def job_out(
     """A job as the app sees it. An overdue job is shown as failed, the state the
     next request (or the failure handler) will write, so the app stops waiting on
     it without this read writing anything."""
-    stale = is_stale(job, datetime.now(UTC), *stale_after())
+    stale = is_stale(job, datetime.now(UTC))
     return JobOut(
         id=job.id,
         kind=job.kind,
@@ -717,7 +715,7 @@ def item_out(item: ShoppingListItem) -> ShoppingItemOut:
     return ShoppingItemOut(
         id=item.id,
         name=item.name,
-        quantity=item.quantity if item.changed_quantity is None else item.changed_quantity,
+        quantity=shopping.ordered_quantity(item),
         recipe_quantity=item.quantity,
         unit=item.unit,
         aisle=item.aisle,
@@ -775,6 +773,19 @@ def quote_out(
     )
 
 
+def book_state_out(order: GroceryOrder) -> tuple[BookState | None, BookIssue | None]:
+    """Where an order is with the store, and why it isn't booked, as the app is
+    told. An order whose booking is late (booking.is_late) is shown as not booked,
+    so a member can try again, without this read writing anything: it stays
+    waiting, and the next hourly run may still book it."""
+    delivery = order.delivery_date
+    if delivery is not None and booking.is_late(order, booking.store_now()):
+        day = booking.book_on(delivery)
+        late = BookIssue(message=f"It didn't book on {day:%a, %b} {day.day} as planned.")
+        return BookState.NOT_BOOKED, late
+    return order.book_state, order.book_issue
+
+
 def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) -> GroceryOrderOut:
     """An order as `viewer`, a member of its household, sees it."""
     jobs = orders.jobs(session, order.id)
@@ -788,6 +799,7 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
     target = orders.target_date(session, order)
     decide_by = orders.decide_by_date(session, order.household_id, target)
     by = order.delivery_by or session.get_one(Household, order.household_id).delivery_time
+    book_state, book_issue = book_state_out(order)
     return GroceryOrderOut(
         id=order.id,
         number=orders.number(session, order),
@@ -812,12 +824,12 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
         lock=lock_out(order, viewer, people),
         shopping_list=shopping_list_out(session, order, people, rated),
         quote=quote_out(session, order, people),
-        book_state=order.book_state,
+        book_state=book_state,
         book_on=booking.book_on(order.delivery_date)
-        if order.book_state is not None and order.delivery_date is not None
+        if book_state is not None and order.delivery_date is not None
         else None,
         booking=order.booking,
-        book_issue=order.book_issue,
+        book_issue=book_issue,
     )
 
 
@@ -832,13 +844,14 @@ def placed_order_out(
     """A placed order, with its picked meals, as the app sees it."""
     placed_at, placed_by = order.placed_at, order.placed_by
     delivery, next_delivery = order.delivery_date, order.next_delivery_date
+    book_state, book_issue = book_state_out(order)
     # Set when it's placed; the table's checks guarantee it.
     if (
         placed_at is None
         or placed_by is None
         or delivery is None
         or next_delivery is None
-        or order.book_state is None
+        or book_state is None
     ):
         raise RuntimeError(f"Placed order {order.id} is missing its placement details or dates.")
     return PlacedOrderOut(
@@ -854,10 +867,10 @@ def placed_order_out(
             for pick in picks
         ],
         shopping_list=[item_out(item) for item in items],
-        book_state=order.book_state,
+        book_state=book_state,
         book_on=booking.book_on(delivery),
         booking=order.booking,
-        book_issue=order.book_issue,
+        book_issue=book_issue,
     )
 
 
@@ -886,6 +899,28 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     orders.InvalidDates: status.HTTP_422_UNPROCESSABLE_CONTENT,
     BatchRunning: status.HTTP_429_TOO_MANY_REQUESTS,
 }
+
+
+def start_job(
+    session: Session,
+    job: Job,
+    created: bool,
+    response: Response,
+    dispatcher: JobDispatcher,
+    not_started: str,
+) -> None:
+    """Start the worker of a job the request made (one it didn't make, already
+    there for a retry or for the same thing, is answered 200 instead of 201). A
+    worker that can't be started fails the job: 503, saying `not_started`."""
+    if not created:
+        response.status_code = status.HTTP_200_OK
+        return
+    try:
+        dispatcher.dispatch(job.id)
+    except DispatchError as error:
+        log.error("job.dispatch_failed", extra={"job_id": str(job.id), "error": str(error)})
+        fail_job(session, job.id, not_started)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, not_started) from error
 
 
 def dispatch_booking(session: Session, dispatcher: JobDispatcher, job_id: UUID) -> None:
@@ -1037,6 +1072,8 @@ def household_out(session: Session, household: Household) -> HouseholdOut:
 
 def create_app() -> FastAPI:
     logging_config.configure(None)  # JSON lines on stderr; CloudWatch on Lambda
+    # Once per cold start of each function (the API, failure handler, and Reminders).
+    log.info("api.started", extra=current_release())
     load_ssm_parameters()  # once per cold start, before settings are read
     settings = get_settings()
     api = FastAPI(title="Castle Chef", docs_url=None, redoc_url=None)
@@ -1138,13 +1175,8 @@ def create_app() -> FastAPI:
         if user is None:  # removed since `member` checked
             raise HTTPException(status.HTTP_403_FORBIDDEN, NOT_IN_A_HOUSEHOLD)
         before = (user.notification_time, user.time_zone)
-        if body.notification_time is not None:
-            user.notification_time = body.notification_time
-        if body.time_zone is not None:
-            user.time_zone = body.time_zone
-        # Turned off, the schedule stays: each firing checks the switch.
-        if body.reminders_on is not None:
-            user.reminders_on = body.reminders_on
+        user.sqlmodel_update(body.model_dump(exclude_unset=True))
+        # Turned off (reminders_on), the schedule stays: each firing checks the switch.
         if (user.notification_time, user.time_zone) != before:
             try:
                 reminders.save_schedule(user)
@@ -1195,22 +1227,7 @@ def create_app() -> FastAPI:
         """Change the household's settings; only the fields sent, so members changing
         different settings at once don't undo each other."""
         household = session.get_one(Household, caller.household_id)
-        if body.name is not None:
-            household.name = body.name
-        if body.decide_by_offset_days is not None:
-            household.decide_by_offset_days = body.decide_by_offset_days
-        if body.reminder_lead_days is not None:
-            household.reminder_lead_days = body.reminder_lead_days
-        if body.default_servings is not None:
-            household.default_servings = body.default_servings
-        if body.delivery_time is not None:
-            household.delivery_time = body.delivery_time
-        if body.tip_percent is not None:
-            household.tip_percent = body.tip_percent
-        if body.tip_max_cents is not None:
-            household.tip_max_cents = body.tip_max_cents
-        if body.product_gone is not None:
-            household.product_gone = body.product_gone
+        household.sqlmodel_update(body.model_dump(exclude_unset=True))
         try:
             session.commit()
         except IntegrityError as error:
@@ -1408,8 +1425,8 @@ def create_app() -> FastAPI:
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         """Make an approved order that isn't booked yet the household's draft
-        again, to change it and approve it again (409 while the next order has a
-        draft)."""
+        again, to change it and approve it again (409 once the next order has a
+        draft or has been placed)."""
         order = booking.change(session, caller.household_id, order_id)
         return order_out(session, order, day, caller.user_id)
 
@@ -1489,21 +1506,15 @@ def create_app() -> FastAPI:
     ) -> JobOut:
         """Start a batch of suggestions for the draft."""
         draft = orders.lock_draft(session, caller.household_id, order_id, by)
-        job, created = submit_generate_meals(
-            session, draft, caller.user_id, body.job_id, stale_after()
+        job, created = submit_generate_meals(session, draft, caller.user_id, body.job_id)
+        start_job(
+            session,
+            job,
+            created,
+            response,
+            dispatcher,
+            "The suggestions could not be started. Try again.",
         )
-        if not created:
-            response.status_code = status.HTTP_200_OK
-        else:
-            try:
-                dispatcher.dispatch(job.id)
-            except DispatchError as error:
-                log.error("job.dispatch_failed", extra={"job_id": str(job.id), "error": str(error)})
-                fail_job(session, job.id, "The suggestions could not be started. Try again.")
-                raise HTTPException(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "The suggestions could not be started. Try again.",
-                ) from error
         meals = orders.job_meals(session, [job.id])[job.id]
         return job_out(
             job,
@@ -1526,21 +1537,15 @@ def create_app() -> FastAPI:
         a build already made, or being made, for them is returned instead (200)."""
         draft = orders.lock_draft(session, caller.household_id, order_id, by)
         source = shopping.current_source(session, draft.id)
-        job, created = submit_build_list(
-            session, draft, caller.user_id, body.job_id, source, stale_after()
+        job, created = submit_build_list(session, draft, caller.user_id, body.job_id, source)
+        start_job(
+            session,
+            job,
+            created,
+            response,
+            dispatcher,
+            "The shopping list could not be started. Try again.",
         )
-        if not created:
-            response.status_code = status.HTTP_200_OK
-        else:
-            try:
-                dispatcher.dispatch(job.id)
-            except DispatchError as error:
-                log.error("job.dispatch_failed", extra={"job_id": str(job.id), "error": str(error)})
-                fail_job(session, job.id, "The shopping list could not be started. Try again.")
-                raise HTTPException(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "The shopping list could not be started. Try again.",
-                ) from error
         return job_out(job, [], names(session, {job.requested_by}), {})
 
     @api.post("/v1/grocery-orders/{order_id}/list/shop", status_code=status.HTTP_201_CREATED)
@@ -1556,22 +1561,11 @@ def create_app() -> FastAPI:
         """Shop the draft's current list again (after shopping failed); shopping
         already waiting, running, or done for it is returned instead (200)."""
         draft = orders.lock_draft(session, caller.household_id, order_id, by)
-        newest = shopping.newest_build(session, draft.id)
-        current = newest if shopping.is_current(session, draft.id, newest) else None
-        job, created = submit_shop(
-            session, draft, caller.user_id, body.job_id, current, stale_after()
+        current = shopping.current_build(session, draft.id)
+        job, created = submit_shop(session, draft, caller.user_id, body.job_id, current)
+        start_job(
+            session, job, created, response, dispatcher, "Shopping could not be started. Try again."
         )
-        if not created:
-            response.status_code = status.HTTP_200_OK
-        else:
-            try:
-                dispatcher.dispatch(job.id)
-            except DispatchError as error:
-                log.error("job.dispatch_failed", extra={"job_id": str(job.id), "error": str(error)})
-                fail_job(session, job.id, "Shopping could not be started. Try again.")
-                raise HTTPException(
-                    status.HTTP_503_SERVICE_UNAVAILABLE, "Shopping could not be started. Try again."
-                ) from error
         return job_out(job, [], names(session, {job.requested_by}), {})
 
     @api.post("/v1/grocery-orders/{order_id}/quote", status_code=status.HTTP_201_CREATED)
@@ -1591,19 +1585,15 @@ def create_app() -> FastAPI:
         if (problem := orders.shopped_problem(session, draft.id)) is not None:
             session.rollback()
             raise orders.NotReady(problem)
-        job, created = quotes.submit_quote(
-            session, draft, caller.user_id, body.job_id, stale_after()
+        job, created = quotes.submit_quote(session, draft, caller.user_id, body.job_id)
+        start_job(
+            session,
+            job,
+            created,
+            response,
+            dispatcher,
+            "The total could not be started. Try again.",
         )
-        if not created:
-            response.status_code = status.HTTP_200_OK
-        else:
-            try:
-                dispatcher.dispatch(job.id)
-            except DispatchError as error:
-                log.error("job.dispatch_failed", extra={"job_id": str(job.id), "error": str(error)})
-                message = "The total could not be started. Try again."
-                fail_job(session, job.id, message)
-                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, message) from error
         return job_out(job, [], names(session, {job.requested_by}), {})
 
     @api.patch("/v1/grocery-orders/{order_id}/list/items/{item_id}")
@@ -1778,7 +1768,7 @@ def create_app() -> FastAPI:
             "client.batch", extra=batch | {"device": body.device, "entries": len(body.entries)}
         )
         for entry in body.entries:
-            level = CLIENT_LOG_LEVELS.get(entry.get("level"), logging.INFO)
+            level = CLIENT_LOG_LEVELS.get(entry.get("level", ""), logging.INFO)
             client_log.log(level, "client.log", extra=batch | {"entry": entry})
 
     return api

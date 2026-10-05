@@ -1,13 +1,13 @@
 import type { ClockTime, GroceryOrder, ISODate, OrderDates } from '../../lib/api/types'
 import { addDays, dateRange, daysBetween, formatDate, toLocalDate } from '../../lib/dates'
+import { plural } from '../../lib/format'
 import type { BarDay } from '../../ui/DateBar'
-import { plural } from './format'
 
 /** An order's dates: calendar days ("2026-09-28"), with the arithmetic in lib/dates.ts. */
 
-// Delivery days offered past the default, so there is a choice either way.
 // The delivery days run this long past the last day with meals (or today, once that has passed).
 const DAYS_PAST_COVERED = 30
+// Delivery days offered past the default, so there is a choice either way.
 const NEXT_DELIVERY_CHOICES_PAST_DEFAULT = 7
 
 type DeliveryLimits = Pick<GroceryOrder, 'target_date' | 'earliest_delivery_date'>

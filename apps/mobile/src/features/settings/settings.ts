@@ -2,7 +2,15 @@ import { type QueryClient, queryOptions, useMutation, useMutationState, useQuery
 import { apiRequest } from '../../lib/api/client'
 import { isRetryable } from '../../lib/api/errors'
 import { auth } from '../../lib/auth/auth'
-import type { ClockTime, Household, HouseholdSettings, PersonalSettings } from '../../lib/api/types'
+import type {
+  ClockTime,
+  Household,
+  HouseholdSettings,
+  HouseholdSettingsIn,
+  InviteIn,
+  PersonalSettings,
+  PersonalSettingsIn,
+} from '../../lib/api/types'
 import { isRecord } from '../../lib/isRecord'
 import { queryKeys } from '../../lib/query/keys'
 import { afterLeaving, type Session, sessionQuery, useSession } from '../session/session'
@@ -31,7 +39,7 @@ const PERSONAL_CHANGES = { id: 'personal-settings' }
 const NAME_CHANGES = { id: 'user-name' }
 
 /** One or more household settings (or its name) to change; the others stay as they are. */
-export type HouseholdChange = Partial<HouseholdSettings & Pick<Household, 'name'>>
+export type HouseholdChange = HouseholdSettingsIn
 
 /**
  * A member's own setting to change: their reminder time, or whether they get
@@ -40,8 +48,8 @@ export type HouseholdChange = Partial<HouseholdSettings & Pick<Household, 'name'
  */
 export type PersonalChange = { notification_time: ClockTime } | { reminders_on: boolean }
 
-// "08:00" or "08:00:00".
-const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/
+// "08:00:00"
+const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/
 
 // Each household setting, and what its value must be.
 const HOUSEHOLD_SETTINGS: Record<keyof HouseholdSettings | 'name', (value: unknown) => boolean> = {
@@ -121,7 +129,7 @@ export function registerSettingsMutations(queryClient: QueryClient) {
   })
 
   queryClient.setMutationDefaults(CHANGE_PERSONAL, {
-    mutationFn: (change: PersonalChange) => apiRequest<PersonalSettings>('PATCH', '/v1/me/settings', change),
+    mutationFn: (change: PersonalChange) => apiRequest<PersonalSettings>('PATCH', '/v1/me/settings', change satisfies PersonalSettingsIn),
     retry,
     scope: PERSONAL_CHANGES,
     onSuccess: async (settings: PersonalSettings) => {
@@ -172,7 +180,7 @@ function registerMemberMutations(queryClient: QueryClient) {
   }
   queryClient.setMutationDefaults(INVITE, {
     mutationFn: ({ name, email }: Invitation) =>
-      apiRequest<Household>('POST', '/v1/household/invites', { name, email }),
+      apiRequest<Household>('POST', '/v1/household/invites', { name, email } satisfies InviteIn),
     onSuccess: stored,
   })
   queryClient.setMutationDefaults(CANCEL_INVITE, {

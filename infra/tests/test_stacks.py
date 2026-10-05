@@ -1,11 +1,13 @@
 """What the stacks must guarantee (see castle_chef_infra/runtime.py), checked on
 the synthesized CloudFormation."""
 
+import ast
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import aws_cdk as cdk
 import pytest
@@ -18,6 +20,7 @@ API_DIGEST = "sha256:" + "a" * 64
 WORKER_DIGEST = "sha256:" + "b" * 64
 OIDC = "token.actions.githubusercontent.com"
 MAIN_BRANCH = "repo:owner@1/castle-chef@2:ref:refs/heads/main"
+REPOSITORY = Path(__file__).parents[2]
 
 
 @pytest.fixture(scope="module")
@@ -53,9 +56,10 @@ def repositories() -> Template:
     return Template.from_stack(stack)
 
 
-def worker_container(runtime: Template) -> dict:
+def worker_container(runtime: Template) -> dict[str, Any]:
     [task] = runtime.find_resources("AWS::ECS::TaskDefinition").values()
     [container] = task["Properties"]["ContainerDefinitions"]
+    assert isinstance(container, dict)
     return container
 
 
@@ -212,7 +216,7 @@ def test_each_queued_job_starts_one_worker_with_its_id(runtime: Template) -> Non
     )
 
 
-def functions(runtime: Template) -> dict[str, dict]:
+def functions(runtime: Template) -> dict[str, dict[str, Any]]:
     return {
         name: resource["Properties"]
         for name, resource in runtime.find_resources("AWS::Lambda::Function").items()
@@ -257,13 +261,58 @@ def test_booking_presses_place_order_only_as_the_stages_switch_says(runtime: Tem
     assert "/castle-chef/test/instacart-booking" in json.dumps(secret["ValueFrom"])
 
 
-def test_booking_runs_daily_at_nine_in_the_morning_store_time(runtime: Template) -> None:
+def backend_literal(module: str, name: str) -> object:
+    """The literal assigned to `name` in backend/src/castle_chef/<module> (a constant, or
+    a setting's default), read from the source: infra doesn't install the backend."""
+    tree = ast.parse((REPOSITORY / "backend" / "src" / "castle_chef" / module).read_text())
+    [value] = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign | ast.AnnAssign)
+        and node.value is not None
+        and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        )
+    ]
+    return ast.literal_eval(value)
+
+
+def test_booking_runs_hourly_through_the_day_once_orders_become_due(runtime: Template) -> None:
     _, reminders = reminders_function(runtime)
     schedules = runtime.find_resources("AWS::Scheduler::Schedule")
     [schedule] = [s["Properties"] for s in schedules.values()]
-    assert schedule["ScheduleExpression"] == "cron(0 9 * * ? *)"
-    assert schedule["ScheduleExpressionTimezone"] == "America/New_York"
-    assert "GroupName" not in schedule  # not one of the members' (the sync keeps those)
+    # An order is due from BOOK_HOUR in the store's time zone (booking.is_due), which
+    # no stack overrides; a first run at another hour would book every order late.
+    # Each hour after, to 9 PM, makes up a run that failed.
+    book_hour = backend_literal("booking.py", "BOOK_HOUR")
+    assert schedule["ScheduleExpression"] == f"cron(0 {book_hour}-21 * * ? *)"
+    store_time_zone = backend_literal("settings.py", "store_time_zone")
+    assert schedule["ScheduleExpressionTimezone"] == store_time_zone
+    environments = [
+        {e["Name"] for e in worker_container(runtime)["Environment"]},
+        *(f["Environment"]["Variables"] for f in functions(runtime).values()),
+    ]
+    assert not any("CASTLE_CHEF_STORE_TIME_ZONE" in env for env in environments)
+    # In the members' group, which the Scheduler alarms watch: a run Scheduler
+    # can't deliver emails the owner.
+    assert schedule["GroupName"] == "Runtime-reminders"
+    # Named (Name is create-only), so its move out of the default group, where its
+    # name was generated, replaces it rather than updating a schedule Scheduler
+    # can't find in the new group; and not a name the reminder sync would delete.
+    assert schedule["Name"] == "booking"
+    assert not schedule["Name"].startswith(backend_literal("reminders.py", "SCHEDULE_PREFIX"))
+    [group] = runtime.find_resources("AWS::Scheduler::ScheduleGroup")
+    assert [group] == next(iter(schedules.values()))["DependsOn"]
+    for metric in ("TargetErrorCount", "InvocationDroppedCount"):
+        runtime.has_resource_properties(
+            "AWS::CloudWatch::Alarm",
+            {
+                "Namespace": "AWS/Scheduler",
+                "MetricName": metric,
+                "Dimensions": [{"Name": "ScheduleGroup", "Value": "Runtime-reminders"}],
+            },
+        )
     assert json.loads(schedule["Target"]["Input"]) == {"book_due": {}}
     assert "function:Runtime-Reminders" in json.dumps(schedule["Target"]["Arn"])
     # The run queues the book jobs that are due.
@@ -324,9 +373,13 @@ def test_stopped_workers_reach_the_failure_handler(runtime: Template) -> None:
     assert target["Arn"] == {"Fn::GetAtt": [handler, "Arn"]}
     assert mapping["Properties"]["FunctionName"] == {"Ref": handler}
     assert mapping["Properties"]["EventSourceArn"] == {"Fn::GetAtt": [dead_letters, "Arn"]}
+    # An error response fails the invocation, so the event is delivered again
+    # instead of dropped.
+    variables = functions(runtime)[handler]["Environment"]["Variables"]
+    assert variables["AWS_LWA_ERROR_STATUS_CODES"] == "500-599"
 
 
-def reminders_function(runtime: Template) -> tuple[str, dict]:
+def reminders_function(runtime: Template) -> tuple[str, dict[str, Any]]:
     [(name, reminders)] = [
         (name, f["Properties"])
         for name, f in runtime.find_resources("AWS::Lambda::Function").items()
@@ -450,6 +503,22 @@ def test_each_stage_deploys_its_own_runtime_stack(tmp_path: Path) -> None:
         ]
         runtime_stacks.add(stack)
     assert len(runtime_stacks) == len(context["stages"])
+
+
+def test_each_stage_verifies_sign_ins_from_the_apps_neon_auth() -> None:
+    # The app built for each stage signs in with this Neon Auth; the API verifies
+    # tokens against the stage's. Different ones would refuse every request.
+    stages = json.loads((REPOSITORY / "infra" / "cdk.json").read_text())["context"]["stages"]
+    app_env_files = {"dev": ".env.development", "prod": ".env.production"}
+    assert set(stages) == set(app_env_files)
+    for stage, env_file in app_env_files.items():
+        lines = (REPOSITORY / "apps" / "mobile" / env_file).read_text().splitlines()
+        [app_url] = [
+            line.removeprefix("VITE_NEON_AUTH_URL=")
+            for line in lines
+            if line.startswith("VITE_NEON_AUTH_URL=")
+        ]
+        assert stages[stage]["neonAuthUrl"] == app_url
 
 
 def test_development_images_never_expire_releases(repositories: Template) -> None:

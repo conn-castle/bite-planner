@@ -49,8 +49,8 @@ def test_recipe_steps_become_steps_with_timers_and_back() -> None:
                 )
 
         alembic("upgrade", "head")
-        heat = {"text": "Heat.", "timer_minutes": None, "ingredients": []}
-        roast = {"text": "Roast.", "timer_minutes": None, "ingredients": []}
+        heat: dict[str, object] = {"text": "Heat.", "timer_minutes": None, "ingredients": []}
+        roast: dict[str, object] = {"text": "Roast.", "timer_minutes": None, "ingredients": []}
         assert steps() == {"mig-old": [heat, roast], "mig-mixed": [heat, new]}
 
         alembic("downgrade", "1bab82dadb82")

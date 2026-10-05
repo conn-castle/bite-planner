@@ -25,6 +25,7 @@ from typing import Any
 
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.types import CallToolResult, TextContent
 
 MEAL = {
     "name": "Sheet Pan Sausage and Peppers",
@@ -50,8 +51,24 @@ with open(os.path.join(cwd, "fake-agent-prompt.md"), "w") as file:
     file.write(prompt)
 with open(os.path.join(cwd, "fake-agent-env.json"), "w") as file:
     json.dump(sorted(os.environ), file)
-with open(os.path.join(cwd, ".grok", "config.toml"), "rb") as file:
-    server = tomllib.load(file)["mcp_servers"]["castle-chef"]
+with open(os.path.join(cwd, ".grok", "config.toml"), "rb") as config:
+    server = tomllib.load(config)["mcp_servers"]["castle-chef"]
+
+
+def text_of(result: CallToolResult) -> str:
+    """The text a tool answered with (its first part)."""
+    part = result.content[0]
+    if not isinstance(part, TextContent):
+        raise SystemExit(f"Not text: {part}")
+    return part.text
+
+
+def found(pattern: str, text: str) -> str:
+    """The first group of the pattern's match in the text."""
+    match = re.search(pattern, text)
+    if match is None:
+        raise SystemExit(f"No {pattern!r} in {text!r}.")
+    return match.group(1)
 
 
 async def use_tools() -> None:
@@ -70,7 +87,7 @@ async def use_tools() -> None:
             result = await session.call_tool(tool, arguments)
             if getattr(result, "is_error", False):
                 raise SystemExit(f"{tool} failed: {result}")
-            return result.content[0].text
+            return text_of(result)
 
         def ref(page: str, pattern: str) -> str:
             match = re.search(rf"{pattern}[^\n]*\[ref=(\w+)\]|\[ref=(\w+)\]: {pattern}", page)
@@ -85,8 +102,8 @@ async def use_tools() -> None:
         elif booking:
             # As the prompt says: checkout, the order's day and the window the rule
             # chooses, the rule's tip, the report, then Place order and what it shows.
-            store = re.search(r"Open `(/store/[^`]+)`", prompt).group(1)
-            day = re.search(r"Click the tab for \w+, (\w+ \d+)", prompt).group(1)
+            store = found(r"Open `(/store/[^`]+)`", prompt)
+            day = found(r"Click the tab for \w+, (\w+ \d+)", prompt)
             page = await page_after("open_page", {"path": store})
             page = await page_after("click", {"ref": ref(page, 'button "View cart')})
             page = await page_after("click", {"ref": ref(page, 'button "Go to checkout')})
@@ -98,9 +115,9 @@ async def use_tools() -> None:
             )
             if "Stop here" in said:
                 return
-            page = await page_after("click", {"ref": re.search(r"click (\w+)", said).group(1)})
+            page = await page_after("click", {"ref": found(r"click (\w+)", said)})
             tip = await page_after("tip", {"items": ref(page, r"\d+ items")})
-            amount = re.search(r"type ([\d.]+)", tip).group(1)
+            amount = found(r"type ([\d.]+)", tip)
             page = await page_after("click", {"ref": ref(page, 'button "Other"')})
             page = await page_after(
                 "type_text", {"ref": ref(page, 'textbox "Other amount"'), "text": amount}
@@ -142,7 +159,7 @@ async def use_tools() -> None:
         elif "at checkout on Instacart" in prompt:
             # As the prompt says: the cart's settings, checkout, a scheduled
             # window, the rule's tip, then the report.
-            store = re.search(r"Open `(/store/[^`]+)`", prompt).group(1)
+            store = found(r"Open `(/store/[^`]+)`", prompt)
             page = await page_after("open_page", {"path": store})
             page = await page_after("click", {"ref": ref(page, 'button "View cart')})
             settings = re.findall(r'button "Replace with[^"]*" \[ref=(\w+)\]', page)
@@ -151,7 +168,7 @@ async def use_tools() -> None:
             page = await page_after("click", {"ref": ref(page, 'button "Schedule')})
             page = await page_after("click", {"ref": ref(page, 'button "4pm')})
             tip = await page_after("tip", {"items": ref(page, r"\d+ items")})
-            amount = re.search(r"type ([\d.]+)", tip).group(1)
+            amount = found(r"type ([\d.]+)", tip)
             page = await page_after("click", {"ref": ref(page, 'button "Other"')})
             page = await page_after(
                 "type_text", {"ref": ref(page, 'textbox "Other amount"'), "text": amount}
@@ -174,7 +191,7 @@ async def use_tools() -> None:
             # the second as its alternative.
             for number, name in re.findall(r"^(\d+)\. (.+?)(?::[^(]*)? \(", prompt, re.MULTILINE):
                 result = await session.call_tool("search", {"item": int(number), "query": name})
-                ids = re.findall(r"^(\d+): ", result.content[0].text, re.MULTILINE)
+                ids = re.findall(r"^(\d+): ", text_of(result), re.MULTILINE)
                 await call(
                     "choose",
                     {

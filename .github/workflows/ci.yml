@@ -32,10 +32,11 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/castle_chef
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.2.0  # publishes no major-version tag
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      - run: uv run mypy
       # The checkout tools' tests drive a headless browser: the build uv.lock's Playwright expects.
       - run: uv run playwright install --with-deps --only-shell chromium
       - run: uv run pytest
@@ -47,7 +48,7 @@ jobs:
         working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6.0.10
         with:
           package_json_file: apps/mobile/package.json
       - uses: actions/setup-node@v7
@@ -67,11 +68,12 @@ jobs:
         working-directory: infra
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.2.0  # publishes no major-version tag
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
       - uses: actions/setup-node@v7 # the CDK library runs on Node
         with:
           node-version: 22
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      - run: uv run mypy
       - run: uv run pytest

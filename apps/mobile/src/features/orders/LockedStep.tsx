@@ -1,10 +1,10 @@
 import type { GroceryOrder } from '../../lib/api/types'
+import { theirName, timeAgo } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { Avatar } from '../../ui/Avatar'
 import { Button } from '../../ui/Button'
 import { StepDots } from '../../ui/StepDots'
 import { FlowFrame, FooterSummary } from './FlowFrame'
-import { timeAgo } from './format'
 import type { LockedOut } from './lock'
 import styles from './LockedStep.module.css'
 import { STEP_NAMES, stepIndex } from './steps'
@@ -27,7 +27,7 @@ export function LockedStep({ order, lockedOut, onClose, onTakeOver }: LockedStep
   const at = stepIndex(lock.step)
   const ago = timeAgo(new Date(lock.since), now)
   const you = lockedOut.by === 'you elsewhere'
-  const who = lock.member.name ?? 'Someone in your household'
+  const who = theirName(lock.member)
 
   return (
     <FlowFrame

@@ -123,12 +123,12 @@ jobs:
       TAG: commit-${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
         with:
           role-to-assume: ${{ env.DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
-      - uses: aws-actions/amazon-ecr-login@v2
-      - uses: docker/setup-buildx-action@v4
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd  # v2.1.7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
       - id: existing
         name: Images already pushed for this commit (a re-run; tags are immutable)
         run: |
@@ -144,7 +144,7 @@ jobs:
           done
       - id: api
         if: steps.existing.outputs.api == ''
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: .
           file: docker/Dockerfile
@@ -159,7 +159,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=api
       - id: worker
         if: steps.existing.outputs.worker == ''
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: .
           file: docker/Dockerfile
@@ -194,15 +194,15 @@ jobs:
         working-directory: backend
     env:
       RELEASE: ${{ needs.changes.outputs.release }}
-      # Direct (non-pooled) owner connection to Neon `main`; Alembic reads DATABASE_URL.
-      DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
-      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+    # Secrets are given only to the steps that use them, never to package installs.
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.2.0  # publishes no major-version tag
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
       - run: uv sync --locked
       - run: npm install --global "neonctl@$NEONCTL_VERSION"
       - name: Restore point (Neon snapshot of main, kept 14 days)
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
         run: |
           snapshot="pre-$RELEASE"
           if neonctl snapshots get "$snapshot" --project-id "$NEON_PROJECT_ID" > /dev/null 2>&1; then
@@ -212,10 +212,20 @@ jobs:
               --name "$snapshot" --expires-at "$(date -u -d '+14 days' +%Y-%m-%dT%H:%M:%SZ)"
           fi
       - id: before
-        run: echo "revision=$(uv run alembic current | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+        env:
+          # Direct (non-pooled) owner connection to Neon `main`; Alembic reads DATABASE_URL.
+          DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+        run: |
+          set -o pipefail
+          revision=$(uv run alembic current | cut -d ' ' -f 1)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
       - run: uv run alembic upgrade head
+        env:
+          DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
       - id: after
         name: Check main is at this release's migrations and matches the models
+        env:
+          DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
         run: |
           current=$(uv run alembic current | cut -d ' ' -f 1)
           heads=$(uv run alembic heads | cut -d ' ' -f 1)
@@ -296,7 +306,7 @@ jobs:
         working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6.0.10
         with:
           package_json_file: apps/mobile/package.json
       - uses: actions/setup-node@v7
@@ -304,7 +314,7 @@ jobs:
           node-version-file: apps/mobile/.nvmrc
           cache: pnpm
           cache-dependency-path: apps/mobile/pnpm-lock.yaml
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8  # v1.327.0
         with:
           working-directory: apps/mobile
           bundler-cache: true
@@ -353,7 +363,7 @@ jobs:
       RELEASE: ${{ needs.changes.outputs.release }}
     steps:
       - uses: actions/checkout@v7
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8  # v1.327.0
         with:
           working-directory: apps/mobile
           bundler-cache: true

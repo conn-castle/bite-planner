@@ -4,6 +4,8 @@ doesn't have it. Kept in the job directory for the worker; every choice is
 checked as it's made."""
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -57,7 +59,9 @@ class ItemChoice(BaseModel):
     skippable_reason: str | None = None
 
 
-class _State(BaseModel):
+class ShopState(BaseModel):
+    """What the tools recorded, in the job directory (STATE_FILE)."""
+
     # The products each item's searches returned, by item and id: what may be
     # chosen for it (a product found for one item can't be chosen for another).
     searched: dict[int, dict[str, Product]] = {}
@@ -68,22 +72,26 @@ class ChoiceRefused(Exception):
     """A choice breaks a rule; the message says which and how to fix it."""
 
 
-def load_state(job_dir: Path) -> _State:
+def load_state(job_dir: Path) -> ShopState:
     path = job_dir / STATE_FILE
-    return _State.model_validate_json(path.read_text()) if path.exists() else _State()
+    return ShopState.model_validate_json(path.read_text()) if path.exists() else ShopState()
 
 
-def _save(job_dir: Path, state: _State) -> None:
-    replace_file(job_dir / STATE_FILE, state.model_dump_json())
+@contextmanager
+def _changing(job_dir: Path) -> Iterator[ShopState]:
+    """The searches and choices, to change under the job directory's lock: saved
+    when the block ends, unless it raises."""
+    with locked(job_dir):
+        state = load_state(job_dir)
+        yield state
+        replace_file(job_dir / STATE_FILE, state.model_dump_json())
 
 
 def record_search(job_dir: Path, item: int, products: list[Product]) -> None:
     """Remember the products a search for the item returned, so they can be chosen for it."""
     _item(read_context(job_dir, ShopJob), item)
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         state.searched.setdefault(item, {}).update({p.product_id: p for p in products})
-        _save(job_dir, state)
 
 
 # Amounts in comparable units: ounces of weight, fluid ounces of volume, and counts.
@@ -138,7 +146,7 @@ def _shortfall(item: ShopItem, choice: ProductCount) -> str | None:
     )
 
 
-def _counted(state: _State, item: int, product_id: str, count: int) -> ProductCount:
+def _counted(state: ShopState, item: int, product_id: str, count: int) -> ProductCount:
     product = state.searched.get(item, {}).get(product_id)
     if product is None:
         raise ChoiceRefused(
@@ -157,7 +165,7 @@ def _item(job: ShopJob, number: int) -> ShopItem:
 
 
 def _alternatives(
-    state: _State, item: ShopItem, alternatives: list[tuple[str, int]], chosen: str | None
+    state: ShopState, item: ShopItem, alternatives: list[tuple[str, int]], chosen: str | None
 ) -> list[ProductCount]:
     """The alternatives, each from the item's searches and covering its amount too
     (the member may pick any of them)."""
@@ -186,8 +194,7 @@ def choose(
     """Choose the item's product and how many, with its alternatives (or why there
     are none); replaces an earlier decision for the item."""
     job = read_context(job_dir, ShopJob)
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         shop_item = _item(job, item)
         chosen = _counted(state, item, product_id, count)
         if problem := _shortfall(shop_item, chosen):
@@ -203,7 +210,6 @@ def choose(
             no_alternatives_reason=None if others else reason,
         )
         state.choices[item] = choice
-        _save(job_dir, state)
     return choice
 
 
@@ -213,8 +219,7 @@ def not_found(
     """Record that the store doesn't have the item, with alternatives to buy and/or
     why the meals work without it; replaces an earlier decision for the item."""
     job = read_context(job_dir, ShopJob)
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         shop_item = _item(job, item)
         if not state.searched.get(item):
             raise ChoiceRefused(
@@ -228,11 +233,10 @@ def not_found(
             )
         choice = ItemChoice(item=item, chosen=None, alternatives=others, skippable_reason=reason)
         state.choices[item] = choice
-        _save(job_dir, state)
     return choice
 
 
-def problems(job: ShopJob, state: _State) -> list[str]:
+def problems(job: ShopJob, state: ShopState) -> list[str]:
     """What's left to decide: every item needs a product or to be marked not found."""
     missing = [item for item in job.items if item.number not in state.choices]
     if not missing:

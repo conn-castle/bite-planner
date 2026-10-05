@@ -31,6 +31,7 @@ from castle_chef.checkout import (
     Booking,
     BookIssue,
     CartLine,
+    CheckoutError,
     Quote,
     QuoteRequest,
     Swap,
@@ -58,6 +59,7 @@ from castle_chef.models import (
 )
 from castle_chef.push import Notification, NotificationKind, Outcome, Sent
 from castle_chef.settings import get_settings
+from tests.conftest import BACKEND_DIR
 
 runner = CliRunner()
 FAKE_AGENT = Path(__file__).parent / "fake_agent.py"
@@ -70,6 +72,7 @@ def use_fake_agent(
         "CASTLE_CHEF_AGENT_COMMAND",
         f"{sys.executable} {FAKE_AGENT} {meals} {stop_reason} {exit_code} 0",
     )
+    get_settings.cache_clear()
 
 
 def batch_size(monkeypatch: pytest.MonkeyPatch, meals: int) -> None:
@@ -218,6 +221,28 @@ def test_agent_environment_has_no_database_credentials(
     assert reload(session, job).status == JobStatus.SUCCEEDED
 
 
+def test_the_agents_tools_start_from_the_worker_images_own_castle_chef(
+    session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # In the image, the `castle-chef` on the agent's PATH is docker/castle-chef (the agent's
+    # app alone, not the backend's): the tools the worker names must start from it.
+    image_launcher = BACKEND_DIR.parent / "docker" / "castle-chef"
+    _, body = image_launcher.read_text().split("\n", 1)  # its shebang is the image's Python
+    launcher = tmp_path / "agent-bin" / "castle-chef"
+    launcher.parent.mkdir()
+    launcher.write_text(f"#!{sys.executable}\n{body}")
+    launcher.chmod(0o755)
+    monkeypatch.setenv("CASTLE_CHEF_AGENT_PATH", f"{launcher.parent}{os.pathsep}{os.defpath}")
+    batch_size(monkeypatch, 2)
+    use_fake_agent(monkeypatch, meals=2)
+
+    run_job(job)
+
+    job = reload(session, job)
+    assert (job.status, job.error) == (JobStatus.SUCCEEDED, None)
+    assert len(job_meals(session, job)) == 2
+
+
 def test_job_fails_when_agent_adds_too_few_meals(
     session: Session, job: Job, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -338,7 +363,7 @@ def test_meals_are_discarded_if_the_job_was_failed_meanwhile(
     use_fake_agent(monkeypatch, meals=1)
     real_process_job = worker.process_job
 
-    def process_then_go_stale(claimed: Job) -> list[MealInput]:
+    def process_then_go_stale(claimed: Job) -> worker.JobResult:
         meals = real_process_job(claimed)
         with Session(get_engine()) as other:
             fail_job(other, claimed.id, "stale")
@@ -365,7 +390,7 @@ def test_a_job_whose_draft_was_discarded_while_it_ran_ends_quietly(
     real_process_job = worker.process_job
     household_id, order_id, job_id = draft.household_id, draft.id, job.id
 
-    def process_then_discard(claimed: Job) -> list[MealInput]:
+    def process_then_discard(claimed: Job) -> worker.JobResult:
         meals = real_process_job(claimed)
         with Session(get_engine()) as member:  # a member discards the draft meanwhile
             orders.discard(member, household_id, order_id, uuid4())
@@ -528,8 +553,6 @@ def test_the_prompt_has_no_meals_to_avoid_when_none_are_marked(
 
 # Shopping lists.
 
-STALE_AFTER = (timedelta(minutes=5), timedelta(hours=1))
-
 
 def picked(session: Session, job: Job, *servings: int) -> list[Meal]:
     """The batch's meals, each picked for the draft at these servings (their
@@ -571,7 +594,6 @@ def start_list(session: Session, draft: GroceryOrder) -> Job:
         draft.created_by,
         uuid4(),
         shopping.current_source(session, draft.id),
-        STALE_AFTER,
     )
     assert created
     return build
@@ -863,7 +885,7 @@ def test_whoever_is_waiting_hears_when_shopping_fails(
 # Quotes: the order's total, read at checkout by the agent, in a browser (on
 # stand-ins for Instacart's pages: fixtures/checkout).
 
-SESSION = {"cookies": [], "origins": []}
+SESSION: dict[str, Any] = {"cookies": [], "origins": []}
 
 
 class RecordingSessions:
@@ -1252,6 +1274,37 @@ def test_a_live_booking_records_the_click_before_pressing_and_keeps_the_confirma
         window=Window(start=clock(14), end=clock(16)),
         total_cents=1959 + 249 + 196,
     )
+
+
+def test_a_confirmed_booking_stays_booked_when_the_renewed_session_cant_be_saved(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class UnsavedSessions(RecordingSessions):
+        def save(self, cookies: list[dict[str, Any]]) -> None:
+            raise CheckoutError("Couldn't save the Instacart session to SSM: throttled")
+
+    monkeypatch.setattr(worker, "session_store", UnsavedSessions)
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    use_booking(monkeypatch, "live")
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(book)
+
+    assert reload(session, book).status == JobStatus.SUCCEEDED
+    order = booked_order(session, book)
+    assert order.book_state == BookState.BOOKED
+    assert order.booking is not None and order.booking.order_number == "18234567"
+    [unsaved] = [
+        e for e in log_events(tmp_path / "logs") if e["event"] == "instacart.session_not_saved"
+    ]
+    assert unsaved["level"] == "error" and "throttled" in unsaved["error"]
 
 
 def test_booking_while_its_turned_off_stops_before_place_order_and_isnt_booked(

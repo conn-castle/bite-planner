@@ -25,7 +25,7 @@ from sqlalchemy import update
 from sqlmodel import Session, col, select
 
 from castle_chef import booking, push
-from castle_chef.db import get_session
+from castle_chef.db import for_update, get_session
 from castle_chef.dispatch import DispatchError, get_dispatcher
 from castle_chef.jobs import fail_job
 from castle_chef.models import AppUser
@@ -54,7 +54,7 @@ class SyncEvent(BaseModel):
 
 
 class BookDueEvent(BaseModel):
-    """The daily booking schedule's firing (infra: BOOKING_SCHEDULE)."""
+    """The booking schedule's hourly firing (infra: BOOKING_SCHEDULE)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -87,7 +87,8 @@ def schedule_name(user_id: UUID) -> str:
 
 class AwsReminderScheduler:
     def __init__(self, group: str, function_arn: str, role_arn: str) -> None:
-        # Only the API image installs boto3.
+        # boto3 is in the images' dependency groups (api, worker), not the package's
+        # dependencies: imported where it's used, as elsewhere.
         import boto3
         from botocore.config import Config
 
@@ -222,7 +223,7 @@ def get_scheduler() -> ReminderScheduler:
 def lock_user(session: Session, user_id: UUID) -> AppUser | None:
     """The member's row, locked until the transaction ends: their settings and
     their schedule change one at a time."""
-    return session.exec(select(AppUser).where(AppUser.user_id == user_id).with_for_update()).first()
+    return session.exec(for_update(select(AppUser).where(AppUser.user_id == user_id))).first()
 
 
 def save_schedule(user: AppUser) -> None:
@@ -329,8 +330,9 @@ def _give_back(user_id: UUID, day: date, previous: date | None) -> None:
 
 
 def book_due() -> list[UUID]:
-    """The daily booking run (castle_chef.booking): start booking the approved
-    orders that are due, and queue their jobs. Returns the jobs queued."""
+    """The booking run, each hour from 9:00 AM to 9 PM store time
+    (castle_chef.booking): start booking the approved orders that are due, and
+    queue their jobs. Repeating it starts nothing twice. Returns the jobs queued."""
     with get_session() as session:
         started = booking.start_due(session, booking.store_now())
     queued = []
@@ -350,7 +352,7 @@ def book_due() -> list[UUID]:
 
 
 def handle_event(event: dict[str, Any]) -> dict[str, Any]:
-    """Handle one Lambda event: a member's schedule firing, the daily booking
+    """Handle one Lambda event: a member's schedule firing, the hourly booking
     run, or the deploy's sync."""
     try:
         if "sync" in event:

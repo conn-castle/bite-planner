@@ -20,31 +20,6 @@ export function BrandMark({ size = 64 }: { size?: number }) {
   )
 }
 
-export function PlateArt() {
-  return (
-    <svg viewBox="0 0 148 148" fill="none">
-      <circle cx="74" cy="74" r="70" fill="var(--cc-fill)" />
-      <circle cx="74" cy="76" r="38" fill="#fff" stroke="var(--cc-hairline)" strokeWidth="1" />
-      <circle cx="74" cy="76" r="27" stroke="var(--cc-fill-strong)" strokeWidth="2" />
-      <path
-        d="M28 50v16a5 5 0 0 0 10 0V50M33 50v52"
-        stroke="var(--cc-ink)"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-      <path
-        d="M120 50c-6 4-7 16-7 24h7v28"
-        stroke="var(--cc-ink)"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M68 70c4-9 13-11 18-10-1 7-7 13-18 10z" fill="var(--cc-accent)" />
-      <path d="M68 70c3-3 7-6 12-7" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 /** A neutral plate standing in for a meal's picture until meals have icons. */
 export function MealArt() {
   return (

@@ -125,21 +125,6 @@
 .chevron {
   color: var(--cc-ink-3);
   font-size: 16px;
-  transition: transform 200ms var(--cc-ease);
-}
-
-.chevron.open {
-  transform: rotate(90deg);
-}
-
-.detail.choice {
-  color: var(--cc-ink);
-  font-weight: 650;
-  transition: color 200ms var(--cc-ease);
-}
-
-.detail.choice.open {
-  color: var(--cc-accent);
 }
 
 /* Beside a control, a name wraps to a second line rather than being cut short. */

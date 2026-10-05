@@ -1,4 +1,4 @@
-import type { Product } from './api/types'
+import type { Product, ShoppingItem } from './api/types'
 
 /** A store product, as the shopping list shows it. */
 
@@ -18,6 +18,11 @@ export function productSize(product: Product): string {
     return `${formatMoney(product.price_per_lb_cents)}/lb · about ${Number(product.estimated_lb.toFixed(2))} lb`
   }
   return product.size ?? ''
+}
+
+/** Still to decide: the store doesn't have it, and the member hasn't picked an alternative or skipped it. */
+export function isUndecided(item: ShoppingItem): boolean {
+  return item.not_found && item.product === null && !item.removed
 }
 
 /** What its count costs ("$4.58"), or null if the store shows no price. */

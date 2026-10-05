@@ -39,38 +39,23 @@ interface RowProps {
   tone?: 'default' | 'danger'
   /** Shows a chevron: the row opens something. */
   chevron?: boolean
-  /** The row opens and closes what's under it (the chevron turns down while open). */
-  expanded?: boolean
 }
 
 /** A row of a group: a label (and a line under it), then a value. */
-export function Row({ label, sub, detail, onClick, disabled, tone = 'default', chevron, expanded }: RowProps) {
+export function Row({ label, sub, detail, onClick, disabled, tone = 'default', chevron }: RowProps) {
   const content = (
     <>
       <span className={styles.label}>
         <span className={styles.text}>{label}</span>
         {sub != null && <span className={styles.sub}>{sub}</span>}
       </span>
-      {detail != null && (
-        // A row that opens in place shows its value as the choice it is: strong, and accented while open.
-        <span className={`${styles.detail} ${expanded !== undefined ? styles.choice : ''} ${expanded ? styles.open : ''}`}>
-          {detail}
-        </span>
-      )}
-      {(chevron || expanded !== undefined) && (
-        <Icon name="chevR" className={`${styles.chevron} ${expanded ? styles.open : ''}`} />
-      )}
+      {detail != null && <span className={styles.detail}>{detail}</span>}
+      {chevron && <Icon name="chevR" className={styles.chevron} />}
     </>
   )
   const className = `${styles.row} ${tone === 'danger' ? styles.danger : ''}`
   return onClick ? (
-    <button
-      type="button"
-      className={`${className} ${styles.pressable}`}
-      onClick={onClick}
-      disabled={disabled}
-      aria-expanded={expanded}
-    >
+    <button type="button" className={`${className} ${styles.pressable}`} onClick={onClick} disabled={disabled}>
       {content}
     </button>
   ) : (

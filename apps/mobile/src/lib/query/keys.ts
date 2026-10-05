@@ -5,6 +5,8 @@ import type { ISODate } from '../api/types'
  * caches (e.g. a rating shows on the meal page, in History, and in a draft).
  */
 export const queryKeys = {
+  /** Who is signed in (features/session); signing in or out keeps it and drops the rest. */
+  session: ['session'],
   nextOrder: ['next-order'],
   /** Every placed-orders list: Home's recent window and History's full list. */
   placedOrders: ['placed-orders'],

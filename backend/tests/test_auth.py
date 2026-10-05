@@ -12,8 +12,10 @@ from uuid import uuid4
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
 from jwt.algorithms import OKPAlgorithm
 
+from castle_chef.api import app, get_verifier
 from castle_chef.auth import (
     AuthError,
     AuthUnavailable,
@@ -21,6 +23,7 @@ from castle_chef.auth import (
     NeonWebhookVerifier,
     WebhookRejected,
 )
+from castle_chef.settings import get_settings
 
 SIGNING_KEY = Ed25519PrivateKey.generate()
 KID = "test-key"
@@ -31,25 +34,30 @@ def jwks_for(private_key: Ed25519PrivateKey, kid: str) -> dict[str, Any]:
     return {"keys": [jwk | {"kid": kid, "alg": "EdDSA", "use": "sig"}]}
 
 
+class JwksStandIn(BaseHTTPRequestHandler):
+    """Neon Auth's JWKS endpoint, counting the times its keys are fetched."""
+
+    body = json.dumps(jwks_for(SIGNING_KEY, KID)).encode()
+    fetches = 0
+
+    def do_GET(self) -> None:
+        if self.path != "/neondb/auth/.well-known/jwks.json":
+            self.send_error(404)
+            return
+        type(self).fetches += 1
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(self.body)
+
+    def log_message(self, *_args: object) -> None:
+        pass
+
+
 @pytest.fixture(scope="module")
 def auth_url() -> Iterator[str]:
     """A Neon Auth stand-in serving only its JWKS."""
-    body = json.dumps(jwks_for(SIGNING_KEY, KID)).encode()
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            if self.path != "/neondb/auth/.well-known/jwks.json":
-                self.send_error(404)
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *_args: object) -> None:
-            pass
-
-    server = HTTPServer(("127.0.0.1", 0), Handler)
+    server = HTTPServer(("127.0.0.1", 0), JwksStandIn)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_port}/neondb/auth"
     server.shutdown()
@@ -93,7 +101,7 @@ def test_valid_token_identifies_the_user(auth_url: str) -> None:
 )
 def test_token_with_bad_claims_is_rejected(auth_url: str, claims: dict[str, object]) -> None:
     with pytest.raises(AuthError):
-        NeonAuthVerifier(auth_url).verify(token(auth_url, **claims))
+        NeonAuthVerifier(auth_url).verify(token(auth_url, SIGNING_KEY, KID, **claims))
 
 
 def test_token_without_a_subject_is_rejected(auth_url: str) -> None:
@@ -137,6 +145,27 @@ def test_token_with_a_symmetric_algorithm_is_rejected(auth_url: str) -> None:
 def test_garbage_is_rejected(auth_url: str) -> None:
     with pytest.raises(AuthError):
         NeonAuthVerifier(auth_url).verify("not a token")
+
+
+def test_the_api_fetches_the_signing_keys_once_not_on_every_request(
+    auth_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CASTLE_CHEF_NEON_AUTH_URL", auth_url)
+    monkeypatch.setenv("CASTLE_CHEF_NEON_AUTH_ISSUER", origin(auth_url))
+    monkeypatch.setenv("CASTLE_CHEF_NEON_AUTH_AUDIENCE", origin(auth_url))
+    get_settings.cache_clear()
+    get_verifier.cache_clear()  # one made for another test's settings
+    client = TestClient(app)
+    fetched = JwksStandIn.fetches
+
+    try:
+        for _ in range(2):
+            response = client.get("/v1/me", headers={"Authorization": f"Bearer {token(auth_url)}"})
+            assert response.status_code == 200, response.text
+    finally:
+        get_verifier.cache_clear()
+
+    assert JwksStandIn.fetches - fetched == 1
 
 
 def test_unreachable_keys_fail_closed() -> None:

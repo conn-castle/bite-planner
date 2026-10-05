@@ -27,7 +27,11 @@ runs:
         NEON_PROJECT_ID: ${{ inputs.neon-project-id }}
       run: |
         neon=https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID
-        auth=(--header "Authorization: Bearer $NEON_API_KEY" --header "Accept: application/json")
+        # The key goes to curl in a file (mktemp: mode 600), never as an argument.
+        authorization=$(mktemp "$RUNNER_TEMP/neon-authorization.XXXXXX")
+        trap 'rm -f "$authorization"' EXIT
+        printf 'Authorization: Bearer %s\n' "$NEON_API_KEY" > "$authorization"
+        auth=(--header @"$authorization" --header "Accept: application/json")
         branch=$(curl --fail --silent --show-error "${auth[@]}" "$neon/branches" |
           jq -er '[.branches[] | select(.name == "main")] | if length == 1 then .[0].id else error("no single main branch") end')
         # 10 s per attempt (Neon's most): a cold API answers within it.

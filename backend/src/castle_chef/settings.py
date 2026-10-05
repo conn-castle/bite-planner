@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -146,6 +147,31 @@ def load_ssm_parameters() -> None:
     for name, parameter in missing.items():
         response = ssm.get_parameter(Name=parameter, WithDecryption=True)
         os.environ[name] = response["Parameter"]["Value"]
+
+
+def current_release() -> dict[str, str]:
+    """The release (`YYYY.M.D.N`) and commit this code is, from the environment
+    (CASTLE_CHEF_COMMIT set in the image, CASTLE_CHEF_RELEASE by the deploy) or
+    else from git: the checkout's release tag, or `dev-<sha>` if untagged."""
+    if "CASTLE_CHEF_COMMIT" in os.environ:
+        return {
+            "release": os.environ.get("CASTLE_CHEF_RELEASE", "unknown"),
+            "commit": os.environ["CASTLE_CHEF_COMMIT"],
+        }
+
+    def git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=check
+        )
+
+    commit = git("rev-parse", "HEAD").stdout.strip()
+    # Release tags: YYYY.M.D.N, and r<N> before 2026-09-24.
+    tag = git(
+        "describe", "--exact-match", "--tags", "--match", "20[0-9][0-9].*", "--match", "r[0-9]*",
+        "HEAD", check=False,
+    )  # fmt: skip
+    release = tag.stdout.strip() if tag.returncode == 0 else f"dev-{commit[:7]}"
+    return {"release": release, "commit": commit}
 
 
 @lru_cache

@@ -1,13 +1,13 @@
 """The agent's tools as an MCP server (stdio), which the agent's harness starts for
-the job: the job's tools are all the agent gets. Each tool is the matching
-`castle-chef` command's function, so the checks are the same."""
+the job: the job's tools are all the agent gets. Each tool's checks are in the
+module for its job (meals, shopping, products, checkout)."""
 
 import shlex
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, assert_never
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -427,20 +427,23 @@ def checkout_server(job_dir: Path) -> MCPServer:
 
 def serve(tools: Tools, job_dir: Path, instacart: InstacartSettings | None = None) -> None:
     """Serve the job's tools over stdio until the harness closes it."""
-    if tools == Tools.PRODUCTS:
-        if instacart is None:
-            raise ValueError("The products tools need Instacart's settings.")
-        # One Instacart session (and the Codex login's lock) for the server's life.
-        with connect(
-            instacart.codex_home,
-            instacart.store,
-            lock_file=instacart.lock_file,
-            command=shlex.split(instacart.command),
-        ) as store:
-            products_server(job_dir, store).run("stdio")
-        return
-    if tools == Tools.CHECKOUT:
-        checkout_server(job_dir).run("stdio")
-        return
-    server = meals_server(job_dir) if tools == Tools.MEALS else shopping_list_server(job_dir)
-    server.run("stdio")
+    match tools:
+        case Tools.MEALS:
+            meals_server(job_dir).run("stdio")
+        case Tools.SHOPPING_LIST:
+            shopping_list_server(job_dir).run("stdio")
+        case Tools.PRODUCTS:
+            if instacart is None:
+                raise ValueError("The products tools need Instacart's settings.")
+            # One Instacart session (and the Codex login's lock) for the server's life.
+            with connect(
+                instacart.codex_home,
+                instacart.store,
+                lock_file=instacart.lock_file,
+                command=shlex.split(instacart.command),
+            ) as store:
+                products_server(job_dir, store).run("stdio")
+        case Tools.CHECKOUT:
+            checkout_server(job_dir).run("stdio")
+        case _:
+            assert_never(tools)

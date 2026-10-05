@@ -84,9 +84,9 @@ describe('shownNextDeliveryDate', () => {
 
 describe('datesForDelivery', () => {
   it('keeps the next delivery date while it is still after the new delivery date, and the time chosen', () => {
-    expect(datesForDelivery('2026-09-29', '15:00', '2026-10-02')).toEqual({
+    expect(datesForDelivery('2026-09-29', '15:00:00', '2026-10-02')).toEqual({
       delivery_date: '2026-09-29',
-      delivery_by: '15:00',
+      delivery_by: '15:00:00',
       next_delivery_date: '2026-10-02',
     })
   })

@@ -1,6 +1,6 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties } from 'react'
 import type { Aisle, Product, ShoppingItem } from '../lib/api/types'
-import { formatMoney, isWeighed, productCost } from '../lib/products'
+import { formatMoney, isUndecided, isWeighed, productCost } from '../lib/products'
 import { CornerToggle } from './CornerToggle'
 import { Icon } from './Icon'
 import { Stepper } from './Stepper'
@@ -32,55 +32,52 @@ const AISLES: { aisle: Aisle; name: string; color: AisleColor }[] = [
   { aisle: 'other', name: 'Other', color: 'other' },
 ]
 
-interface ShoppingListProps {
+type ShoppingListProps = {
   /** The items to buy (not the ones assumed on hand), by aisle. */
   items: ShoppingItem[]
-  /** "2 lb", "8": how much of an item, as shown. */
-  amount: (item: ShoppingItem) => string
-  /** "for Fajitas, Curry". */
+  /** The meals an item is for, as its row shows them: "for Fajitas, Curry", or just the names. */
   forMeals: (item: ShoppingItem) => string
+} & (
+  | {
+      /** A list never shopped (an order placed before lists were shopped at the store): how much of an item, as shown ("2 lb", "8"). */
+      amount: (item: ShoppingItem) => string
+    }
+  | {
+      /** The list shopped at a store: each item is its product, in a tile. */
+      shop: Shop
+    }
+)
+
+interface Shop {
+  /** Tap a product to change it; without it, the products are read-only. */
+  onOpen?: (item: ShoppingItem) => void
   /**
-   * Makes the list editable: each item's amount is a control (when it has one),
-   * and a red × takes it off the list, or puts it back.
+   * Each tile's stepper sets how many, and its red × takes the product off
+   * the list, or puts it back; without it, the tile shows how many.
    */
   edit?: {
+    onCount: (item: ShoppingItem, count: number) => void
     onRemove: (item: ShoppingItem, removed: boolean) => void
-    /** The item's amount control, greyed out while it's off the list. */
-    amountControl: (item: ShoppingItem, disabled: boolean) => ReactNode
-    /** Back to the amount worked out for the recipes (offered, under its name, once it was changed). */
-    onReset: (item: ShoppingItem) => void
+    /** The most of a product the stepper goes to. */
+    maxCount: number
   }
-  /** The list shopped at a store: each item is its product, in a tile. */
-  shop?: {
-    /** Tap a product to change it; without it, the products are read-only. */
-    onOpen?: (item: ShoppingItem) => void
-    /**
-     * Each tile's stepper sets how many, and its red × takes the product off
-     * the list, or puts it back; without it, the tile shows how many.
-     */
-    edit?: {
-      onCount: (item: ShoppingItem, count: number) => void
-      onRemove: (item: ShoppingItem, removed: boolean) => void
-      /** The most of a product the stepper goes to. */
-      maxCount: number
-    }
-    /**
-     * The items the store doesn't have come first, in a red card, until the
-     * member skips each or picks an alternative (Alternatives opens the item).
-     */
-    missing?: { store: string; onSkip: (item: ShoppingItem) => void }
-  }
+  /**
+   * The items the store doesn't have come first, in a red card, until the
+   * member skips each or picks an alternative (Alternatives opens the item).
+   */
+  missing?: { store: string; onSkip: (item: ShoppingItem) => void }
 }
 
 /**
  * A shopping list by aisle (spec/mockup.html: .aisle, .li-row). Each aisle is a
  * card whose head is a band in the aisle's color with its name and count (a review
- * decision over the mockup's small grey heading). Read-only, each item's amount
- * leads the row; editable, the row ends with the amount's control and the × (a
- * review decision over the mockup's − and Restore).
+ * decision over the mockup's small grey heading). A list never shopped is
+ * read-only, each item's amount leading its row.
  */
-export function ShoppingList({ items, amount, forMeals, edit, shop }: ShoppingListProps) {
-  if (shop !== undefined) return <ShoppedList items={items} forMeals={forMeals} shop={shop} />
+export function ShoppingList(props: ShoppingListProps) {
+  const { items, forMeals } = props
+  if ('shop' in props) return <ShoppedList items={items} forMeals={forMeals} shop={props.shop} />
+  const { amount } = props
   return (
     <>
       {AISLES.map(({ aisle, name, color }) => {
@@ -98,48 +95,14 @@ export function ShoppingList({ items, amount, forMeals, edit, shop }: ShoppingLi
             </h3>
             {rows.map((item) => (
               <div key={item.id} className={`${styles.row} ${item.removed ? styles.out : ''}`}>
-                {!edit && <span className={styles.amount}>{amount(item)}</span>}
+                <span className={styles.amount}>{amount(item)}</span>
                 <span className={styles.name}>
                   <b>{item.name}</b>
-                  {edit && !item.removed && item.quantity !== item.recipe_quantity ? (
-                    // Changed: what the recipes need, and a way back to it (in place of its
-                    // meals, so nothing moves). Reset keeps its room however narrow the row.
-                    <small className={styles.changed}>
-                      <span>Recipes need {amount({ ...item, quantity: item.recipe_quantity })} ·</span>
-                      <button
-                        type="button"
-                        className={styles.reset}
-                        aria-label={`Reset ${item.name} to what the recipes need`}
-                        onClick={() => edit.onReset(item)}
-                      >
-                        Reset
-                      </button>
-                    </small>
-                  ) : (
-                    <small>
-                      {item.removed && <span className={styles.removed}>Removed · </span>}
-                      {forMeals(item)}
-                    </small>
-                  )}
+                  <small>
+                    {item.removed && <span className={styles.removed}>Removed · </span>}
+                    {forMeals(item)}
+                  </small>
                 </span>
-                {edit && (
-                  <>
-                    {item.quantity === null ? (
-                      <span className={styles.fixedAmount}>{amount(item)}</span>
-                    ) : (
-                      edit.amountControl(item, item.removed)
-                    )}
-                    <button
-                      type="button"
-                      className={`${styles.remove} cc-hit`}
-                      aria-pressed={item.removed}
-                      aria-label={item.removed ? `Put ${item.name} back on the list` : `Remove ${item.name}`}
-                      onClick={() => edit.onRemove(item, !item.removed)}
-                    >
-                      <Icon name="x" />
-                    </button>
-                  </>
-                )}
               </div>
             ))}
           </section>
@@ -149,15 +112,10 @@ export function ShoppingList({ items, amount, forMeals, edit, shop }: ShoppingLi
   )
 }
 
-/** Still to decide: the store doesn't have it, and the member hasn't picked an alternative or skipped it. */
-function isUndecided(item: ShoppingItem): boolean {
-  return item.not_found && item.product === null && !item.removed
-}
-
 interface ShoppedListProps {
   items: ShoppingItem[]
   forMeals: (item: ShoppingItem) => string
-  shop: NonNullable<ShoppingListProps['shop']>
+  shop: Shop
 }
 
 /** The list shopped at a store: the items it doesn't have, then the products by aisle. */
@@ -266,7 +224,7 @@ interface ProductTileProps {
   /** The store, for an item it doesn't have (skipped). */
   store: string | undefined
   onOpen?: () => void
-  edit?: NonNullable<ShoppingListProps['shop']>['edit']
+  edit?: Shop['edit']
 }
 
 /**

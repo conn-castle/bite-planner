@@ -1,7 +1,7 @@
 import type { ClockTime, GroceryOrder, ISODate } from '../../lib/api/types'
-import { addDays, formatClockTime, formatDate, formatWindow, localDate, relativeDay } from '../../lib/dates'
+import { addDays, formatClockTime, formatDate, formatWindow, relativeDay } from '../../lib/dates'
 import { haptics } from '../../lib/haptics'
-import { useNow } from '../../lib/useNow'
+import { useToday } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { ChoiceCard } from '../../ui/ChoiceCard'
 import { DateBar } from '../../ui/DateBar'
@@ -17,9 +17,6 @@ import { useOrderSession } from './lock'
 import { useEditsPending, useSetDates } from './orders'
 import styles from './Steps.module.css'
 import { stepIndex } from './steps'
-
-// How often the step checks the time, so "today" moves on at midnight.
-const TODAY_CHECK_MS = 60_000
 
 const CHOICE_LABEL = { target: 'Target date', soonest: 'Soonest delivery', pick: 'Your pick' } as const
 
@@ -39,7 +36,7 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
   const session = useOrderSession()
   const setDates = useSetDates()
   const saving = useEditsPending()
-  const today = localDate(useNow(TODAY_CHECK_MS))
+  const today = useToday()
   const delivery = shownDeliveryDate(order)
   const choice = delivery === null ? null : deliveryChoice(order, delivery)
   const earliest = order.earliest_delivery_date
@@ -51,6 +48,7 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
   function choose(date: ISODate) {
     haptics.tap()
     setDates.mutate({
+      kind: 'dates',
       orderId: order.id,
       dates: datesForDelivery(date, order.delivery_by, order.next_delivery_date),
       session,
@@ -62,7 +60,7 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
       delivery === null
         ? { delivery_date: null, delivery_by: time, next_delivery_date: null }
         : datesForDelivery(delivery, time, order.next_delivery_date)
-    setDates.mutate({ orderId: order.id, dates, session })
+    setDates.mutate({ kind: 'dates', orderId: order.id, dates, session })
   }
 
   return (
@@ -110,10 +108,7 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
           <Group footer={windowNote(order, by)}>
             <Row
               label="Arrive by"
-              detail={
-                // "18:00:00" from the server; the field shows hours and minutes.
-                <TimeField value={by.slice(0, 5)} label="Arrive by" onChange={chooseTime} />
-              }
+              detail={<TimeField value={by} label="Arrive by" onChange={chooseTime} />}
             />
           </Group>
         </div>
@@ -125,8 +120,7 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
 /** Which window booking picks for the time: "Booked in the latest delivery window ending by then…". */
 function windowNote({ best_window: best, fallback_window: fallback }: GroceryOrder, by: ClockTime): string {
   if (best === null) return 'No delivery window ends by then. Choose a later time.'
-  // Hours and minutes: the server's times have seconds, a time just chosen doesn't.
-  if (best.end.slice(0, 5) > by.slice(0, 5)) return `Booked ${formatWindow(best)}, the one window that includes it.`
+  if (best.end > by) return `Booked ${formatWindow(best)}, the one window that includes it.`
   return fallback
     ? `Booked in the latest delivery window ending by then (${formatWindow(best)} if it's open), or ${formatWindow(fallback)} if nothing earlier is left.`
     : `Booked in the latest delivery window ending by then (${formatWindow(best)} if it's open).`

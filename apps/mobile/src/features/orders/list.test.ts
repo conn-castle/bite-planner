@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, Product, ShoppingItem, ShoppingList } from '../../lib/api/types'
-import { forMeals, itemAmount, listCounts, listState, productTotals, quantityStep, readyList, totalShown, undecided } from './list'
+import { itemAmount, listCounts, listState, mealNames, productTotals, readyList, totalShown, undecided } from './list'
 
 const job = (status: Job['status']): Job => ({
   id: 'build',
@@ -83,20 +83,13 @@ describe('an item as the list shows it', () => {
     expect(itemAmount({ quantity: null, unit: null })).toBe('')
   })
 
-  it('steps a counted item by one, and small amounts finely', () => {
-    expect(quantityStep({ quantity: 3, unit: null })).toBe(1)
-    expect(quantityStep({ quantity: 0.75, unit: 'lb' })).toBe(0.25)
-    expect(quantityStep({ quantity: 3, unit: 'cup' })).toBe(0.5)
-    expect(quantityStep({ quantity: 16, unit: 'oz' })).toBe(1)
-  })
-
   it('names the meals it is for', () => {
     const names = new Map([
       ['a', 'Fajitas'],
       ['b', 'Curry'],
     ])
-    expect(forMeals({ meal_ids: ['a', 'b'] }, names)).toBe('for Fajitas, Curry')
-    expect(forMeals({ meal_ids: ['gone'] }, names)).toBe('')
+    expect(mealNames({ meal_ids: ['a', 'b'] }, names)).toBe('Fajitas, Curry')
+    expect(mealNames({ meal_ids: ['gone'] }, names)).toBe('')
   })
 })
 

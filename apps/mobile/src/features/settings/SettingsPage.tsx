@@ -11,6 +11,8 @@ import {
   TIP_PERCENT,
 } from '../../lib/api/limits'
 import type { Household, HouseholdInvite, HouseholdMember, PersonalSettings, ProductGone } from '../../lib/api/types'
+import { errorMessage } from '../../lib/errorMessage'
+import { plural } from '../../lib/format'
 import { errorFields, logger } from '../../lib/log'
 import { Button } from '../../ui/Button'
 import { Group, Row } from '../../ui/Group'
@@ -24,8 +26,8 @@ import { Switch } from '../../ui/Switch'
 import { TimeField } from '../../ui/TimeField'
 import { useTextPrompt } from '../../ui/useTextPrompt'
 import { askPermission, openNotificationSettings, pushAvailable, usePermission } from '../notifications/notifications'
-import { plural } from '../orders/format'
-import { signOut, useSession } from '../session/session'
+import { useSession } from '../session/session'
+import { signOut } from '../session/signOut'
 import styles from './SettingsPage.module.css'
 import {
   useChangeHousehold,
@@ -147,8 +149,7 @@ function HouseholdGroup({ household }: { household: Household }) {
           sub="The latest it should arrive"
           detail={
             <TimeField
-              // "18:00:00" from the server; the field shows hours and minutes.
-              value={household.delivery_time.slice(0, 5)}
+              value={household.delivery_time}
               label="Delivery time"
               onChange={(time) => change.mutate({ delivery_time: time })}
             />
@@ -248,8 +249,7 @@ function PersonalGroup({ settings }: { settings: PersonalSettings }) {
           sub="When your daily reminder comes"
           detail={
             <TimeField
-              // "08:00:00" from the server; the field shows hours and minutes.
-              value={settings.notification_time.slice(0, 5)}
+              value={settings.notification_time}
               label="Notification time"
               onChange={(time) => change.mutate({ notification_time: time })}
             />
@@ -282,7 +282,7 @@ function AllowNotificationsRow() {
       else await openNotificationSettings()
     } catch (error) {
       logger.warn('push.settings_failed', errorFields(error))
-      setProblem(error instanceof Error ? error.message : String(error))
+      setProblem(errorMessage(error))
     }
   }
 
@@ -415,7 +415,7 @@ function AccountGroup() {
       await signOut(queryClient)
     } catch (error) {
       logger.warn('auth.sign_out_failed', errorFields(error))
-      setSignOutError(error instanceof Error ? error.message : String(error))
+      setSignOutError(errorMessage(error))
       setSigningOut(false)
     }
   }

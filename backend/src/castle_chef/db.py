@@ -3,6 +3,7 @@ from functools import lru_cache
 from sqlalchemy import Connection, Engine, event
 from sqlalchemy.pool import NullPool
 from sqlmodel import Session, create_engine
+from sqlmodel.sql.expression import SelectOfScalar
 
 from castle_chef.settings import get_settings
 
@@ -37,3 +38,10 @@ def get_request_session() -> Session:
     session = get_session()
     event.listen(session, "after_begin", _limit_waits)
     return session
+
+
+def for_update[T](statement: SelectOfScalar[T]) -> SelectOfScalar[T]:
+    """The statement, locking the rows it reads until the transaction ends. Rows
+    the session already holds are read again: a lock taken after an unlocked read
+    would otherwise check that read's values, which may have changed since."""
+    return statement.with_for_update().execution_options(populate_existing=True)

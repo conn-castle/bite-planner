@@ -1,31 +1,32 @@
 import { useParams } from 'react-router-dom'
-import { localDate } from '../../lib/dates'
-import { useNow } from '../../lib/useNow'
+import type { ShoppingItem } from '../../lib/api/types'
+import { useToday } from '../../lib/useNow'
 import { Note } from '../../ui/Note'
 import { Notice } from '../../ui/Notice'
 import { NavPage } from '../../ui/Page'
 import { ShoppingList } from '../../ui/ShoppingList'
 import { Skeleton } from '../../ui/Skeleton'
 import { Stats } from '../../ui/Stats'
-import { forMeals, itemAmount, listCounts, splitList } from '../orders/list'
+import { itemAmount, listCounts, mealNames, splitList } from '../orders/list'
 import { usePlacedOrders } from '../orders/orders'
 import { coveringFrom } from './home'
 import styles from './ListPage.module.css'
 import type { OrderTab } from './OrderPage'
 
-// How often the page checks whether the phone's calendar day has changed.
-const DAY_CHECK_MS = 60_000
-
 /** A placed order's shopping list, read-only: what was ordered, and what was taken off. */
 export function ListPage({ tab }: { tab: OrderTab }) {
   const { orderId } = useParams<{ orderId: string }>()
-  const today = localDate(useNow(DAY_CHECK_MS))
+  const today = useToday()
   // The list the tab it's opened from already has: Home's recent orders, or History's.
   const placed = usePlacedOrders(tab.href === '/week' ? coveringFrom(today) : undefined)
   const order = placed.data?.find((each) => each.id === orderId)
   const { toBuy } = splitList(order?.shopping_list ?? [])
   const { ordered, removed } = listCounts(toBuy)
   const names = new Map(order?.meals.map((meal) => [meal.id, meal.name]))
+  const forMeals = (item: ShoppingItem) => {
+    const meals = mealNames(item, names)
+    return meals && `for ${meals}`
+  }
 
   return (
     <NavPage title="Shopping list" tab={{ href: tab.href, backLabel: order ? `Order ${order.number}` : 'Back' }}>
@@ -45,12 +46,11 @@ export function ListPage({ tab }: { tab: OrderTab }) {
               { value: order.meals.length, label: order.meals.length === 1 ? 'meal' : 'meals' },
             ]}
           />
-          <ShoppingList
-            items={toBuy}
-            amount={itemAmount}
-            forMeals={(item) => forMeals(item, names)}
-            shop={toBuy.some((item) => item.product !== null) ? {} : undefined}
-          />
+          {toBuy.some((item) => item.product !== null) ? (
+            <ShoppingList items={toBuy} forMeals={forMeals} shop={{}} />
+          ) : (
+            <ShoppingList items={toBuy} forMeals={forMeals} amount={itemAmount} />
+          )}
           <Note icon="lock">Order {order.number} is placed, so its list is read-only.</Note>
         </div>
       )}

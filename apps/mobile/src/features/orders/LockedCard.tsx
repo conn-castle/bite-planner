@@ -1,12 +1,12 @@
 import type { GroceryOrder, OrderLock } from '../../lib/api/types'
 import { formatDate } from '../../lib/dates'
+import { theirName, timeAgo } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { Avatar } from '../../ui/Avatar'
 import { Chip } from '../../ui/Chip'
 import { OrderCard, OrderCardBody, OrderCardLine } from '../../ui/OrderCard'
 import { StepDots } from '../../ui/StepDots'
 import { defaultDeliveryDate } from './dates'
-import { timeAgo } from './format'
 import styles from './LockedCard.module.css'
 import { STEP_NAMES, stepDoing, stepIndex } from './steps'
 
@@ -19,7 +19,7 @@ interface LockedCardProps {
 /** The next order while another member is placing it: who, where they are, and that reminders go on. No actions. */
 export function LockedCard({ order, lock }: LockedCardProps) {
   const now = useNow(30_000)
-  const who = lock.member.name ?? 'Someone in your household'
+  const who = theirName(lock.member)
   const at = stepIndex(lock.step)
   const delivery = defaultDeliveryDate(order)
   const forDelivery = delivery === null ? '' : ` for ${formatDate(delivery, 'weekday')}'s delivery`

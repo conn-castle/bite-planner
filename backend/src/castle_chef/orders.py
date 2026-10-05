@@ -13,12 +13,13 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, text, tuple_
+from sqlalchemy import delete, literal, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, func, select
 
 from castle_chef import products, quotes, ratings, shopping
+from castle_chef.db import for_update
 from castle_chef.jobs import shop_of
 from castle_chef.models import (
     BookState,
@@ -158,6 +159,20 @@ def _clear_lock(order: GroceryOrder) -> None:
     order.lock_renewed_at = order.lock_step = None
 
 
+def release_locks_of(session: Session, household_id: UUID, user_id: UUID) -> None:
+    """Stage releasing the order locks a member of the household has (the caller
+    commits)."""
+    for order in session.exec(
+        for_update(
+            select(GroceryOrder).where(
+                GroceryOrder.household_id == household_id, GroceryOrder.locked_by == user_id
+            )
+        )
+    ).all():
+        _clear_lock(order)
+        session.add(order)
+
+
 def earliest_delivery_date(today: date) -> date:
     """The soonest delivery date a member can choose. Later this asks the grocery
     service for its soonest slot."""
@@ -220,23 +235,24 @@ def get_order(session: Session, household_id: UUID, order_id: UUID) -> GroceryOr
 
 def lock_order(session: Session, household_id: UUID, order_id: UUID) -> GroceryOrder | None:
     """The household's order, locked for this transaction, or None."""
-    order = session.exec(
-        select(GroceryOrder)
-        .where(GroceryOrder.id == order_id, GroceryOrder.household_id == household_id)
-        .with_for_update()
+    return session.exec(
+        for_update(
+            select(GroceryOrder).where(
+                GroceryOrder.id == order_id, GroceryOrder.household_id == household_id
+            )
+        )
     ).first()
-    return order
 
 
 def lock_current_draft(session: Session, household_id: UUID) -> GroceryOrder | None:
     """The household's draft, locked for this transaction, or None if it has none."""
     return session.exec(
-        select(GroceryOrder)
-        .where(
-            GroceryOrder.household_id == household_id,
-            GroceryOrder.status == GroceryOrderStatus.DRAFT,
+        for_update(
+            select(GroceryOrder).where(
+                GroceryOrder.household_id == household_id,
+                GroceryOrder.status == GroceryOrderStatus.DRAFT,
+            )
         )
-        .with_for_update()
     ).first()
 
 
@@ -487,9 +503,7 @@ def _quote_problem(session: Session, order: GroceryOrder, quote_id: UUID) -> str
     one (the list or the tip changed since), not read, or below the store's minimum.
     The household's row is locked first, so its tip rule can't change until the
     order is placed."""
-    session.exec(
-        select(Household).where(Household.id == order.household_id).with_for_update()
-    ).one()
+    session.exec(for_update(select(Household).where(Household.id == order.household_id))).one()
     quote = quotes.current(session, order)
     if quote is None or quote.id != quote_id:
         return "The total changed; check the new one."
@@ -502,8 +516,7 @@ def _quote_problem(session: Session, order: GroceryOrder, quote_id: UUID) -> str
 
 def list_problem(session: Session, order_id: UUID) -> str | None:
     """Why the draft's shopping list isn't the one for its picks, or None if it is."""
-    newest = shopping.newest_build(session, order_id)
-    if newest is None or not shopping.is_current(session, order_id, newest):
+    if shopping.current_build(session, order_id) is None:
         if shopping.newest_built(session, order_id) is None:
             return "The shopping list isn't ready yet."
         return "The shopping list was made for other meals or servings; wait for the new one."
@@ -751,7 +764,7 @@ def number(session: Session, order: GroceryOrder) -> int:
         .where(
             GroceryOrder.household_id == order.household_id,
             tuple_(col(GroceryOrder.created_at), col(GroceryOrder.id))
-            <= tuple_(order.created_at, order.id),
+            <= tuple_(literal(order.created_at), literal(order.id)),
         )
     ).one()
 
@@ -759,12 +772,12 @@ def number(session: Session, order: GroceryOrder) -> int:
 def target_date(session: Session, order: GroceryOrder) -> date | None:
     """The previous placed order's next delivery date; None for the first order."""
     return session.exec(
-        select(GroceryOrder.next_delivery_date)
+        select(col(GroceryOrder.next_delivery_date))
         .where(
             GroceryOrder.household_id == order.household_id,
             GroceryOrder.status == GroceryOrderStatus.PLACED,
             tuple_(col(GroceryOrder.created_at), col(GroceryOrder.id))
-            < tuple_(order.created_at, order.id),
+            < tuple_(literal(order.created_at), literal(order.id)),
         )
         .order_by(col(GroceryOrder.created_at).desc(), col(GroceryOrder.id).desc())
         .limit(1)
@@ -788,7 +801,7 @@ def next_target_date(session: Session, household_id: UUID) -> date | None:
     """The target date of the household's next order: its last placed order's next
     delivery date; None before its first order."""
     return session.exec(
-        select(GroceryOrder.next_delivery_date)
+        select(col(GroceryOrder.next_delivery_date))
         .where(
             GroceryOrder.household_id == household_id,
             GroceryOrder.status == GroceryOrderStatus.PLACED,

@@ -414,7 +414,7 @@ def test_a_press_with_no_confirmation_to_be_found_is_recorded(job_dir: Path) -> 
 
 
 def test_place_order_asked_for_twice_at_once_is_pressed_once(job_dir: Path) -> None:
-    async def steps(opened: Browser) -> tuple[list[str | BaseException], str]:
+    async def steps(opened: Browser) -> tuple[tuple[str | BaseException, ...], str]:
         page = await reported(opened)
         place = ref(page, 'button "Place order"')
         answering = asyncio.create_task(worker_answers(job_dir, ClickAnswer.GO))

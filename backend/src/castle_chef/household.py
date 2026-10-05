@@ -14,11 +14,12 @@ import re
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import delete, text, update
+from sqlalchemy import delete, text
 from sqlalchemy import func as sql_func
 from sqlmodel import Session, col, func, select
 
-from castle_chef import reminders
+from castle_chef import orders, reminders
+from castle_chef.db import for_update
 from castle_chef.models import AppUser, GroceryOrder, Household, HouseholdInvite
 
 log = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ def _account_email(session: Session, user_id: UUID) -> str | None:
 
 def _invite_for(session: Session, email: str, lock: bool = False) -> HouseholdInvite | None:
     query = select(HouseholdInvite).where(sql_func.lower(HouseholdInvite.email) == email.lower())
-    return session.exec(query.with_for_update() if lock else query).first()
+    return session.exec(for_update(query) if lock else query).first()
 
 
 def create(session: Session, name: str) -> Household:
@@ -211,7 +212,7 @@ def remove_member(session: Session, household_id: UUID, user_id: UUID) -> None:
     they lose access at once, their phones and reminder schedule go, and an order
     lock of theirs is released. The account stays. The last member can't be removed."""
     # The household's row first, so two removals at once can't empty it.
-    session.exec(select(Household).where(Household.id == household_id).with_for_update()).one()
+    session.exec(for_update(select(Household).where(Household.id == household_id))).one()
     member = session.get(AppUser, user_id)
     if member is None or member.household_id != household_id:
         session.rollback()
@@ -222,15 +223,7 @@ def remove_member(session: Session, household_id: UUID, user_id: UUID) -> None:
     if count == 1:
         session.rollback()
         raise Refused("They're the household's only member: a household can't be left empty.")
-    session.execute(
-        update(GroceryOrder)
-        .where(
-            col(GroceryOrder.household_id) == household_id, col(GroceryOrder.locked_by) == user_id
-        )
-        .values(
-            locked_by=None, lock_session=None, locked_at=None, lock_renewed_at=None, lock_step=None
-        )
-    )
+    orders.release_locks_of(session, household_id, user_id)
     session.delete(member)  # its push devices go with it
     session.commit()
     log.info(

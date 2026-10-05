@@ -4,9 +4,11 @@ import logging
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import ColumnElement, case
 from sqlmodel import Session, col, func, select, update
 
 from castle_chef.models import GroceryOrder, Job, JobKind, JobStatus, ListSource
+from castle_chef.settings import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ class NothingToList(Exception):
 SUPERSEDED_ERROR = "The picks changed, so a new list is being made."
 
 
-def _retried(
+def retried(
     session: Session, job_id: UUID, order: GroceryOrder, member_id: UUID, kind: JobKind
 ) -> Job | None:
     """The job a retried request already made (the client picks the id), or
@@ -48,12 +50,37 @@ def _retried(
     return existing
 
 
+def add_job(session: Session, job: Job, **logged: object) -> Job:
+    """Add a new job and commit it (with what the caller staged), and log it."""
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    log.info(
+        "job.created",
+        extra={
+            "job_id": str(job.id),
+            "kind": job.kind,
+            "grocery_order_id": str(job.grocery_order_id),
+        }
+        | logged,
+    )
+    return job
+
+
+def newest_job(
+    session: Session, order_id: UUID, kind: JobKind, status: JobStatus | None = None
+) -> Job | None:
+    """The order's newest job of a kind (with that status, if one is given)."""
+    query = select(Job).where(Job.grocery_order_id == order_id, Job.kind == kind)
+    if status is not None:
+        query = query.where(Job.status == status)
+    return session.exec(
+        query.order_by(col(Job.created_at).desc(), col(Job.id).desc()).limit(1)
+    ).first()
+
+
 def submit_generate_meals(
-    session: Session,
-    order: GroceryOrder,
-    member_id: UUID,
-    job_id: UUID,
-    stale_after: tuple[timedelta, timedelta],
+    session: Session, order: GroceryOrder, member_id: UUID, job_id: UUID
 ) -> tuple[Job, bool]:
     """Record a member's request for a batch of suggestions for a draft order,
     and commit it. Returns (job, created).
@@ -63,11 +90,9 @@ def submit_generate_meals(
     id, so a retried request returns the same job instead of starting another.
     Overdue jobs are failed first, so a lost worker can't block the order.
     """
-    if (
-        existing := _retried(session, job_id, order, member_id, JobKind.GENERATE_MEALS)
-    ) is not None:
+    if (existing := retried(session, job_id, order, member_id, JobKind.GENERATE_MEALS)) is not None:
         return existing, False
-    fail_stale_jobs(session, order.id, *stale_after)
+    fail_stale_jobs(session, order.id)
     active = session.exec(
         select(func.count())
         .select_from(Job)
@@ -86,14 +111,7 @@ def submit_generate_meals(
         kind=JobKind.GENERATE_MEALS,
         requested_by=member_id,
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    log.info(
-        "job.created",
-        extra={"job_id": str(job.id), "kind": job.kind, "grocery_order_id": str(order.id)},
-    )
-    return job, True
+    return add_job(session, job), True
 
 
 def submit_build_list(
@@ -102,7 +120,6 @@ def submit_build_list(
     member_id: UUID,
     job_id: UUID,
     source: ListSource,
-    stale_after: tuple[timedelta, timedelta],
 ) -> tuple[Job, bool]:
     """Start building the draft's shopping list from `source` (its picks now),
     and commit. Returns (job, created): a build already made, being made, or
@@ -111,18 +128,13 @@ def submit_build_list(
     other picks still waiting or running, and shopping still under way, are
     failed as superseded in the same transaction, so their results are dropped.
     The caller holds the order's row lock."""
-    if (existing := _retried(session, job_id, order, member_id, JobKind.BUILD_LIST)) is not None:
+    if (existing := retried(session, job_id, order, member_id, JobKind.BUILD_LIST)) is not None:
         return existing, False
     if not source.picks:
         session.rollback()
         raise NothingToList("Pick at least one meal.")
-    fail_stale_jobs(session, order.id, *stale_after)
-    builds = session.exec(
-        select(Job)
-        .where(Job.grocery_order_id == order.id, Job.kind == JobKind.BUILD_LIST)
-        .order_by(col(Job.created_at).desc(), col(Job.id).desc())
-    ).all()
-    newest = builds[0] if builds else None
+    fail_stale_jobs(session, order.id)
+    newest = newest_job(session, order.id, JobKind.BUILD_LIST)
     if (
         newest is not None
         and newest.list_source == source
@@ -130,26 +142,14 @@ def submit_build_list(
     ):
         session.rollback()
         return newest, False
-    superseded = [build.id for build in builds if build.status in ACTIVE]
     # Shopping an older list too: its products would be for items being replaced.
-    superseded += session.exec(
-        select(Job.id).where(
-            Job.grocery_order_id == order.id,
-            Job.kind == JobKind.SHOP,
-            col(Job.status).in_(ACTIVE),
-        )
-    ).all()
-    if superseded:
-        session.execute(
-            update(Job)
-            .where(col(Job.id).in_(superseded), col(Job.status).in_(ACTIVE))
-            .values(
-                status=JobStatus.FAILED,
-                error=SUPERSEDED_ERROR,
-                finished_at=func.now(),
-                updated_at=func.now(),
-            )
-        )
+    superseded = _fail(
+        session,
+        SUPERSEDED_ERROR,
+        col(Job.grocery_order_id) == order.id,
+        col(Job.kind).in_((JobKind.BUILD_LIST, JobKind.SHOP)),
+        col(Job.status).in_(ACTIVE),
+    )
     job = Job(
         id=job_id,
         grocery_order_id=order.id,
@@ -157,34 +157,18 @@ def submit_build_list(
         requested_by=member_id,
         list_source=source,
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    log.info(
-        "job.created",
-        extra={
-            "job_id": str(job.id),
-            "kind": job.kind,
-            "grocery_order_id": str(order.id),
-            "superseded": len(superseded),
-        },
-    )
-    return job, True
+    return add_job(session, job, superseded=superseded), True
 
 
 def claim_job(session: Session, job_id: UUID) -> Job | None:
     """Mark a pending job as running and return it, or None if it was already
     claimed (a duplicate delivery). Raises LookupError if the job doesn't exist."""
-    job = (
-        session.execute(
-            update(Job)
-            .where(col(Job.id) == job_id, col(Job.status) == JobStatus.PENDING)
-            .values(status=JobStatus.RUNNING, started_at=func.now(), updated_at=func.now())
-            .returning(Job)
-        )
-        .scalars()
-        .first()
-    )
+    job = session.scalars(
+        update(Job)
+        .where(col(Job.id) == job_id, col(Job.status) == JobStatus.PENDING)
+        .values(status=JobStatus.RUNNING, started_at=func.now(), updated_at=func.now())
+        .returning(Job)
+    ).first()
     session.commit()
     if job is not None:
         session.refresh(job)  # loaded, so it stays readable after the session closes
@@ -199,7 +183,7 @@ def finish_job(session: Session, job_id: UUID, error: str | None = None) -> bool
     transaction, and commit. Returns False, rolling back everything the caller
     staged (e.g. its meals), if the job is no longer running (it was failed as
     stale meanwhile)."""
-    finished = session.execute(
+    finished = session.exec(
         update(Job)
         .where(col(Job.id) == job_id, col(Job.status) == JobStatus.RUNNING)
         .values(
@@ -216,59 +200,87 @@ def finish_job(session: Session, job_id: UUID, error: str | None = None) -> bool
     return bool(finished)
 
 
+def _fail(session: Session, error: str, *where: ColumnElement[bool]) -> int:
+    """Stage failing the jobs that match (the caller commits); how many it fails."""
+    return session.exec(
+        update(Job)
+        .where(*where)
+        .values(status=JobStatus.FAILED, error=error, finished_at=func.now(), updated_at=func.now())
+    ).rowcount
+
+
 def fail_job(session: Session, job_id: UUID, error: str) -> bool:
     """Fail a job that hasn't finished (pending or running) and commit. Returns
     False if it had already finished."""
-    failed = session.execute(
-        update(Job)
-        .where(col(Job.id) == job_id, col(Job.status).in_(ACTIVE))
-        .values(status=JobStatus.FAILED, error=error, finished_at=func.now(), updated_at=func.now())
-    ).rowcount
+    failed = _fail(session, error, col(Job.id) == job_id, col(Job.status).in_(ACTIVE))
     session.commit()
     return bool(failed)
 
 
 STALE_ERROR = "The job stopped without finishing (its worker never started or was lost)."
 
+# How much longer than the agent's limit a job may run before it counts as lost
+# (its task died): for the work around the agent.
+RUNNING_MARGIN = timedelta(minutes=5)
+# How long a worker can run: docker/Dockerfile's ENTRYPOINT stops it after 2400 s
+# (`timeout`) and kills it 30 s after that (`--kill-after`).
+WORKER_LIMIT = timedelta(seconds=2400 + 30)
+# A booking counts as lost only once its worker can't still be running (it may yet
+# press Place order, or be pressing it): past the worker's limit, with a margin for
+# the clocks of whoever checks.
+BOOKING_MARGIN = timedelta(minutes=5)
 
-def is_stale(job: Job, now: datetime, pending_after: timedelta, running_after: timedelta) -> bool:
+
+def _pending_limit() -> timedelta:
+    """How long a job may wait for its task to start before it counts as lost."""
+    return timedelta(seconds=get_settings().pending_timeout_seconds)
+
+
+def _running_limit(kind: JobKind) -> timedelta:
+    """How long a job of this kind may run before it counts as lost."""
+    if kind == JobKind.BOOK:
+        return WORKER_LIMIT + BOOKING_MARGIN
+    return timedelta(seconds=get_settings().agent_timeout_seconds) + RUNNING_MARGIN
+
+
+def is_stale(job: Job, now: datetime) -> bool:
     """Whether an unfinished job is overdue: its task never started, or was lost."""
     if job.status == JobStatus.PENDING:
-        return job.created_at < now - pending_after
+        return job.created_at < now - _pending_limit()
     if job.status == JobStatus.RUNNING:
-        return job.started_at is not None and job.started_at < now - running_after
+        return job.started_at is not None and job.started_at < now - _running_limit(job.kind)
     return False
 
 
-def fail_stale_jobs(
-    session: Session, grocery_order_id: UUID, pending_after: timedelta, running_after: timedelta
-) -> int:
-    """Fail an order's overdue jobs (a backstop for lost events), so they don't
-    block its next batch. Only that order's rows: the caller holds only that
-    order's lock. Stages the update; the caller commits."""
-    stale = session.execute(
-        update(Job)
-        .where(col(Job.grocery_order_id) == grocery_order_id)
-        .where(
-            (
-                (col(Job.status) == JobStatus.PENDING)
-                & (col(Job.created_at) < func.now() - pending_after)
-            )
-            | (
-                (col(Job.status) == JobStatus.RUNNING)
-                & (col(Job.started_at) < func.now() - running_after)
-            )
-        )
-        .values(
-            status=JobStatus.FAILED,
-            error=STALE_ERROR,
-            finished_at=func.now(),
-            updated_at=func.now(),
-        )
-    ).rowcount
+def _stale() -> ColumnElement[bool]:
+    """is_stale, in SQL, by the database's clock."""
+    running_limit = case({kind: _running_limit(kind) for kind in JobKind}, value=col(Job.kind))
+    pending = (col(Job.status) == JobStatus.PENDING) & (
+        col(Job.created_at) < func.now() - _pending_limit()
+    )
+    running = (col(Job.status) == JobStatus.RUNNING) & (
+        col(Job.started_at) < func.now() - running_limit
+    )
+    return pending | running
+
+
+def fail_stale_jobs(session: Session, grocery_order_id: UUID) -> int:
+    """Fail an order's overdue jobs (is_stale; a backstop for lost events), so
+    they don't block its next batch. Only that order's rows: the caller holds
+    only that order's lock. Stages the update; the caller commits."""
+    stale = _fail(session, STALE_ERROR, col(Job.grocery_order_id) == grocery_order_id, _stale())
     if stale:
         log.error("jobs.stale_failed", extra={"count": stale})
     return stale
+
+
+def fail_if_stale(session: Session, job_id: UUID) -> bool:
+    """Fail the job if it's overdue (is_stale), and commit. Judged in the update
+    itself, so a job claimed or finished meanwhile is left alone. Returns whether
+    it failed it."""
+    failed = _fail(session, STALE_ERROR, col(Job.id) == job_id, _stale())
+    session.commit()
+    return bool(failed)
 
 
 # Shopping a list (a `shop` job for a build's items).
@@ -307,40 +319,28 @@ def submit_shop(
     member_id: UUID,
     job_id: UUID,
     build: Job | None,
-    stale_after: tuple[timedelta, timedelta],
 ) -> tuple[Job, bool]:
     """Shop the order's current list again (after a failure), and commit. Returns
     (job, created): a shop already waiting, running, or done for this list is
     returned rather than started again, and a retried request gets the job it
     made. `build` is the order's current list (None: not ready). The caller holds
     the order's row lock."""
-    if (existing := _retried(session, job_id, order, member_id, JobKind.SHOP)) is not None:
+    if (existing := retried(session, job_id, order, member_id, JobKind.SHOP)) is not None:
         return existing, False
     if build is None:
         session.rollback()
         raise ListNotReady("The shopping list isn't ready yet.")
-    fail_stale_jobs(session, order.id, *stale_after)
+    fail_stale_jobs(session, order.id)
     current = shop_of(session, build.id)
     if current is not None and current.status in (*ACTIVE, JobStatus.SUCCEEDED):
         session.rollback()
         return current, False
-    job = create_shop(session, build, job_id, member_id)
-    session.commit()
-    session.refresh(job)
-    log.info(
-        "job.created",
-        extra={"job_id": str(job.id), "kind": job.kind, "grocery_order_id": str(order.id)},
-    )
-    return job, True
+    return add_job(session, create_shop(session, build, job_id, member_id)), True
 
 
 def fail_shops_of(session: Session, build_id: UUID, error: str) -> int:
     """Fail the build's shop jobs that haven't finished, and commit (their worker
     stopped with the build's task)."""
-    failed = session.execute(
-        update(Job)
-        .where(col(Job.build_id) == build_id, col(Job.status).in_(ACTIVE))
-        .values(status=JobStatus.FAILED, error=error, finished_at=func.now(), updated_at=func.now())
-    ).rowcount
+    failed = _fail(session, error, col(Job.build_id) == build_id, col(Job.status).in_(ACTIVE))
     session.commit()
     return failed

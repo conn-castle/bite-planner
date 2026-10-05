@@ -23,8 +23,8 @@ agent's context or the logs.
 import asyncio
 import json
 import re
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import date, time
 from enum import StrEnum
@@ -39,7 +39,7 @@ from castle_chef_agent.jobfiles import locked, read_context, replace_file
 from castle_chef_agent.windows import Window
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, BrowserContext, Locator, Page
+    from playwright.async_api import BrowserContext, Locator, Page
 
 SITE = "https://www.instacart.com"
 # The household's session, as the worker hands it over, and as the tools hand it back,
@@ -156,7 +156,9 @@ class Confirmation(BaseModel):
     total_cents: int
 
 
-class _State(BaseModel):
+class CheckoutState(BaseModel):
+    """What the tools recorded, in the job directory (STATE_FILE)."""
+
     model_config = ConfigDict(extra="forbid")
 
     replacements: list[str] | None = None
@@ -175,13 +177,19 @@ class _State(BaseModel):
     not_confirmed: bool = False
 
 
-def load_state(job_dir: Path) -> _State:
+def load_state(job_dir: Path) -> CheckoutState:
     path = job_dir / STATE_FILE
-    return _State.model_validate_json(path.read_text()) if path.exists() else _State()
+    return CheckoutState.model_validate_json(path.read_text()) if path.exists() else CheckoutState()
 
 
-def _save(job_dir: Path, state: _State) -> None:
-    replace_file(job_dir / STATE_FILE, state.model_dump_json())
+@contextmanager
+def _changing(job_dir: Path) -> Iterator[CheckoutState]:
+    """What the tools recorded, to change under the job directory's lock: saved
+    when the block ends, unless it raises."""
+    with locked(job_dir):
+        state = load_state(job_dir)
+        yield state
+        replace_file(job_dir / STATE_FILE, state.model_dump_json())
 
 
 def tip_cents(items_cents: int, percent: int, max_cents: int) -> int:
@@ -436,9 +444,7 @@ async def browser(job_dir: Path) -> AsyncIterator[Browser]:
     job = read_context(job_dir, CheckoutJob)
     state: dict[str, Any] = json.loads((job.session_dir / SESSION_FILE).read_text())
     async with async_playwright() as playwright:
-        chromium: Browser = await playwright.chromium.launch(
-            headless=True, args=["--disable-dev-shm-usage"]
-        )
+        chromium = await playwright.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
         try:
             context = await chromium.new_context(
                 storage_state=state,  # type: ignore[arg-type]
@@ -473,10 +479,8 @@ async def record_replacements(job_dir: Path, opened: Browser, refs: list[str]) -
     if not all(re.search(r"replace|refund", setting, re.I) for setting in shown):
         raise CheckoutRefused("Those aren't all out-of-stock settings (like Replace with ...).")
     settings = sorted(set(shown))
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         state.replacements = settings
-        _save(job_dir, state)
     return settings
 
 
@@ -562,16 +566,12 @@ async def report(job_dir: Path, opened: Browser, refs: ReportRefs) -> Checkout:
     if problems := check_checkout(checkout, opened.job):
         raise CheckoutRefused(" ".join(problems))
     if book is not None and (changed := account_changes(checkout, book)):
-        with locked(job_dir):
-            state = load_state(job_dir)
+        with _changing(job_dir) as state:
             state.changed = changed
-            _save(job_dir, state)
         raise CheckoutRefused(f"{changed} That's recorded, and nothing is ordered: stop here.")
     await opened.save_session()
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         state.checkout = checkout
-        _save(job_dir, state)
     return checkout
 
 
@@ -582,10 +582,8 @@ async def mark_signed_out(job_dir: Path, opened: Browser, ref: str) -> None:
         raise CheckoutRefused("Checkout is reported, so it was signed in: you're done.")
     if not re.search(r"\b(log|sign)\s*in\b", await opened.element_text(ref), re.I):
         raise CheckoutRefused("That isn't a sign-in control: point at the one Instacart shows.")
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         state.signed_out = True
-        _save(job_dir, state)
 
 
 # A booking's tools.
@@ -633,10 +631,8 @@ async def choose_window(job_dir: Path, opened: Browser, day: str, offered: list[
             raise CheckoutRefused(f"{text[:40]!r} isn't a delivery window: give only the windows.")
         found[ref] = window
     chosen = windows.choose(list(found.values()), book.by)
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         state.window, state.no_window = chosen, chosen is None
-        _save(job_dir, state)
     if chosen is None:
         return (
             "None of that day's windows works for the time the order needs: that's recorded, "
@@ -677,10 +673,8 @@ async def place_order(job_dir: Path, opened: Browser, ref: str) -> str:
     answer = await _await_answer(job_dir)
     if answer is None:
         raise CheckoutRefused("Booking didn't answer, so nothing was ordered. Stop here.")
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         state.click = answer
-        _save(job_dir, state)
     if answer == ClickAnswer.DRY_RUN:
         return "This is a dry run: Place order wasn't pressed, and nothing was ordered. Stop here."
     if answer == ClickAnswer.OFF:
@@ -691,10 +685,8 @@ async def place_order(job_dir: Path, opened: Browser, ref: str) -> str:
         await (await opened._element(ref)).click()
     finally:
         # Pressed or not, it's never pressed again: what happened is found out next.
-        with locked(job_dir):
-            state = load_state(job_dir)
+        with _changing(job_dir) as state:
             state.clicked = True
-            _save(job_dir, state)
     await opened._settled_tree()
     return (
         "Place order was pressed. Now find Instacart's confirmation, and call `confirmed` "
@@ -738,20 +730,16 @@ async def record_confirmation(
             "shown anywhere, call `not_confirmed`."
         )
     confirmation = Confirmation(order_number=found[-1], window=booked, total_cents=charged)
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         state.confirmation = confirmation
-        _save(job_dir, state)
     return confirmation
 
 
 async def mark_not_confirmed(job_dir: Path) -> None:
     """Record that no confirmation could be found after Place order was pressed."""
-    with locked(job_dir):
-        state = load_state(job_dir)
+    with _changing(job_dir) as state:
         if not state.clicked:
             raise CheckoutRefused("Nothing was ordered: there's nothing to confirm.")
         if state.confirmation is not None:
             raise CheckoutRefused("It's confirmed already: you're done.")
         state.not_confirmed = True
-        _save(job_dir, state)

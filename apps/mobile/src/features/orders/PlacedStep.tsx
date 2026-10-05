@@ -1,5 +1,6 @@
 import type { BookState, GroceryOrder } from '../../lib/api/types'
 import { addDays, formatDate } from '../../lib/dates'
+import { elapsed, plural } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
 import { MealArt } from '../../ui/art'
@@ -9,7 +10,7 @@ import { Icon, type IconName } from '../../ui/Icon'
 import { BOOK_STATE_ICON, BOOK_STATE_LABEL, needsAttention } from './booking'
 import { BookingGroup } from './BookingGroup'
 import { FlowFrame, FooterSummary } from './FlowFrame'
-import { elapsed, plural } from './format'
+import { storeName } from './list'
 import styles from './PlacedStep.module.css'
 
 interface PlacedStepProps {
@@ -26,7 +27,7 @@ interface PlacedStepProps {
  */
 export function PlacedStep({ order, onChanged, onClose }: PlacedStepProps) {
   const now = useNow(1000)
-  const store = order.shopping_list?.store ?? 'the store'
+  const store = storeName(order)
   const state = order.book_state ?? 'booked'
   const done = (
     <Button block onClick={onClose}>

@@ -1,4 +1,6 @@
 import { Preferences } from '@capacitor/preferences'
+import { errorMessage } from './errorMessage'
+import { isRecord } from './isRecord'
 
 /**
  * Structured app logging. Each entry is `{ ts, level, event, launch, ...fields }`.
@@ -10,7 +12,8 @@ import { Preferences } from '@capacitor/preferences'
  * are `warn`. Never log secrets (sign-in codes, tokens).
  */
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+const LEVELS = ['debug', 'info', 'warn', 'error'] as const
+export type LogLevel = (typeof LEVELS)[number]
 export type LogFields = Record<string, unknown>
 export interface LogEntry extends LogFields {
   ts: string
@@ -32,6 +35,16 @@ interface Outbox {
   dropped: number
 }
 
+const isLogEntry = (value: unknown): value is LogEntry =>
+  isRecord(value) &&
+  typeof value.ts === 'string' &&
+  LEVELS.some((level) => level === value.level) &&
+  typeof value.event === 'string' &&
+  typeof value.launch === 'string'
+
+const isOutbox = (value: unknown): value is Outbox =>
+  isRecord(value) && Array.isArray(value.entries) && value.entries.every(isLogEntry) && typeof value.dropped === 'number'
+
 let outbox: Outbox = { entries: [], dropped: 0 }
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -39,7 +52,8 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined
 const loaded = Preferences.get({ key: STORAGE_KEY }).then(({ value }) => {
   if (!value) return
   try {
-    const saved = JSON.parse(value) as Outbox
+    const saved: unknown = JSON.parse(value)
+    if (!isOutbox(saved)) throw new Error('The saved outbox has an unknown shape.')
     outbox = { entries: [...saved.entries, ...outbox.entries], dropped: saved.dropped + outbox.dropped }
     trim()
   } catch (error) {
@@ -95,9 +109,8 @@ export function errorFields(error: unknown): LogFields {
     return { error: error.message, errorName: error.name, stack: error.stack }
   }
   // neon-js returns plain error objects: { message, code, status }.
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    const { message, code, status } = error as { message: unknown; code?: unknown; status?: unknown }
-    return { error: String(message), code, status }
+  if (isRecord(error) && 'message' in error) {
+    return { error: errorMessage(error), code: error.code, status: error.status }
   }
   return { error: String(error) }
 }

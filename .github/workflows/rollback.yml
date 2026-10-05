@@ -45,7 +45,6 @@ jobs:
       RELEASE: ${{ inputs.release }}
       RESTORE: ${{ inputs.restore_database }}
       CONFIRM: ${{ inputs.confirm }}
-      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
@@ -53,8 +52,12 @@ jobs:
         with:
           ref: refs/tags/${{ inputs.release }} # its CDK code and deploy action
           fetch-depth: 0 # history and tags, for the contract migration check
+      - if: inputs.restore_database
+        run: npm install --global "neonctl@$NEONCTL_VERSION"
       - id: check
         name: Check the preconditions
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
         run: |
           fail() { echo "::error::$1"; exit 1; }
           expected="roll back to $RELEASE"
@@ -62,51 +65,70 @@ jobs:
           [ "$CONFIRM" = "$expected" ] || fail "Confirmation must be exactly: $expected"
           gh release download "$RELEASE" --pattern release.json --dir "$RUNNER_TEMP" \
             || fail "$RELEASE has no release.json (only releases deployed to AWS can be rolled back to)."
-          echo "api=$(jq -er .images.api "$RUNNER_TEMP/release.json")" >> "$GITHUB_OUTPUT"
-          echo "worker=$(jq -er .images.worker "$RUNNER_TEMP/release.json")" >> "$GITHUB_OUTPUT"
+          api=$(jq -er .images.api "$RUNNER_TEMP/release.json") || fail "$RELEASE's release.json has no api image."
+          worker=$(jq -er .images.worker "$RUNNER_TEMP/release.json") || fail "$RELEASE's release.json has no worker image."
+          echo "api=$api" >> "$GITHUB_OUTPUT"
+          echo "worker=$worker" >> "$GITHUB_OUTPUT"
           latest=$(gh release view --json tagName --jq .tagName)
           if [ "$RESTORE" = "true" ]; then
             # The database as it was while $RELEASE was the latest: the snapshot
             # the next release (in publishing order) took before migrating.
-            next=$(gh release list --exclude-drafts --limit 200 --json tagName,createdAt \
-              --jq "sort_by(.createdAt) | map(.tagName) | (index(\"$RELEASE\")) as \$i | if \$i then .[\$i + 1] // empty else empty end")
+            next=$(gh release list --exclude-drafts --limit 200 --json tagName,publishedAt \
+              --jq "sort_by(.publishedAt) | map(.tagName) | (index(\"$RELEASE\")) as \$i | if \$i then .[\$i + 1] // empty else empty end")
             [ -n "$next" ] || fail "$RELEASE is the latest release; there is nothing to restore."
-            npm install --global "neonctl@$NEONCTL_VERSION"
             neonctl snapshots get "pre-$next" --project-id "$NEON_PROJECT_ID" > /dev/null \
               || fail "Snapshot pre-$next not found; restore points are kept 14 days."
             echo "snapshot=pre-$next" >> "$GITHUB_OUTPUT"
           else
             # Without a restore, the database keeps the newer schema: fine unless
             # a contract migration since then dropped something $RELEASE uses, or
-            # holds data $RELEASE can't handle safely (e.g. households).
-            contract=$(git diff --name-only "$RELEASE" "$latest" -- backend/migrations/versions \
-              | while read -r file; do git show "$latest:$file" 2> /dev/null | grep -q '# contract:' && echo "$file"; done || true)
-            [ -z "$contract" ] || fail "Contract migrations since $RELEASE ($contract) make today's database unsafe for it; restore the database too, or roll back less far."
+            # holds data $RELEASE can't handle safely (e.g. households). Only migrations
+            # added since count (--no-renames: a new file is never matched to a removed one).
+            added=$(git diff --name-only --no-renames --diff-filter=A "$RELEASE" "$latest" -- backend/migrations/versions)
+            contract=()
+            for file in $added; do
+              source=$(git show "$latest:$file")
+              if grep -q '# contract:' <<< "$source"; then contract+=("$file"); fi
+            done
+            [ ${#contract[@]} -eq 0 ] || fail "Contract migrations since $RELEASE (${contract[*]}) make today's database unsafe for it; restore the database too, or roll back less far."
           fi
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
         with:
           role-to-assume: ${{ env.DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
       - id: pause
         if: inputs.restore_database
-        name: Stop starting jobs and wait for running ones (at most 20 minutes each)
+        name: Stop starting jobs and wait for running ones (at most 40 minutes each)
         run: |
           output() { aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
           pipe=$(output JobsPipeOutput)
           cluster=$(output ClusterNameOutput)
           echo "pipe=$pipe" >> "$GITHUB_OUTPUT"
           aws pipes stop-pipe --name "$pipe" > /dev/null
-          until [ "$(aws pipes describe-pipe --name "$pipe" --query CurrentState --output text)" = STOPPED ]; do sleep 5; done
-          for _ in $(seq 150); do
-            [ -z "$(aws ecs list-tasks --cluster "$cluster" --desired-status RUNNING --query taskArns --output text)" ] && exit 0
+          for _ in $(seq 60); do
+            state=$(aws pipes describe-pipe --name "$pipe" --query CurrentState --output text)
+            [ "$state" = STOPPED ] && break
+            sleep 5
+          done
+          if [ "$state" != STOPPED ]; then
+            echo "::error::The jobs pipe ($pipe) is $state, not STOPPED, after 5 minutes."
+            exit 1
+          fi
+          # A worker runs at most 2430 s (docker/Dockerfile ENTRYPOINT: timeout 2400s, then
+          # --kill-after=30s); 252 × 10 s = 42 minutes also covers one that was still starting.
+          for _ in $(seq 252); do
+            # Assigned first, so a failing check fails the step rather than reading as none.
+            tasks=$(aws ecs list-tasks --cluster "$cluster" --desired-status RUNNING --query taskArns --output text)
+            [ -z "$tasks" ] && exit 0
             sleep 10
           done
-          echo "::error::Workers are still running after 25 minutes; the jobs pipe is stopped ($pipe)."
+          echo "::error::Workers are still running after 42 minutes; the jobs pipe is stopped ($pipe)."
           exit 1
       - name: Restore the database from ${{ steps.check.outputs.snapshot }}
         if: inputs.restore_database
         env:
           SNAPSHOT: ${{ steps.check.outputs.snapshot }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
         run: |
           before=$(neonctl branches get main --project-id "$NEON_PROJECT_ID" -o json | jq -r .id)
           neonctl snapshots create --project-id "$NEON_PROJECT_ID" --branch main \
@@ -137,7 +159,9 @@ jobs:
           path: current
           sparse-checkout: .github/actions
       - id: api
-        run: echo "url=$(jq -er '.CastleChef.ApiUrlOutput' "$RUNNER_TEMP/cdk-outputs.json")" >> "$GITHUB_OUTPUT"
+        run: |
+          url=$(jq -er '.CastleChef.ApiUrlOutput' "$RUNNER_TEMP/cdk-outputs.json")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
       - name: Make sign-up invite-only
         uses: ./current/.github/actions/invite-only
         with:

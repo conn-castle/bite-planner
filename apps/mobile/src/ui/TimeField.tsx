@@ -1,9 +1,10 @@
+import type { ClockTime } from '../lib/api/types'
 import styles from './TimeField.module.css'
 
 interface TimeFieldProps {
-  /** Hours and minutes: "08:00". */
-  value: string
-  onChange: (value: string) => void
+  /** As the API has it: "08:00:00". */
+  value: ClockTime
+  onChange: (value: ClockTime) => void
   /** Names it for assistive technology, e.g. "Notification time". */
   label: string
 }
@@ -14,10 +15,11 @@ export function TimeField({ value, onChange, label }: TimeFieldProps) {
     <input
       type="time"
       className={styles.input}
-      value={value}
+      // The field shows and gives hours and minutes ("08:00").
+      value={value.slice(0, 5)}
       aria-label={label}
       // Cleared (iOS's picker has a Reset): there's always a time, so it keeps the one it had.
-      onChange={(event) => event.target.value && onChange(event.target.value)}
+      onChange={(event) => event.target.value && onChange(`${event.target.value.slice(0, 5)}:00`)}
     />
   )
 }

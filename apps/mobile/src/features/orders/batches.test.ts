@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, JobStatus, MealSummary } from '../../lib/api/types'
-import { hasRunningBatch, newestBatchState, pickedMeals, suggestions } from './batches'
+import { hasRunningJob, newestBatchState, pickedMeals, suggestions } from './batches'
 
 const meal = (id: string): MealSummary => ({
   id,
@@ -37,15 +37,21 @@ describe('suggestions', () => {
   })
 })
 
-describe('hasRunningBatch', () => {
+describe('hasRunningJob', () => {
   it('is true while a batch is waiting to start or being made', () => {
-    expect(hasRunningBatch({ jobs: [batch('a', 'pending')] })).toBe(true)
-    expect(hasRunningBatch({ jobs: [batch('a', 'succeeded'), batch('b', 'running')] })).toBe(true)
+    expect(hasRunningJob({ jobs: [batch('a', 'pending')] })).toBe(true)
+    expect(hasRunningJob({ jobs: [batch('a', 'succeeded'), batch('b', 'running')] })).toBe(true)
   })
 
-  it('is false once every batch has finished, whether it worked or not', () => {
-    expect(hasRunningBatch({ jobs: [batch('a', 'succeeded'), batch('b', 'failed')] })).toBe(false)
-    expect(hasRunningBatch({ jobs: [] })).toBe(false)
+  it('is true while the list is built or shopped, or a quote is read, so the order is checked until they finish', () => {
+    for (const kind of ['build_list', 'shop', 'quote'] as const) {
+      expect(hasRunningJob({ jobs: [batch('a', 'succeeded'), { ...batch(kind, 'running'), kind }] })).toBe(true)
+    }
+  })
+
+  it('is false once every job has finished, whether it worked or not', () => {
+    expect(hasRunningJob({ jobs: [batch('a', 'succeeded'), batch('b', 'failed')] })).toBe(false)
+    expect(hasRunningJob({ jobs: [] })).toBe(false)
   })
 })
 

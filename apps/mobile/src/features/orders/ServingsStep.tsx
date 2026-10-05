@@ -1,5 +1,6 @@
 import type { GroceryOrder } from '../../lib/api/types'
 import { SERVINGS } from '../../lib/api/limits'
+import { plural } from '../../lib/format'
 import { Button } from '../../ui/Button'
 import { Group } from '../../ui/Group'
 import { Notice } from '../../ui/Notice'
@@ -7,7 +8,6 @@ import { Stepper } from '../../ui/Stepper'
 import { MealRow } from '../meals/MealRow'
 import { pickedMeals } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
-import { plural } from './format'
 import { useOrderSession } from './lock'
 import { useEditsPending, useSetServings } from './orders'
 import styles from './Steps.module.css'
@@ -65,7 +65,7 @@ export function ServingsStep({ order, onOpenMeal, onBack, onNext, onClose }: Ser
                   max={SERVINGS.max}
                   label="Servings"
                   onChange={(value) =>
-                    setServings.mutate({ orderId: order.id, mealId: meal.id, servings: value, session })
+                    setServings.mutate({ kind: 'servings', orderId: order.id, mealId: meal.id, servings: value, session })
                   }
                 />
               }

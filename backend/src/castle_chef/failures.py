@@ -44,9 +44,9 @@ def _dead_lettered(record: dict[str, Any]) -> None:
     except (KeyError, ValidationError) as error:
         log.error("failures.bad_dead_letter", extra={"error": str(error)})
         return
-    error = "The request could not be started (no worker could be launched). Try again."
+    failed = "The request could not be started (no worker could be launched). Try again."
     with get_session() as session:
-        changed = fail_job(session, message.job_id, error)
+        changed = fail_job(session, message.job_id, failed)
     log.error("job.never_started", extra={"job_id": str(message.job_id), "marked_failed": changed})
     _booking_stopped(message.job_id, "Booking couldn't be started.")
 
@@ -56,7 +56,7 @@ def _task_stopped(detail: dict[str, Any]) -> None:
     (succeeded or failed it) itself; anything else means it didn't."""
     if detail.get("lastStatus") != "STOPPED":
         return
-    worker = next(
+    worker: dict[str, Any] = next(
         (c for c in detail.get("containers", []) if c.get("name") == WORKER_CONTAINER), {}
     )
     exit_code = worker.get("exitCode")

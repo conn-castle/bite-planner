@@ -1,7 +1,7 @@
 import type { GroceryOrder, ISODate } from '../../lib/api/types'
-import { addDays, formatDate, localDate } from '../../lib/dates'
+import { addDays, formatDate } from '../../lib/dates'
 import { haptics } from '../../lib/haptics'
-import { useNow } from '../../lib/useNow'
+import { useToday } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { ChoiceCard } from '../../ui/ChoiceCard'
 import { DateBar } from '../../ui/DateBar'
@@ -15,9 +15,6 @@ import { FlowFrame, FooterSummary } from './FlowFrame'
 import { useOrderSession } from './lock'
 import { useEditsPending, useSetDates } from './orders'
 import { stepIndex } from './steps'
-
-// How often the step checks the time, so "today" moves on at midnight.
-const TODAY_CHECK_MS = 60_000
 
 interface NextDeliveryStepProps {
   order: GroceryOrder
@@ -34,7 +31,7 @@ export function NextDeliveryStep({ order, delivery, onBack, onNext, onClose }: N
   const household = useHousehold().shown
   const setDates = useSetDates()
   const saving = useEditsPending()
-  const today = localDate(useNow(TODAY_CHECK_MS))
+  const today = useToday()
   const meals = pickedMeals(order).length
   const next = shownNextDeliveryDate(delivery, order.next_delivery_date, meals)
   const recommended = defaultNextDeliveryDate(delivery, meals)
@@ -42,7 +39,7 @@ export function NextDeliveryStep({ order, delivery, onBack, onNext, onClose }: N
 
   function choose(date: ISODate) {
     haptics.tap()
-    setDates.mutate({ orderId: order.id, dates: { delivery_date: delivery, delivery_by: order.delivery_by, next_delivery_date: date }, session })
+    setDates.mutate({ kind: 'dates', orderId: order.id, dates: { delivery_date: delivery, delivery_by: order.delivery_by, next_delivery_date: date }, session })
   }
 
   return (

@@ -25,8 +25,6 @@ vi.mock('../../lib/log', () => ({
 }))
 // session.ts (imported for its query key) signs in through the real provider otherwise.
 vi.mock('../../lib/auth/auth', () => ({ auth: { updateName: vi.fn(), getUser: vi.fn() } }))
-vi.mock('../../lib/logUpload', () => ({ uploadLogs: vi.fn() }))
-vi.mock('../../lib/query/queryClient', () => ({ persister: {} }))
 const request = vi.mocked(apiRequest)
 
 const household = (settings: Partial<Household> = {}): Household => ({
@@ -130,13 +128,13 @@ describe('the settings on screen', () => {
     let answer = (_saved: PersonalSettings) => {}
     request.mockImplementation(() => new Promise((resolve) => (answer = resolve)))
 
-    const saving = changePersonal({ notification_time: '06:30' })
+    const saving = changePersonal({ notification_time: '06:30:00' })
     await later(0)
-    expect(onScreen().personal?.notification_time).toBe('06:30')
+    expect(onScreen().personal?.notification_time).toBe('06:30:00')
 
     answer({ ...settings, notification_time: '06:30:00' })
     await saving
-    expect(request.mock.calls).toEqual([['PATCH', '/v1/me/settings', { notification_time: '06:30' }]])
+    expect(request.mock.calls).toEqual([['PATCH', '/v1/me/settings', { notification_time: '06:30:00' }]])
     expect(queryClient.getQueryData<Session>(sessionQuery.queryKey)?.settings?.notification_time).toBe('06:30:00')
     expect(onScreen().personal?.notification_time).toBe('06:30:00')
   })

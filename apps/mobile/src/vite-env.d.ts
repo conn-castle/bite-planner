@@ -6,7 +6,10 @@ interface ImportMetaEnv {
   readonly VITE_API_URL: string
 }
 
-/** package.json version, injected by vite.config.ts. Also the persisted cache's buster. */
+/** package.json version, injected by vite.config.ts. */
 declare const __APP_VERSION__: string
-/** Release this build belongs to (`YYYY.M.D.N`), or `dev`; injected by vite.config.ts. */
+/**
+ * Release this build belongs to (`YYYY.M.D.N`), or `dev`; injected by vite.config.ts. Also the
+ * persisted cache's buster.
+ */
 declare const __APP_RELEASE__: string

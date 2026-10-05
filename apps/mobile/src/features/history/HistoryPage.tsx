@@ -3,6 +3,7 @@ import { useIonRouter } from '@ionic/react'
 import { useState } from 'react'
 import type { MealSummary, PlacedMeal, PlacedOrder } from '../../lib/api/types'
 import { addDays, formatDate } from '../../lib/dates'
+import { plural } from '../../lib/format'
 import { usePressIntent } from '../../lib/usePressIntent'
 import { MealArt } from '../../ui/art'
 import { CardStack } from '../../ui/CardStack'
@@ -16,11 +17,10 @@ import { SearchField } from '../../ui/SearchField'
 import { Segmented } from '../../ui/Segmented'
 import { Skeleton } from '../../ui/Skeleton'
 import { usePrefetchMeal } from '../meals/cached'
-import { formatMinutes } from '../meals/facts'
+import { formatMinutes, mealMinutes } from '../meals/facts'
 import { MealRatingMark } from '../meals/MealRating'
 import { MealRow } from '../meals/MealRow'
 import { shownRating, usePendingRatings } from '../meals/ratings'
-import { plural } from '../orders/format'
 import { usePlacedOrders } from '../orders/orders'
 import { coverage } from '../week/home'
 import { HISTORY_FILTERS, type HistoryFilter, type HistoryOrder, historyOrders } from './history'
@@ -156,7 +156,7 @@ function AllMeals({ shown, onOpenMeal }: AllMealsProps) {
 function MealTile({ meal, onOpen }: { meal: MealSummary; onOpen: () => void }) {
   const prefetch = usePrefetchMeal()
   const press = usePressIntent(() => prefetch(meal.id))
-  const minutes = meal.total_time_minutes ?? meal.active_time_minutes
+  const minutes = mealMinutes(meal)
   return (
     <button type="button" className={styles.tile} onClick={onOpen} {...press}>
       <span className={styles.tileArt}>

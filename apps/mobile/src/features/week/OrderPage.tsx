@@ -3,8 +3,9 @@ import { useIonRouter } from '@ionic/react'
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import type { ISODate, NextOrder, PlacedOrder } from '../../lib/api/types'
-import { formatDate, localDate } from '../../lib/dates'
-import { useNow } from '../../lib/useNow'
+import { formatDate } from '../../lib/dates'
+import { plural, theirName } from '../../lib/format'
+import { useToday } from '../../lib/useNow'
 import { Chip } from '../../ui/Chip'
 import { Group, Row } from '../../ui/Group'
 import { Notice } from '../../ui/Notice'
@@ -14,7 +15,6 @@ import { Skeleton } from '../../ui/Skeleton'
 import { MealRow } from '../meals/MealRow'
 import { BOOK_STATE_ICON, BOOK_STATE_LABEL, changeable, needsAttention } from '../orders/booking'
 import { BookingGroup } from '../orders/BookingGroup'
-import { plural } from '../orders/format'
 import { listCounts } from '../orders/list'
 import { OrderFlowModal } from '../orders/OrderFlow'
 import { lockedByOther } from '../orders/lock'
@@ -23,9 +23,6 @@ import { useSession } from '../session/session'
 import { byWhom, coverage, coveringFrom, followingOrder, placedOn, placedTitle } from './home'
 import styles from './OrderPage.module.css'
 import { PlacedTrack } from './PlacedCard'
-
-// How often the page checks whether the phone's calendar day has changed.
-const DAY_CHECK_MS = 60_000
 
 /** The tab an order is opened in: Orders (from Home) or History. Its pages are pushed under the tab's path. */
 export interface OrderTab {
@@ -39,7 +36,7 @@ export interface OrderTab {
  */
 export function OrderPage({ tab }: { tab: OrderTab }) {
   const { orderId } = useParams<{ orderId: string }>()
-  const today = localDate(useNow(DAY_CHECK_MS))
+  const today = useToday()
   // The list the tab it's opened from already has: Home's recent orders, or History's.
   const placed = usePlacedOrders(tab.href === '/week' ? coveringFrom(today) : undefined)
   const next = useNextOrder()
@@ -183,7 +180,7 @@ function PlacedOrderView({ order, placed, next, today, base, onOpenFlow }: Place
             label={`Order ${following.next.number} · delivery ${formatDate(following.next.target_date, 'medium')}`}
             sub={
               theirLock
-                ? `${theirLock.member.name ?? 'Someone in your household'} is placing it`
+                ? `${theirName(theirLock.member)} is placing it`
                 : following.next.decide_by_date
                   ? `Decide by ${formatDate(following.next.decide_by_date, 'medium')}`
                   : undefined

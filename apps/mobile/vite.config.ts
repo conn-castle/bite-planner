@@ -42,7 +42,7 @@ function devServer(env: Record<string, string>, reviewPort: string | undefined) 
       },
       // Dev only: serve Neon Auth from the app's own origin so its session
       // cookie is first-party in any browser, and present the trusted origin
-      // Neon Auth expects (see src/neonAuth.ts).
+      // Neon Auth expects (see src/lib/auth/neonAuth.ts).
       '/neon-auth': {
         target: authUrl.origin,
         changeOrigin: true,

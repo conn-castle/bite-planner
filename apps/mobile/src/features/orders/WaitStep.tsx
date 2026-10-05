@@ -1,5 +1,6 @@
 import { useContext, useEffect } from 'react'
 import type { GroceryOrder } from '../../lib/api/types'
+import { elapsed } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
 import { MealArt } from '../../ui/art'
@@ -13,10 +14,10 @@ import { useSession } from '../session/session'
 import { newestBatchState } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
-import { elapsed } from './format'
 import { useGenerateMeals } from './orders'
 import { useOrderSession } from './lock'
 import styles from './WaitStep.module.css'
+import { stepIndex } from './steps'
 
 interface WaitStepProps {
   order: GroceryOrder
@@ -50,7 +51,7 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
 
   return (
     <FlowFrame
-      step={0}
+      step={stepIndex('pick')}
       onClose={onClose}
       footer={
         <>

@@ -1,4 +1,4 @@
-/* spec/mockup.html: .aisle, .li-row (.q, .nm, .out); editable rows as reviewed */
+/* spec/mockup.html: .aisle, .li-row (.q, .nm, .out) */
 /* Each aisle: a card with a thin border, its head a band in the aisle's color (a review decision). */
 .card {
   margin-top: 16px;
@@ -49,14 +49,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Editable: an amount that can't change (none given, or the item is off the list). */
-.fixedAmount {
-  flex: none;
-  font-size: 14.5px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-
 .name {
   flex: 1;
   min-width: 0;
@@ -88,7 +80,6 @@
 
 /* Taken off the list: crossed out, its name in red. */
 .out .amount,
-.out .fixedAmount,
 .out .name b {
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--cc-danger) 45%, transparent);
@@ -98,49 +89,8 @@
   color: color-mix(in srgb, var(--cc-danger) 75%, var(--cc-ink));
 }
 
-.out .amount,
-.out .fixedAmount {
+.out .amount {
   color: var(--cc-ink-3);
-}
-
-/* A changed item's line: what the recipes need (cut short if it must), then Reset, whole. */
-.name small.changed {
-  display: flex;
-  gap: 4px;
-}
-
-.changed span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Back to the recipes' amount, in the line under a changed item's name. */
-.reset {
-  flex: none;
-  appearance: none;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-weight: 650;
-  color: var(--cc-accent);
-  cursor: pointer;
-}
-
-/* The red ×: tap it to take the item off the list, and again to put it back. */
-.remove {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--cc-danger);
-  font-size: 17px;
-  cursor: pointer;
 }
 
 /* The shopped list: each aisle's products in tiles, two across. */

@@ -2,15 +2,14 @@ import { IonModal, IonNav } from '@ionic/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../../lib/api/errors'
-import { localDate } from '../../lib/dates'
 import { logger } from '../../lib/log'
 import type { GroceryOrder, OrderStep as Step } from '../../lib/api/types'
-import { useNow } from '../../lib/useNow'
+import { useToday } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
 import { Skeleton } from '../../ui/Skeleton'
 import { MealPage } from '../meals/MealPage'
-import { loadingIdeas, setOrderFlowOpen, stopAwaitingIdeas, useAwaitedIdeas } from '../notifications/notifications'
+import { loadingIdeas, orderFlowOpened, stopAwaitingIdeas, useAwaitedIdeas } from '../notifications/notifications'
 import { useSession } from '../session/session'
 import { useHousehold } from '../settings/settings'
 import { suggestions } from './batches'
@@ -32,9 +31,6 @@ import { ProductPage } from './ProductPage'
 import { ReviewStep } from './ReviewStep'
 import { ServingsStep } from './ServingsStep'
 import { WaitStep } from './WaitStep'
-
-// How often the flow checks whether the phone's calendar day has changed.
-const DAY_CHECK_MS = 60_000
 
 interface OrderFlowModalProps {
   isOpen: boolean
@@ -64,16 +60,13 @@ export function OrderFlowModal({ isOpen, onDismiss, orderId, startAt }: OrderFlo
   const shownOrder = useRef<string | undefined>(undefined)
 
   // While it's open, "ideas ready" needs no toast: the ideas show here.
-  useEffect(() => {
-    setOrderFlowOpen(isOpen)
-    return () => setOrderFlowOpen(false)
-  }, [isOpen])
+  useEffect(() => (isOpen ? orderFlowOpened() : undefined), [isOpen])
 
   // Stable while open, or the nav would start over: it resets whenever its root
   // changes (the order it opens changes only as it opens, or for a new notification).
   const root = useCallback(
     () => (
-      <OrderSession.Provider value={session}>
+      <OrderSession value={session}>
         <OrderFlow
           orderId={orderId}
           startAt={startAt}
@@ -83,7 +76,7 @@ export function OrderFlowModal({ isOpen, onDismiss, orderId, startAt }: OrderFlo
           onOpenMeal={(mealId, servings) => void openMeal(nav.current, mealId, servings)}
           onOpenProduct={(id, itemId) => void openProduct(nav.current, session, id, itemId)}
         />
-      </OrderSession.Provider>
+      </OrderSession>
     ),
     [orderId, startAt, session],
   )
@@ -110,7 +103,7 @@ export function OrderFlowModal({ isOpen, onDismiss, orderId, startAt }: OrderFlo
 async function openMeal(nav: HTMLIonNavElement | null, mealId: string, servings: number | undefined) {
   if (!nav) return
   // A meal not picked yet has no servings of its own to show or change.
-  await nav.push(() => <MealPage mealId={mealId} servings={servings} suggestion={servings === undefined} />)
+  await nav.push(() => <MealPage mealId={mealId} servings={servings ?? null} suggestion={servings === undefined} />)
   // A recipe once opened as a blank card (its page left invisible); report it if that happens again.
   const page = (await nav.getActive())?.element
   if (page && getComputedStyle(page).opacity === '0') {
@@ -122,9 +115,9 @@ async function openMeal(nav: HTMLIonNavElement | null, mealId: string, servings:
 async function openProduct(nav: HTMLIonNavElement | null, session: string, orderId: string, itemId: string) {
   if (!nav) return
   await nav.push(() => (
-    <OrderSession.Provider value={session}>
+    <OrderSession value={session}>
       <ProductPage orderId={orderId} itemId={itemId} onDone={() => void nav.pop()} onLeave={() => void nav.popToRoot()} />
-    </OrderSession.Provider>
+    </OrderSession>
   ))
 }
 
@@ -197,7 +190,7 @@ function OrderFlow({ orderId, startAt, session, onShown, onClose, onOpenMeal, on
   }, [awaitedOrder, shownOrder, loading])
 
   // A new day moves the earliest delivery date: fetch the order's limits again.
-  const today = localDate(useNow(DAY_CHECK_MS))
+  const today = useToday()
   const shownDay = useRef(today)
   useEffect(() => {
     if (shownDay.current === today) return

@@ -13,19 +13,27 @@ import { apiRequest } from '../../lib/api/client'
 import { localDate } from '../../lib/dates'
 import { ApiError, isRetryable } from '../../lib/api/errors'
 import type {
+  BookFields,
   ClockTime,
   GroceryOrder,
   ISODate,
+  ItemIn,
   Job,
+  JobIn,
+  LockIn,
   NextOrder,
   OrderLock,
   OrderStep,
   PlacedOrder,
+  PlaceIn,
+  RatingIn,
+  ServingsIn,
+  SettleIn,
 } from '../../lib/api/types'
 import { logger } from '../../lib/log'
 import { queryKeys } from '../../lib/query/keys'
 import { storeMealRating } from '../meals/ratings'
-import { hasRunningBatch } from './batches'
+import { hasRunningJob } from './batches'
 import {
   applyEdits,
   type InSession,
@@ -43,12 +51,25 @@ import { LOCK_RENEW_MS, withLock } from './lock'
  * create-order flow changes on it, and the placed orders.
  */
 
-// How often an open order is checked while a batch of suggestions is being made.
+// How often an open order is checked while one of its jobs runs (hasRunningJob).
 const POLL_MS = 3_000
 // How often an order being booked at the store is checked (it takes a minute or two).
 const BOOKING_POLL_MS = 5_000
-// How often one waiting for today's booking run (9:00 AM, store time) is checked.
+// How often one that may be booked any time now is checked (mayBookSoon).
 const BOOK_DAY_POLL_MS = 60_000
+
+/**
+ * Whether an approved order may start booking any time now, from elsewhere:
+ * waiting, with its booking day come (the hourly run books it), or shown not
+ * booked (a late one is still waiting, so the run may book it; and anyone's Try
+ * again books it).
+ */
+function mayBookSoon(order: BookFields, today: ISODate): boolean {
+  return (
+    order.book_state === 'not_booked' ||
+    (order.book_state === 'waiting' && order.book_on !== null && order.book_on <= today)
+  )
+}
 
 export const nextQuery = queryOptions({
   queryKey: queryKeys.nextOrder,
@@ -82,7 +103,7 @@ export function useNextOrder(refetchInterval: number | false = false) {
 /**
  * The household's placed orders whose meals cover `coveringFrom` or a later day,
  * or all of them; checked every few seconds while one is being booked, and every
- * minute while one waits for its booking day's run.
+ * minute while one may start booking (mayBookSoon).
  */
 export function usePlacedOrders(coveringFrom?: ISODate) {
   return useQuery({
@@ -90,15 +111,16 @@ export function usePlacedOrders(coveringFrom?: ISODate) {
     refetchInterval: ({ state: { data } }) => {
       if (data?.some((order) => order.book_state === 'booking')) return BOOKING_POLL_MS
       const today = localDate(new Date())
-      const due = data?.some((order) => order.book_state === 'waiting' && order.book_on <= today)
-      return due ? BOOK_DAY_POLL_MS : false
+      return data?.some((order) => mayBookSoon(order, today)) ? BOOK_DAY_POLL_MS : false
     },
   })
 }
 
 /**
- * One order as the server has it, checked every few seconds while a batch of
- * suggestions is being made, and `shown`: that order with the changes still
+ * One order as the server has it, checked every few seconds while one of its
+ * jobs runs (a batch of suggestions, its list being built or shopped, a quote) or
+ * it's being booked, and every minute while it may start booking (mayBookSoon);
+ * and `shown`: that order with the changes still
  * being saved applied over it (see edits.ts). In the order flow (its ordering
  * `session` given), it's also checked every 30 seconds while someone else has
  * its lock, to see when they're done.
@@ -115,13 +137,15 @@ export function useOrder(orderId: string | undefined, session?: string) {
     },
     queryFn: orderId ? () => apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${orderId}`) : skipToken,
     refetchInterval: ({ state: { data } }) =>
-      data && hasRunningBatch(data)
+      data && hasRunningJob(data)
         ? POLL_MS
         : data?.book_state === 'booking'
           ? BOOKING_POLL_MS
           : session !== undefined && data?.lock && data.lock.session !== session
             ? LOCK_RENEW_MS
-            : false,
+            : data && mayBookSoon(data, localDate(new Date()))
+              ? BOOK_DAY_POLL_MS
+              : false,
     // A 404 (the draft was discarded) won't change on a retry.
     retry: (failureCount, error) => isRetryable(error, failureCount),
   })
@@ -197,7 +221,7 @@ const RELEASE = ['orders', 'release']
 
 // Requests that only make sense while the flow that made them is open: never
 // saved to be sent after a relaunch (they'd take the lock with no flow open).
-export const NOT_PERSISTED = { persist: false }
+const NOT_PERSISTED = { persist: false }
 
 // Ordering sessions whose flow has closed: nothing takes the lock for them any more.
 const closedSessions = new Set<string>()
@@ -219,14 +243,10 @@ export interface OpenOrder extends InSession {
   /** For the first batch, if the draft has none; chosen here so a resent request can't start a second. */
   jobId: string
 }
-export interface GenerateMeals extends InSession {
+/** Starts one of the order's jobs: a batch of suggestions, building or shopping its list, or a quote. */
+export interface StartJob extends InSession {
   orderId: string
-  /** Chosen here, so a resent request (e.g. after going offline) can't start a second batch. */
-  jobId: string
-}
-export interface StartList extends InSession {
-  orderId: string
-  /** Chosen here, so a resent request can't start a second build. */
+  /** Chosen here, so a resent request (e.g. after going offline) can't start a second. */
   jobId: string
 }
 export interface OrderAction {
@@ -251,7 +271,7 @@ export interface PlaceOrder extends InSession {
 }
 
 async function startBatch(orderId: string, jobId: string, session: string): Promise<Job> {
-  const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/jobs`, { job_id: jobId }, session)
+  const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/jobs`, { job_id: jobId } satisfies JobIn, session)
   logger.info('orders.batch_started', { orderId, jobId: job.id })
   return job
 }
@@ -271,6 +291,33 @@ const isEdit = (mutation: { options: { scope?: { id: string } } }) => mutation.o
  */
 export function registerOrderMutations(queryClient: QueryClient) {
   const retry = (failureCount: number, error: Error) => !(error instanceof FlowClosed) && isRetryable(error, failureCount)
+
+  // A change to the draft, sent in turn with the others; its answer is the whole
+  // order. Refused (e.g. someone placed the order meanwhile, the meal was just
+  // unpicked on another phone, or the list was replaced by a new one): the order
+  // is fetched to show it as it is now.
+  const edit = <V extends { orderId: string }>(send: (variables: V) => Promise<GroceryOrder>) => ({
+    mutationFn: send,
+    retry,
+    scope: EDITS,
+    onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
+    onError: (_error: Error, { orderId }: V) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+  })
+
+  // Starts a job at `path` under the order, in turn after the changes before it,
+  // logged as `event`; the job shows in the order, which is fetched after it.
+  const startsJob = (path: string, event: string) => ({
+    mutationFn: async ({ orderId, jobId, session }: StartJob): Promise<Job> => {
+      const body = { job_id: jobId } satisfies JobIn
+      const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/${path}`, body, session)
+      logger.info(event, { orderId, jobId: job.id, status: job.status })
+      return job
+    },
+    retry,
+    scope: EDITS,
+    onSettled: (_job: Job | undefined, _error: Error | null, { orderId }: StartJob) =>
+      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+  })
 
   queryClient.setMutationDefaults(OPEN, {
     // Gets or creates the household's draft, taking its lock (unless another
@@ -302,53 +349,40 @@ export function registerOrderMutations(queryClient: QueryClient) {
   })
 
   queryClient.setMutationDefaults(GENERATE, {
-    mutationFn: ({ orderId, jobId, session }: GenerateMeals) => startBatch(orderId, jobId, session),
+    mutationFn: ({ orderId, jobId, session }: StartJob) => startBatch(orderId, jobId, session),
     retry,
-    onSuccess: async (job: Job, { orderId }: GenerateMeals) => {
+    onSuccess: async (job: Job, { orderId }: StartJob) => {
       await cancelFetches(queryClient, orderId)
       queryClient.setQueryData<GroceryOrder>(orderKey(orderId), (order) => order && withJob(order, job))
     },
     // A refusal (e.g. someone else's batch is already running) means the order changed.
-    onError: (_error: Error, { orderId }: GenerateMeals) =>
-      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+    onError: (_error: Error, { orderId }: StartJob) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
   })
 
-  queryClient.setMutationDefaults(SET_MEAL, {
-    mutationFn: ({ orderId, mealId, picked, session }: SetMeal) =>
-      apiRequest<GroceryOrder>(
-        picked ? 'PUT' : 'DELETE',
-        `/v1/grocery-orders/${orderId}/meals/${mealId}`,
-        undefined,
-        session,
-      ),
-    retry,
-    scope: EDITS,
-    onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
-    // Refused (e.g. someone placed the order meanwhile): show the order as it is now.
-    onError: (_error: Error, { orderId }: SetMeal) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
-  })
+  queryClient.setMutationDefaults(
+    SET_MEAL,
+    edit(({ orderId, mealId, picked, session }: SetMeal) =>
+      apiRequest<GroceryOrder>(picked ? 'PUT' : 'DELETE', `/v1/grocery-orders/${orderId}/meals/${mealId}`, undefined, session),
+    ),
+  )
 
-  queryClient.setMutationDefaults(SET_SERVINGS, {
-    mutationFn: ({ orderId, mealId, servings, session }: SetServings) =>
+  queryClient.setMutationDefaults(
+    SET_SERVINGS,
+    edit(({ orderId, mealId, servings, session }: SetServings) =>
       apiRequest<GroceryOrder>(
         'PUT',
         `/v1/grocery-orders/${orderId}/meals/${mealId}/servings`,
-        { servings },
+        { servings } satisfies ServingsIn,
         session,
       ),
-    retry,
-    scope: EDITS,
-    onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
-    // Refused (e.g. the meal was just unpicked on another phone): show the order as it is now.
-    onError: (_error: Error, { orderId }: SetServings) =>
-      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
-  })
+    ),
+  )
 
   queryClient.setMutationDefaults(SET_NOT_FOR_US, {
     // The mark is the household's rating of the meal; the server also unpicks
     // it. Its answer has no order, so the order is fetched after it.
     mutationFn: async ({ orderId, mealId, notForUs, session }: SetNotForUs) => {
-      if (notForUs) await apiRequest<void>('PUT', `/v1/meals/${mealId}/rating`, { rating: 'not_for_us' }, session)
+      if (notForUs) await apiRequest<void>('PUT', `/v1/meals/${mealId}/rating`, { rating: 'not_for_us' } satisfies RatingIn, session)
       else await apiRequest<void>('DELETE', `/v1/meals/${mealId}/rating`)
       return apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${orderId}`)
     },
@@ -366,87 +400,49 @@ export function registerOrderMutations(queryClient: QueryClient) {
     onError: (_error: Error, { orderId }: SetNotForUs) => refetchAfterPlaced(queryClient, orderId),
   })
 
-  queryClient.setMutationDefaults(START_LIST, {
-    // Builds the list from the picks and servings now (after the changes to them
-    // before it); a build for the same picks already made or being made is kept.
-    mutationFn: async ({ orderId, jobId, session }: StartList): Promise<Job> => {
-      const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/list`, { job_id: jobId }, session)
-      logger.info('orders.list_started', { orderId, jobId: job.id, status: job.status })
-      return job
-    },
-    retry,
-    scope: EDITS,
-    // The order's list is its newest build: fetch the order to show it.
-    onSettled: (_job: Job | undefined, _error: Error | null, { orderId }: StartList) =>
-      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
-  })
+  // Builds the list from the picks and servings now (after the changes to them
+  // before it); a build for the same picks already made or being made is kept.
+  // The order's list is its newest build.
+  queryClient.setMutationDefaults(START_LIST, startsJob('list', 'orders.list_started'))
 
-  queryClient.setMutationDefaults(SHOP_LIST, {
-    // Shops the current list again (after shopping failed); shopping already on
-    // its way for it is kept.
-    mutationFn: async ({ orderId, jobId, session }: StartList): Promise<Job> => {
-      const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/list/shop`, { job_id: jobId }, session)
-      logger.info('orders.shopping_started', { orderId, jobId: job.id, status: job.status })
-      return job
-    },
-    retry,
-    scope: EDITS,
-    onSettled: (_job: Job | undefined, _error: Error | null, { orderId }: StartList) =>
-      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
-  })
+  // Shops the current list again (after shopping failed); shopping already on
+  // its way for it is kept.
+  queryClient.setMutationDefaults(SHOP_LIST, startsJob('list/shop', 'orders.shopping_started'))
 
-  queryClient.setMutationDefaults(QUOTE, {
-    // Fills the cart and reads checkout for the order as it is now (after the
-    // changes before it); a quote for the same products already read or being read is kept.
-    mutationFn: async ({ orderId, jobId, session }: StartList): Promise<Job> => {
-      const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/quote`, { job_id: jobId }, session)
-      logger.info('orders.quote_started', { orderId, jobId: job.id, status: job.status })
-      return job
-    },
-    retry,
-    scope: EDITS,
-    // Only while the final review that asked for it is open.
-    meta: NOT_PERSISTED,
-    onSettled: (_job: Job | undefined, _error: Error | null, { orderId }: StartList) =>
-      queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
-  })
+  // Fills the cart and reads checkout for the order as it is now (after the
+  // changes before it); a quote for the same products already read or being read
+  // is kept. Only while the final review that asked for it is open.
+  queryClient.setMutationDefaults(QUOTE, { ...startsJob('quote', 'orders.quote_started'), meta: NOT_PERSISTED })
 
-  queryClient.setMutationDefaults(SET_ITEM, {
-    mutationFn: ({ orderId, itemId, removed, quantity, count, alternative, session }: SetItem) =>
+  queryClient.setMutationDefaults(
+    SET_ITEM,
+    edit(({ orderId, itemId, removed, count, alternative, session }: SetItem) =>
       apiRequest<GroceryOrder>(
         'PATCH',
         `/v1/grocery-orders/${orderId}/list/items/${itemId}`,
         {
           ...(removed === undefined ? {} : { removed }),
-          ...(quantity === undefined ? {} : { quantity }),
           ...(count === undefined ? {} : { count }),
           ...(alternative === undefined ? {} : { alternative }),
-        },
+        } satisfies ItemIn,
         session,
       ),
-    retry,
-    scope: EDITS,
-    onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
-    // Refused (e.g. the list was replaced by a new one): show the order as it is now.
-    onError: (_error: Error, { orderId }: SetItem) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
-  })
+    ),
+  )
 
-  queryClient.setMutationDefaults(SET_DATES, {
-    mutationFn: ({ orderId, dates, session }: SetDates) =>
+  queryClient.setMutationDefaults(
+    SET_DATES,
+    edit(({ orderId, dates, session }: SetDates) =>
       apiRequest<GroceryOrder>('PUT', `/v1/grocery-orders/${orderId}/dates`, dates, session),
-    retry,
-    scope: EDITS,
-    onSuccess: (order: GroceryOrder) => storeOrder(queryClient, order),
-    // Refused (e.g. someone placed the order meanwhile): show the order as it is now.
-    onError: (_error: Error, { orderId }: SetDates) => queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
-  })
+    ),
+  )
 
   queryClient.setMutationDefaults(PLACE, {
     // With the dates on screen, which the server saves as it places the order, so
     // what's placed is what was shown. Placing an order that is already placed
     // returns it unchanged, so a resend is safe.
     mutationFn: ({ orderId, dates, quoteId, session }: PlaceOrder) =>
-      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/place`, { ...dates, quote_id: quoteId }, session),
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/place`, { ...dates, quote_id: quoteId } satisfies PlaceIn, session),
     retry,
     scope: EDITS,
     onSuccess: async (order: GroceryOrder) => {
@@ -515,7 +511,7 @@ export function registerOrderMutations(queryClient: QueryClient) {
   })
   queryClient.setMutationDefaults(SETTLE, {
     mutationFn: ({ orderId, placed }: SettleOrder) =>
-      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/settle`, { placed }),
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/settle`, { placed } satisfies SettleIn),
     onSettled: (_order: GroceryOrder | undefined, _error: Error | null, { orderId }: SettleOrder) =>
       refetchAfterPlaced(queryClient, orderId),
   })
@@ -523,7 +519,7 @@ export function registerOrderMutations(queryClient: QueryClient) {
   queryClient.setMutationDefaults(TAKE, {
     mutationFn: ({ orderId, session, step }: TakeLock) => {
       if (closedSessions.has(session)) throw new FlowClosed()
-      return apiRequest<OrderLock>('POST', `/v1/grocery-orders/${orderId}/lock`, { step }, session)
+      return apiRequest<OrderLock>('POST', `/v1/grocery-orders/${orderId}/lock`, { step } satisfies LockIn, session)
     },
     // The flow tries again at its next check.
     retry: false,
@@ -588,7 +584,7 @@ export function useOpenOrder() {
 }
 
 export function useGenerateMeals() {
-  return useMutation<Job, Error, GenerateMeals>({ mutationKey: GENERATE })
+  return useMutation<Job, Error, StartJob>({ mutationKey: GENERATE })
 }
 
 /** Adds or removes a pick; it shows at once (see edits.ts). */
@@ -613,20 +609,20 @@ export function useSetDates() {
 
 /** Starts building the shopping list from the picks and servings now. */
 export function useStartList() {
-  return useMutation<Job, Error, StartList>({ mutationKey: START_LIST })
+  return useMutation<Job, Error, StartJob>({ mutationKey: START_LIST })
 }
 
 /** Shops the order's list again at the store, after shopping failed. */
 export function useShopList() {
-  return useMutation<Job, Error, StartList>({ mutationKey: SHOP_LIST })
+  return useMutation<Job, Error, StartJob>({ mutationKey: SHOP_LIST })
 }
 
 /** Finds out what the order would cost at the store now (the final review's total). */
 export function useQuoteOrder() {
-  return useMutation<Job, Error, StartList>({ mutationKey: QUOTE })
+  return useMutation<Job, Error, StartJob>({ mutationKey: QUOTE })
 }
 
-/** Takes an item off the list or puts it back, or changes how much of it to buy; it shows at once. */
+/** Takes an item off the list or puts it back, changes how many of its product, or switches it to an alternative; it shows at once. */
 export function useSetItem() {
   return useMutation<GroceryOrder, Error, SetItem>({ mutationKey: SET_ITEM })
 }
