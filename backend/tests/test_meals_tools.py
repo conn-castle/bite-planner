@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import typer
 from castle_chef_agent import cli
 from castle_chef_agent.jobfiles import write_context
 from castle_chef_agent.meals import MealsJob
@@ -183,8 +184,12 @@ def test_no_tool_sends_the_agent_looking_for_the_job_directory(tmp_path: Path) -
 
 def test_the_tools_need_an_existing_job_directory(tmp_path: Path) -> None:
     # As the worker starts them, from the agent's own `castle-chef` (docker/castle-chef).
-    result = CliRunner().invoke(cli.app, ["mcp", "meals", "--job-dir", str(tmp_path / "missing")])
+    # The refusal itself, not its printed form (Typer colors that under GitHub Actions).
+    result = CliRunner().invoke(
+        cli.app, ["mcp", "meals", "--job-dir", str(tmp_path / "missing")], standalone_mode=False
+    )
 
-    assert result.exit_code == 2
-    assert "Invalid value for '--job-dir'" in result.output
+    refusal = result.exception
+    assert isinstance(refusal, typer.BadParameter)
+    assert refusal.param is not None and refusal.param.name == "job_dir"
     assert not (tmp_path / "missing").exists()
