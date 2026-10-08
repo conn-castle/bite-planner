@@ -2,6 +2,7 @@
 for the worker."""
 
 from collections import Counter
+from enum import StrEnum
 from pathlib import Path
 from typing import Self
 
@@ -9,6 +10,72 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from castle_chef_agent.jobfiles import locked, read_context, replace_file
 from castle_chef_agent.names import key
+
+
+class Dish(StrEnum):
+    """What a meal's picture shows it served in."""
+
+    PLATE = "plate"
+    BOWL = "bowl"
+    SKILLET = "skillet"
+    TACOS = "tacos"
+
+
+class Icon(StrEnum):
+    """An ingredient's icon in its meal's picture. The app draws the first main
+    ingredient large, on a bed (rice, pasta, sauce, or a tortilla), with two sides."""
+
+    # Main ingredients
+    FISH = "fish"
+    SHRIMP = "shrimp"
+    DRUMSTICK = "drumstick"
+    STEAK = "steak"
+    PORK_CHOP = "pork_chop"
+    GROUND_MEAT = "ground_meat"
+    TOFU = "tofu"
+    EGG = "egg"
+    BEANS = "beans"
+    CHICKPEAS = "chickpeas"
+    # Beds
+    RICE = "rice"
+    PASTA = "pasta"
+    SAUCE = "sauce"
+    # A taco's shell (otherwise a bed)
+    TORTILLA = "tortilla"
+    # Sides
+    LEAFY = "leafy"
+    STALKS = "stalks"
+    ROUND = "round"
+    PEPPER = "pepper"
+    MUSHROOM = "mushroom"
+    ROOT = "root"
+    BROCCOLI = "broccoli"
+    CORN = "corn"
+    BREAD = "bread"
+    BACON = "bacon"
+    CHEESE_WEDGE = "cheese_wedge"
+    CHEESE_CUBE = "cheese_cube"
+
+
+class Color(StrEnum):
+    """A pictured ingredient's color, from the app's palette."""
+
+    WHITE = "white"
+    CREAM = "cream"
+    YELLOW = "yellow"
+    GOLD = "gold"
+    TAN = "tan"
+    ORANGE = "orange"
+    SALMON = "salmon"
+    PINK = "pink"
+    RED = "red"
+    DARK_RED = "dark_red"
+    PURPLE = "purple"
+    BROWN = "brown"
+    BLACK = "black"
+    LIGHT_GREEN = "light_green"
+    GREEN = "green"
+    DARK_GREEN = "dark_green"
 
 
 class IngredientInput(BaseModel):
@@ -31,6 +98,36 @@ class IngredientInput(BaseModel):
         "counted whole (eggs, garlic cloves, tortillas, bell peppers); never repeat the name here.",
     )
     preparation: str | None = Field(default=None, description="e.g. 'minced', 'sliced'.")
+    icon: Icon | None = Field(
+        default=None,
+        description="How the meal's picture shows this ingredient; null to leave it out "
+        "(salt, oil, butter, spices, garlic, broth, wine, herbs, and other small amounts). "
+        "Main ingredients (the first is drawn largest): fish (fish fillets), shrimp (shrimp, "
+        "prawns, scallops), drumstick (chicken, turkey), steak (beef, lamb), pork_chop (pork "
+        "chops, cutlets), ground_meat (ground meat, sausage, meatballs), tofu (tofu, tempeh, "
+        "paneer), egg, beans (beans, lentils), chickpeas. Beds (the first is drawn under the "
+        "main ingredient): rice (rice, quinoa, couscous, any grain), pasta (pasta, noodles), "
+        "sauce (a sauce the dish sits in: tomato, curry, coconut), tortilla (tortillas, "
+        "flatbreads; a taco's shell). Sides (the first two are drawn beside it): leafy "
+        "(celery, lettuce, greens, cabbage), stalks (asparagus, green beans, snap peas), round "
+        "(tomatoes, onions, citrus, apples, avocado, olives, potatoes), pepper (bell and chili "
+        "peppers), mushroom, root (carrots, sweet potatoes, parsnips), broccoli (broccoli, "
+        "cauliflower), corn, bread, bacon, cheese_wedge (hard cheeses), cheese_cube (feta, "
+        "fresh cheeses).",
+    )
+    color: Color | None = Field(
+        default=None,
+        description="The pictured ingredient's color as it looks in the dish (a lemon "
+        "yellow, salmon salmon, steak dark_red); set exactly when `icon` is.",
+    )
+
+    @model_validator(mode="after")
+    def _color_with_icon(self) -> Self:
+        if (self.icon is None) != (self.color is None):
+            raise ValueError(
+                f'"{self.name}": set `color` exactly when `icon` is (both, or neither).'
+            )
+        return self
 
 
 class StepInput(BaseModel):
@@ -55,11 +152,22 @@ class MealInput(BaseModel):
 
     name: str = Field(min_length=1)
     description: str | None = None
+    dish: Dish = Field(
+        description="What the meal's picture shows it served in: bowl (curries, soups, "
+        "stews, risotto, salads, grain bowls), skillet (seared or pan-cooked mains: chops, "
+        "steaks, fajitas), tacos (tacos, burritos, quesadillas), or plate (everything else)."
+    )
     servings: int = Field(ge=1, description="How many people the quantities feed.")
     active_time_minutes: int | None = Field(default=None, ge=0)
     total_time_minutes: int | None = Field(default=None, ge=0)
     ingredients: list[IngredientInput] = Field(min_length=1)
     steps: list[StepInput] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _pictures_an_ingredient(self) -> Self:
+        if not any(ingredient.icon for ingredient in self.ingredients):
+            raise ValueError("Give at least one ingredient an `icon`, for the meal's picture.")
+        return self
 
     @model_validator(mode="after")
     def _steps_use_its_ingredients(self) -> Self:

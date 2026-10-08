@@ -3,7 +3,7 @@ import { addDays, formatDate } from '../../lib/dates'
 import { elapsed, plural } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
-import { MealArt } from '../../ui/art'
+import { PlateArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { Icon, type IconName } from '../../ui/Icon'
@@ -51,7 +51,7 @@ export function PlacedStep({ order, onChanged, onClose }: PlacedStepProps) {
         }
       >
         <AgentWork
-          art={<MealArt />}
+          art={<PlateArt />}
           title={`Booking at ${store}`}
           took={book ? elapsed(new Date(book.created_at), now) : 'Starting'}
           lede="Filling your cart, choosing the delivery window, and placing the order. This takes about a minute."

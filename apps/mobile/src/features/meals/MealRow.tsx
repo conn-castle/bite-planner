@@ -24,7 +24,7 @@ export function MealRow({ meal, onOpen, rated = false, servings, control }: Meal
   const minutes = mealMinutes(meal)
   return (
     <ListRow
-      art={<MealArt />}
+      art={<MealArt meal={meal} />}
       overline={[minutes != null && formatMinutes(minutes), servings != null && plural(servings, 'serving')]
         .filter((part) => part !== false)
         .join(' · ') || undefined}

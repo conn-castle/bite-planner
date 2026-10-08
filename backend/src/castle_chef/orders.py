@@ -15,7 +15,6 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import delete, literal, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, func, select
 
 from castle_chef import products, quotes, ratings, shopping
@@ -617,20 +616,16 @@ def use_alternative(item: ShoppingListItem, product_id: str) -> None:
 # Computed, not stored.
 
 
-def household_meal(
-    session: Session, household_id: UUID, meal_id: UUID, *, with_ingredients: bool = False
-) -> Meal:
+def household_meal(session: Session, household_id: UUID, meal_id: UUID) -> Meal:
     """One of the household's meals: a suggestion of one of its orders (every pick
-    is one), with its ingredients loaded if asked. Another household's is
-    indistinguishable from none, and so is one whose draft was discarded."""
+    is one). Another household's is indistinguishable from none, and so is one whose
+    draft was discarded."""
     query = (
         select(Meal)
         .join(Job, col(Job.id) == Meal.job_id)
         .join(GroceryOrder, col(GroceryOrder.id) == Job.grocery_order_id)
         .where(Meal.id == meal_id, GroceryOrder.household_id == household_id)
     )
-    if with_ingredients:
-        query = query.options(selectinload(Meal.ingredients))  # type: ignore[arg-type]
     meal = session.exec(query).first()
     if meal is None:
         raise MealNotFound("No such meal.")

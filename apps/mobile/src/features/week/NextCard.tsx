@@ -1,7 +1,7 @@
 import { BATCH_SIZE } from '../../lib/api/limits'
 import type { ISODate, NextOrder, PlacedOrder } from '../../lib/api/types'
 import { addDays, daysBetween, formatDate, relativeDay } from '../../lib/dates'
-import { MealArt } from '../../ui/art'
+import { PlateArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { Countdown } from '../../ui/Countdown'
@@ -193,7 +193,7 @@ function WelcomeCard({ onStart }: { onStart: () => void }) {
         <div className={styles.art} aria-hidden="true">
           {[0, 1, 2].map((index) => (
             <span key={index} className={styles.meal}>
-              <MealArt />
+              <PlateArt />
             </span>
           ))}
         </div>

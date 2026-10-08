@@ -104,6 +104,7 @@ describe('marking a suggestion "not for us"', () => {
       description: null,
       active_time_minutes: null,
       total_time_minutes: null,
+      picture: null,
       rating: null,
       servings: 4,
       steps: [],

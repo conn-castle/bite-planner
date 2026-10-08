@@ -164,7 +164,7 @@ function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
     <div className={`${styles.card} ${added ? styles.added : ''} ${notForUs ? styles.notForUs : ''}`}>
       <button type="button" className={styles.open} onClick={onOpen} {...press}>
         <span className={styles.art}>
-          <MealArt />
+          <MealArt meal={meal} />
         </span>
         {notForUs && <span className={styles.gone}>No more meals like this</span>}
         <span className={styles.text}>

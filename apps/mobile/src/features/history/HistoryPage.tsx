@@ -160,7 +160,7 @@ function MealTile({ meal, onOpen }: { meal: MealSummary; onOpen: () => void }) {
   return (
     <button type="button" className={styles.tile} onClick={onOpen} {...press}>
       <span className={styles.tileArt}>
-        <MealArt />
+        <MealArt meal={meal} />
       </span>
       <span className={styles.tileText}>
         <span className={styles.tileName}>{meal.name}</span>

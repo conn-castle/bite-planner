@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from castle_chef_agent import windows
 from castle_chef_agent.checkout import Checkout
+from castle_chef_agent.meals import Color, Dish, Icon
 from castle_chef_agent.products import ProductCount
 from castle_chef_agent.shopping import Aisle
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response, status
@@ -105,6 +106,19 @@ class MemberOut(BaseModel):
     name: str | None
 
 
+class PicturedIngredientOut(BaseModel):
+    icon: Icon
+    color: Color
+
+
+class MealPictureOut(BaseModel):
+    """What the app draws a meal's picture from."""
+
+    dish: Dish
+    # Its pictured ingredients, in recipe order.
+    ingredients: list[PicturedIngredientOut]
+
+
 class MealSummaryOut(BaseModel):
     id: UUID
     name: str
@@ -113,6 +127,8 @@ class MealSummaryOut(BaseModel):
     total_time_minutes: int | None
     # The household's rating; null when not rated.
     rating: MealRating | None
+    # Null for meals from before pictures.
+    picture: MealPictureOut | None
 
 
 class JobOut(BaseModel):
@@ -658,7 +674,24 @@ def meal_summary(meal: Meal, rated: dict[UUID, MealRating]) -> MealSummaryOut:
         active_time_minutes=meal.active_time_minutes,
         total_time_minutes=meal.total_time_minutes,
         rating=rated.get(meal.id),
+        picture=meal_picture(meal),
     )
+
+
+def meal_picture(meal: Meal) -> MealPictureOut | None:
+    """What the app draws the meal's picture from; None for a meal from before
+    pictures (it has no dish). A meal with a dish pictures at least one ingredient
+    (`add_meal` refuses one that doesn't); one that doesn't is an error."""
+    if meal.dish is None:
+        return None
+    ingredients = [
+        PicturedIngredientOut(icon=ingredient.icon, color=ingredient.color)
+        for ingredient in meal.ingredients
+        if ingredient.icon is not None and ingredient.color is not None
+    ]
+    if not ingredients:
+        raise RuntimeError(f"Meal {meal.id} has a dish but no pictured ingredients.")
+    return MealPictureOut(dish=meal.dish, ingredients=ingredients)
 
 
 def job_out(
@@ -1722,7 +1755,7 @@ def create_app() -> FastAPI:
         session: DbSession,
     ) -> MealOut:
         """A recipe: one of the household's suggestions (every pick is one)."""
-        meal = orders.household_meal(session, caller.household_id, meal_id, with_ingredients=True)
+        meal = orders.household_meal(session, caller.household_id, meal_id)
         rated = ratings.of_meals(session, caller.household_id, [meal.id])
         return MealOut(
             **meal_summary(meal, rated).model_dump(),

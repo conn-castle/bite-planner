@@ -8,6 +8,7 @@ const meal = (id: string): MealSummary => ({
   description: null,
   active_time_minutes: null,
   total_time_minutes: null,
+  picture: null,
   rating: null,
 })
 

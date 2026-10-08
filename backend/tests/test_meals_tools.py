@@ -4,6 +4,7 @@ makes it."""
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +24,11 @@ MEAL: dict[str, Any] = {
     "servings": 6,
     "active_time_minutes": 25,
     "total_time_minutes": 40,
+    "dish": "skillet",
     "ingredients": [
-        {"name": "chicken", "quantity": 3, "unit": "lb"},
+        {"name": "chicken", "quantity": 3, "unit": "lb", "icon": "drumstick", "color": "tan"},
         {"name": "garlic", "quantity": 4, "unit": "clove", "preparation": "minced"},
-        {"name": "heavy cream", "quantity": 2, "unit": "cup"},
+        {"name": "heavy cream", "quantity": 2, "unit": "cup", "icon": "sauce", "color": "cream"},
     ],
     "steps": [
         {"text": "Season the chicken.", "ingredients": ["chicken"]},
@@ -86,7 +88,7 @@ def test_a_step_may_only_use_ingredients_the_meal_lists(tmp_path: Path) -> None:
 
 def test_a_step_names_which_entry_of_an_ingredient_listed_twice(tmp_path: Path) -> None:
     ingredients = [
-        {"name": "milk", "quantity": 1, "unit": "cup"},
+        {"name": "milk", "quantity": 1, "unit": "cup", "icon": "sauce", "color": "white"},
         {"name": "Milk", "quantity": 2, "unit": "tbsp"},
     ]
     steps = [{"text": "Whisk in the milk.", "ingredients": ["milk"]}]
@@ -106,6 +108,57 @@ def test_a_step_timer_is_at_least_a_minute(tmp_path: Path) -> None:
     assert refused
     assert "timer_minutes\n  Input should be greater than or equal to 1" in text
     assert not (tmp_path / "meals").exists()
+
+
+def test_a_meal_pictures_at_least_one_ingredient(tmp_path: Path) -> None:
+    ingredients = [{"name": "chicken", "quantity": 3, "unit": "lb"}]
+    steps = [{"text": "Roast the chicken.", "ingredients": ["chicken"]}]
+
+    refused, text = add(batch(tmp_path), MEAL | {"ingredients": ingredients, "steps": steps})
+
+    assert refused
+    assert "Give at least one ingredient an `icon`" in text
+    assert not (tmp_path / "meals").exists()
+
+
+def test_a_pictured_ingredient_has_both_an_icon_and_a_color(tmp_path: Path) -> None:
+    tools = batch(tmp_path)
+    no_color = {"name": "chicken", "quantity": 3, "unit": "lb", "icon": "drumstick"}
+    no_icon = {"name": "chicken", "quantity": 3, "unit": "lb", "color": "tan"}
+    steps = [{"text": "Roast the chicken.", "ingredients": ["chicken"]}]
+
+    results = [
+        add(tools, MEAL | {"ingredients": [ingredient], "steps": steps})
+        for ingredient in (no_color, no_icon)
+    ]
+
+    for refused, text in results:
+        assert refused
+        assert '"chicken": set `color` exactly when `icon` is' in text
+    assert not (tmp_path / "meals").exists()
+
+
+def test_the_agent_reads_every_dish_icon_and_color_it_can_choose(tmp_path: Path) -> None:
+    # The agent learns the choices from add_meal's input schema, as it reads it.
+    tools = asyncio.run(batch(tmp_path).list_tools())
+    (tool,) = [tool for tool in tools if tool.name == "add_meal"]
+    definitions = tool.input_schema["$defs"]
+
+    assert definitions["Dish"]["enum"] == ["plate", "bowl", "skillet", "tacos"]
+    assert definitions["Icon"]["enum"] == [
+        *["fish", "shrimp", "drumstick", "steak", "pork_chop", "ground_meat", "tofu", "egg"],
+        *["beans", "chickpeas", "rice", "pasta", "sauce", "tortilla", "leafy", "stalks"],
+        *["round", "pepper", "mushroom", "root", "broccoli", "corn", "bread", "bacon"],
+        *["cheese_wedge", "cheese_cube"],
+    ]
+    assert definitions["Color"]["enum"] == [
+        *["white", "cream", "yellow", "gold", "tan", "orange", "salmon", "pink", "red"],
+        *["dark_red", "purple", "brown", "black", "light_green", "green", "dark_green"],
+    ]
+    # Each icon is named in the field's description, so the agent knows what it stands for.
+    description = definitions["IngredientInput"]["properties"]["icon"]["description"]
+    for icon in definitions["Icon"]["enum"]:
+        assert re.search(rf"\b{icon}\b", description), icon
 
 
 def test_a_meal_with_fields_the_tool_doesnt_have_is_refused(tmp_path: Path) -> None:

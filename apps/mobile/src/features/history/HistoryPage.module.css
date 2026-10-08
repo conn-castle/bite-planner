@@ -100,7 +100,9 @@
 .tileArt {
   display: grid;
   place-items: center;
+  position: relative;
   height: 96px;
+  overflow: hidden;
   background: var(--cc-fill);
 }
 

@@ -159,6 +159,7 @@
 }
 
 .art {
+  position: relative;
   flex: none;
   display: grid;
   place-items: center;

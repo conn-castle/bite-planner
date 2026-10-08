@@ -91,6 +91,69 @@ export type JobStatus = 'pending' | 'running' | 'succeeded' | 'failed'
  */
 export type MealRating = 'not_for_us' | 'down' | 'up' | 'favorite'
 
+/** What a meal's picture shows it served in. */
+export type MealDish = 'plate' | 'bowl' | 'skillet' | 'tacos'
+
+/** An ingredient's icon in its meal's picture (castle_chef_agent.meals.Icon). */
+export type MealIcon =
+  | 'fish'
+  | 'shrimp'
+  | 'drumstick'
+  | 'steak'
+  | 'pork_chop'
+  | 'ground_meat'
+  | 'tofu'
+  | 'egg'
+  | 'beans'
+  | 'chickpeas'
+  | 'rice'
+  | 'pasta'
+  | 'sauce'
+  | 'tortilla'
+  | 'leafy'
+  | 'stalks'
+  | 'round'
+  | 'pepper'
+  | 'mushroom'
+  | 'root'
+  | 'broccoli'
+  | 'corn'
+  | 'bread'
+  | 'bacon'
+  | 'cheese_wedge'
+  | 'cheese_cube'
+
+/** A pictured ingredient's color, from the picture's palette. */
+export type MealColor =
+  | 'white'
+  | 'cream'
+  | 'yellow'
+  | 'gold'
+  | 'tan'
+  | 'orange'
+  | 'salmon'
+  | 'pink'
+  | 'red'
+  | 'dark_red'
+  | 'purple'
+  | 'brown'
+  | 'black'
+  | 'light_green'
+  | 'green'
+  | 'dark_green'
+
+export interface PicturedIngredient {
+  icon: MealIcon
+  color: MealColor
+}
+
+/** What the app draws a meal's picture from. */
+export interface MealPicture {
+  dish: MealDish
+  /** Its pictured ingredients, in recipe order; at least one. */
+  ingredients: PicturedIngredient[]
+}
+
 /** A suggestion card: a meal without its recipe. */
 export interface MealSummary {
   id: string
@@ -100,6 +163,8 @@ export interface MealSummary {
   total_time_minutes: number | null
   /** Null when not rated. */
   rating: MealRating | null
+  /** Null for meals from before pictures. */
+  picture: MealPicture | null
 }
 
 /**

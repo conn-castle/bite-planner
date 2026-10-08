@@ -153,7 +153,7 @@ export function PlacedCard({
         aria-expanded={mealsOpen}
         onClick={onToggleMeals}
       >
-        {!mealsOpen && <MealStack count={order.meals.length} />}
+        {!mealsOpen && <MealStack meals={order.meals} />}
         <span className={styles.foldLabel}>{meals}</span>
         <span className={styles.chevron} aria-hidden="true">
           <Icon name="chevD" />

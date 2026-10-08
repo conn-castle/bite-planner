@@ -18,7 +18,7 @@ import pytest
 from botocore.stub import Stubber
 from castle_chef_agent.checkout import Checkout, QuoteLine
 from castle_chef_agent.instacart import Product
-from castle_chef_agent.meals import IngredientInput, MealInput, StepInput
+from castle_chef_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ItemChoice, ProductCount
 from castle_chef_agent.shopping import Aisle
 from fastapi.testclient import TestClient
@@ -252,9 +252,18 @@ def recipe(name: str) -> MealInput:
         servings=4,
         active_time_minutes=15,
         total_time_minutes=30,
+        dish=Dish.TACOS,
         ingredients=[
-            IngredientInput(name="tortillas", quantity=8),
-            IngredientInput(name="ground beef", quantity=1, unit="lb", preparation="browned"),
+            IngredientInput(name="tortillas", quantity=8, icon=Icon.TORTILLA, color=Color.GOLD),
+            IngredientInput(
+                name="ground beef",
+                quantity=1,
+                unit="lb",
+                preparation="browned",
+                icon=Icon.GROUND_MEAT,
+                color=Color.BROWN,
+            ),
+            IngredientInput(name="salt"),  # not in its picture
         ],
         steps=[
             StepInput(text="Brown the beef.", ingredients=["Ground beef"]),
@@ -1145,6 +1154,14 @@ def test_suggestions_are_the_batches_meals_oldest_batch_first(client: TestClient
         "active_time_minutes": 15,
         "total_time_minutes": 30,
         "rating": None,
+        # Its pictured ingredients, in recipe order (not the salt).
+        "picture": {
+            "dish": "tacos",
+            "ingredients": [
+                {"icon": "tortilla", "color": "gold"},
+                {"icon": "ground_meat", "color": "brown"},
+            ],
+        },
     }
     assert get_order(client, order_id, DAD)["jobs"] == order["jobs"]  # in a fixed order
 
@@ -1737,6 +1754,14 @@ def test_a_suggestion_opens_as_its_full_recipe(client: TestClient) -> None:
         "active_time_minutes": 15,
         "total_time_minutes": 30,
         "rating": None,
+        # Its pictured ingredients, in recipe order (not the salt).
+        "picture": {
+            "dish": "tacos",
+            "ingredients": [
+                {"icon": "tortilla", "color": "gold"},
+                {"icon": "ground_meat", "color": "brown"},
+            ],
+        },
         "servings": 4,
         # Each step with its timer and the ingredients it uses (by position).
         "steps": [
@@ -1747,8 +1772,32 @@ def test_a_suggestion_opens_as_its_full_recipe(client: TestClient) -> None:
         "ingredients": [
             {"name": "tortillas", "quantity": 8, "unit": None, "preparation": None},
             {"name": "ground beef", "quantity": 1, "unit": "lb", "preparation": "browned"},
+            {"name": "salt", "quantity": None, "unit": None, "preparation": None},
         ],
     }
+
+
+def test_a_meal_from_before_pictures_has_none(client: TestClient) -> None:
+    _, [tacos] = with_suggestions(client, names=("Tacos",))
+    with Session(get_engine()) as session:
+        session.execute(text("UPDATE meal_ingredient SET icon = NULL, color = NULL"))
+        session.execute(text("UPDATE meal SET dish = NULL"))
+        session.commit()
+
+    meal = ok(client.get(f"/v1/meals/{tacos}", headers=as_user(DAD)))
+
+    assert meal["picture"] is None
+
+
+def test_a_meal_with_a_dish_and_nothing_pictured_is_an_error(client: TestClient) -> None:
+    # add_meal refuses such a meal; one that got into the database another way is a bug.
+    _, [tacos] = with_suggestions(client, names=("Tacos",))
+    with Session(get_engine()) as session:
+        session.execute(text("UPDATE meal_ingredient SET icon = NULL, color = NULL"))
+        session.commit()
+
+    with pytest.raises(RuntimeError, match=f"Meal {tacos} has a dish but no pictured ingredients"):
+        client.get(f"/v1/meals/{tacos}", headers=as_user(DAD))
 
 
 def test_picks_of_placed_orders_stay_readable(client: TestClient) -> None:

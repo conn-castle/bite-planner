@@ -4,7 +4,7 @@ import { elapsed, plural } from '../../lib/format'
 import { haptics } from '../../lib/haptics'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
-import { MealArt } from '../../ui/art'
+import { PlateArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 import { InfoDialog } from '../../ui/InfoDialog'
@@ -146,7 +146,7 @@ function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClos
       }
     >
       <AgentWork
-        art={<MealArt />}
+        art={<PlateArt />}
         title={shopping ? `Shopping at ${store}` : 'Making your shopping list'}
         took={working ? (running && job ? elapsed(new Date(job.created_at), now) : 'Starting') : null}
         lede={

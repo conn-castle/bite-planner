@@ -7,7 +7,7 @@ import { logger } from '../../lib/log'
 import { formatMoney } from '../../lib/products'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
-import { MealArt } from '../../ui/art'
+import { PlateArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { Group, Row } from '../../ui/Group'
@@ -154,7 +154,7 @@ function QuoteWait({ order, store, failed, signedOut, startFailed, retrying, onR
       }
     >
       <AgentWork
-        art={<MealArt />}
+        art={<PlateArt />}
         title={`Getting your total from ${store}`}
         took={reading ? (job ? elapsed(new Date(job.created_at), now) : 'Starting') : null}
         lede={`Filling your ${store} cart and reading checkout. This takes about a minute; anything already in your cart goes back afterwards.`}

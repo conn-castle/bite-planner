@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
+from castle_chef_agent.meals import Color, Dish, Icon
 from castle_chef_agent.products import ProductCount
 from castle_chef_agent.shopping import Aisle
 from pydantic import BaseModel
@@ -39,6 +40,11 @@ def _between(column: str, allowed: Range) -> str:
     return f"{column} BETWEEN {allowed.low} AND {allowed.high}"
 
 
+def _values(enum: type[StrEnum]) -> list[str]:
+    """Store an enum's lowercase values (what the app sees), not its member names."""
+    return [member.value for member in enum]
+
+
 class TimestampMixin(SQLModel):
     """Common creation and modification timestamps.
 
@@ -62,6 +68,9 @@ class MealIngredient(SQLModel, table=True):
     """An ingredient belonging to a meal."""
 
     __tablename__ = "meal_ingredient"
+    __table_args__ = (
+        CheckConstraint("(icon IS NULL) = (color IS NULL)", name="meal_ingredient_icon_color"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
 
@@ -78,6 +87,14 @@ class MealIngredient(SQLModel, table=True):
     quantity: float | None = None
     unit: str | None = None
     preparation: str | None = None
+    # How the meal's picture shows it; both null when it isn't shown, and for meals
+    # from before pictures.
+    icon: Icon | None = Field(
+        default=None, sa_type=Enum(Icon, name="ingredient_icon", values_callable=_values)
+    )
+    color: Color | None = Field(
+        default=None, sa_type=Enum(Color, name="ingredient_color", values_callable=_values)
+    )
 
     meal: Meal = Relationship(back_populates="ingredients")
 
@@ -147,19 +164,20 @@ class Meal(TimestampMixin, SQLModel, table=True):
     active_time_minutes: int | None = None
     total_time_minutes: int | None = None
 
+    # What its picture shows it served in; null for meals from before pictures.
+    dish: Dish | None = Field(
+        default=None, sa_type=Enum(Dish, name="dish", values_callable=_values)
+    )
+
     # In order. They don't need their own table.
     steps: list[MealStep] = Field(default_factory=list, sa_type=ModelJSONBList(MealStep))
 
     ingredients: list[MealIngredient] = Relationship(
         back_populates="meal",
         cascade_delete=True,
-        sa_relationship_kwargs={"order_by": "MealIngredient.position"},
+        # Loaded with the meal: every meal the app sees is drawn from them.
+        sa_relationship_kwargs={"order_by": "MealIngredient.position", "lazy": "selectin"},
     )
-
-
-def _values(enum: type[StrEnum]) -> list[str]:
-    """Store an enum's lowercase values (what the app sees), not its member names."""
-    return [member.value for member in enum]
 
 
 class ListPick(BaseModel):

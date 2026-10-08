@@ -1,0 +1,7 @@
+/* A meal's picture fills the slot it's in with its tint; the drawing keeps the slot's size rules. */
+.picture {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}

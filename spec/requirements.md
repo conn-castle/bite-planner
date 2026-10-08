@@ -47,7 +47,7 @@ Each step does one thing.
 - [x] Future suggestions avoid meals like the ones marked "don't show meals like this"; these preferences belong to the household.
 - [x] The user can generate 20 more suggestions, added below the current ones.
 - [x] The user can leave while suggestions are generating and gets a notification when they're ready.
-- [ ] Each meal shows an icon.
+- [x] Each meal shows an icon: a picture made from its ingredients, the same every time (meals from before pictures show a plain plate).
 
 ## Rating meals
 

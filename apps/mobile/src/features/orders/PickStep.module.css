@@ -62,9 +62,11 @@
 }
 
 .art {
+  position: relative;
   display: grid;
   place-items: center;
   height: 104px;
+  overflow: hidden;
   /* The card's rounded top, inside its border. */
   border-radius: calc(var(--cc-radius-md) - 1.5px) calc(var(--cc-radius-md) - 1.5px) 0 0;
   background: var(--cc-fill);
@@ -146,7 +148,7 @@
   border-color: transparent;
 }
 
-.notForUs .art svg {
+.notForUs .art > * {
   filter: grayscale(1);
   opacity: 0.35;
 }

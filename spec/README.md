@@ -95,6 +95,13 @@ The order lock, as decided:
 - Discarding the draft is refused while another member is ordering (the locked card has no Discard, as mocked).
 - The locked card and screen show the app's steps, not the mockup's four, and the card says what they're doing at that step ("Sam is choosing the dates and servings"; with the one-thing-per-step flow, each step's own words).
 
+Meal pictures (reviewed 2026-10-05 to 2026-10-07; the mockup's food illustrations):
+
+- A meal's picture is drawn from its ingredients, not generated: the agent tags each meal with its dish (plate, bowl, skillet, or tacos) and each ingredient it pictures with one of 26 icons and one of 16 colors (`castle_chef_agent.meals`; Nick chose tagging over a lookup table in the app, 2026-10-07). Salt, oil, spices, herbs, and other small amounts aren't pictured.
+- The picture (ui/art `MealArt`): the main ingredient (the first fish, shrimp, drumstick, steak, pork chop, ground meat, tofu, egg, beans, or chickpeas; else the first side) large, up and to the right, in front; under it its bed (the first rice, pasta, sauce, or tortilla, drawn as its surface; else the next ingredient); two sides behind it, the first lying along the dish's lower-left edge. All in the dish seen from above (a plate with the ring of its well, a bowl, a skillet with its handle), or tacos side-on with the tortilla as the shell. A tint of the first ingredient fills the picture's slot. No herb garnish (reviewed 2026-10-07: every meal had it).
+- Icons are flat, in the app's ink line on warm fills, with no depth. Asparagus and green beans share one icon (stalks); a steak is a T-bone's teardrop with a band of fat and a round bone; pasta is five elbow macaroni.
+- Meals from before pictures, and the agent's waiting screens, show the plain plate (ui/art `PlateArt`).
+
 Cooking (decided 2026-10-04):
 
 - A step's timer rings with a phone notification, scheduled when it starts, so it rings with the phone locked or the app closed, with a sound bundled with the app (iOS rings silently without one), and in the app too. It needs the phone's notifications; when they're off, the timer doesn't start and says how to turn them on (Nick chose a timer that rings over one counting down only while the app is open, 2026-10-04).

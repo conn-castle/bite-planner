@@ -1,3 +1,3 @@
 Create $count distinct meals for a family. Every meal must be low effort to cook.
 
-${avoid}Add each meal with the castle-chef `add_meal` tool, and always set its `servings`. If a tool reports an error, fix what it names and call it again. When you think all $count meals are added, call `done`, and fix what it reports until it says the batch is complete. Then reply with the meals' names.
+${avoid}Add each meal with the castle-chef `add_meal` tool, and always set its `servings`. Give each meal its `dish`, and give its main ingredients (what you'd see on the plate) an `icon` and `color` for its picture. If a tool reports an error, fix what it names and call it again. When you think all $count meals are added, call `done`, and fix what it reports until it says the batch is complete. Then reply with the meals' names.

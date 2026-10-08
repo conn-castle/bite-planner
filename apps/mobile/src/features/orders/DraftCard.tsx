@@ -9,7 +9,7 @@ import { MealStack } from '../../ui/MealStack'
 import { OrderCard, OrderCardActions, OrderCardBody, OrderCardLine } from '../../ui/OrderCard'
 import { ProgressBar } from '../../ui/ProgressBar'
 import { useNotifiedOfJob, useYourReminder } from '../notifications/notifications'
-import { newestBatchState, suggestions } from './batches'
+import { newestBatchState, pickedMeals, suggestions } from './batches'
 import { defaultDeliveryDate } from './dates'
 import styles from './DraftCard.module.css'
 
@@ -87,7 +87,7 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
         )}
         {ideas > 0 && (
           <div className={styles.meals}>
-            <MealStack count={picks > 0 ? picks : ideas} large />
+            <MealStack meals={picks > 0 ? pickedMeals(order).map(({ meal }) => meal) : suggestions(order)} large />
           </div>
         )}
         {ideas > 0 && took !== null && (

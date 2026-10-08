@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 from castle_chef_agent.checkout import RENEWED_SESSION_FILE, SESSION_FILE, Checkout
 from castle_chef_agent.instacart import Product
-from castle_chef_agent.meals import IngredientInput, MealInput, StepInput
+from castle_chef_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ProductCount
 from castle_chef_agent.shopping import Aisle
 from castle_chef_agent.windows import Window
@@ -462,7 +462,8 @@ def suggest(session: Session, job: Job, *meals: tuple[str, str | None]) -> list[
                 name=name,
                 description=description,
                 servings=4,
-                ingredients=[IngredientInput(name="onions")],
+                dish=Dish.PLATE,
+                ingredients=[IngredientInput(name="onions", icon=Icon.ROUND, color=Color.CREAM)],
                 steps=[StepInput(text="Cook.")],
             )
             for name, description in meals
@@ -564,9 +565,22 @@ def picked(session: Session, job: Job, *servings: int) -> list[Meal]:
             MealInput(
                 name=f"Meal {index}",
                 servings=4,
+                dish=Dish.SKILLET,
                 ingredients=[
-                    IngredientInput(name="Italian sausage", quantity=1.5, unit="lb"),
-                    IngredientInput(name="bell peppers", quantity=3, preparation="sliced"),
+                    IngredientInput(
+                        name="Italian sausage",
+                        quantity=1.5,
+                        unit="lb",
+                        icon=Icon.GROUND_MEAT,
+                        color=Color.BROWN,
+                    ),
+                    IngredientInput(
+                        name="bell peppers",
+                        quantity=3,
+                        preparation="sliced",
+                        icon=Icon.PEPPER,
+                        color=Color.RED,
+                    ),
                     IngredientInput(name="salt"),
                 ],
                 steps=[StepInput(text="Cook.")],

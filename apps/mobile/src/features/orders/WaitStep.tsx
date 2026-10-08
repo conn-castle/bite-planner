@@ -3,7 +3,7 @@ import type { GroceryOrder } from '../../lib/api/types'
 import { elapsed } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { AgentWork } from '../../ui/AgentWork'
-import { MealArt } from '../../ui/art'
+import { PlateArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 import { RetryNotice } from '../../ui/RetryNotice'
@@ -79,7 +79,7 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
       }
     >
       <AgentWork
-        art={<MealArt />}
+        art={<PlateArt />}
         title={`Finding meals for Order ${order.number}`}
         took={running ? (batch.status === 'running' ? elapsed(new Date(batch.job.created_at), now) : 'Starting') : null}
         lede="This usually takes a minute or two."

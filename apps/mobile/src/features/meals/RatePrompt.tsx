@@ -52,7 +52,7 @@ export function RatePrompt() {
           {meals.map((meal) => (
             <div key={meal.id} className={styles.row}>
               <span className={styles.art}>
-                <MealArt />
+                <MealArt meal={meal} />
               </span>
               <span className={styles.name}>{meal.name}</span>
               <MealRatingChoices meal={meal} />
