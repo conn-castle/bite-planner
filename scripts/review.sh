@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-readonly REVIEW_PORT=5174 APP_PORT=5175
+readonly REVIEW_PORT=5174 APP_PORT=5175 API_PORT=8000
 readonly REVIEW_TOOL=.agent-layer/skills-imported/request-html-comments/scripts/html_review.mjs
 
 [[ -f backend/.env ]] || { echo "Missing backend/.env: run make env" >&2; exit 1; }
@@ -47,22 +47,29 @@ set -m
 api=$!
 (cd apps/mobile && CASTLE_CHEF_REVIEW_PORT=$REVIEW_PORT exec pnpm exec vite --port "$APP_PORT" --strictPort) </dev/null &
 web=$!
-trap 'kill -- -"$api" -"$web" 2>/dev/null || true; wait' EXIT
+# Waits on the servers by pid, never a bare `wait`: a background child that a stop
+# signal reaches between its fork and exec runs these traps with this shell's jobs,
+# and a bare `wait` there retries a job that isn't its child forever (bash 5.3).
+trap 'kill -- -"$api" -"$web" 2>/dev/null || true; wait "$api" "$web" 2>/dev/null || true' EXIT
 trap 'exit 130' INT TERM
 
+# Both servers answer before the review starts; one that exited stops it here (e.g.
+# a port in use), before anything else is started.
+ready() { curl -sf -o /dev/null "http://127.0.0.1:$API_PORT/health" && curl -sf -o /dev/null "http://127.0.0.1:$APP_PORT/"; }
 for _ in $(seq 60); do
-  curl -sf -o /dev/null "http://127.0.0.1:$APP_PORT/" && break
+  ready && break
+  kill -0 "$api" 2>/dev/null || { echo "The API exited" >&2; exit 1; }
   kill -0 "$web" 2>/dev/null || { echo "The app dev server exited" >&2; exit 1; }
   sleep 0.5
 done
-curl -sf -o /dev/null "http://127.0.0.1:$APP_PORT/" || { echo "The app dev server did not start" >&2; exit 1; }
+ready || { echo "The API or the app dev server did not start" >&2; exit 1; }
 
 echo "Open https://$lan_ip:$REVIEW_PORT/ on a device on this network and accept the certificate warning."
 echo "Comments will be written to $output"
 node "$REVIEW_TOOL" "http://127.0.0.1:$APP_PORT/" --no-open --host "$lan_ip" --port "$REVIEW_PORT" \
   --tls-cert "$cert" --tls-key "$key" --output "$output" </dev/null &
 review=$!
-trap 'kill -- -"$api" -"$web" -"$review" 2>/dev/null || true; wait' EXIT
+trap 'kill -- -"$api" -"$web" -"$review" 2>/dev/null || true; wait "$api" "$web" "$review" 2>/dev/null || true' EXIT
 
 # The review tool exits 0 when the review is sent, 2 when cancelled.
 status=0
