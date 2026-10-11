@@ -60,6 +60,8 @@ aws lambda invoke --profile conn --region us-east-1 --function-name "$(out Remin
 
 **Sign-up** (invite-only): on `main`, Neon Auth calls the API before it creates any account (its blocking `user.before_create` webhook, signed with Neon Auth's own keys), and the API allows only an email someone has invited (`POST /v1/auth/neon-webhook`; `backend/src/castle_chef/household.py`). It fails closed: while the API is down, nobody new can sign up (members already in sign in as usual). The webhook is Neon Auth configuration on the branch; every deploy sets it on `main` with the API's URL (10 seconds per attempt, so a cold API answers) and checks it is exactly that (`.github/actions/invite-only`), and so does every rollback, with the current `main`'s action whatever release it goes back to, so a restored `main` gets it again. To see it: `neonctl api /projects/example-project/branches/<main's id>/auth/webhooks`. `dev` has none: its API is a laptop, which Neon can't reach. To set it by hand:
 
+The allow response is `{"allowed": true}`: Neon rejects an `error_message: null` field with `WEBHOOK_INVALID_RESPONSE` (verified against a real `dev` signup on 2026-10-11). A 200 response from our webhook only shows that we allowed signup; check the Neon Auth user table or the phone's `auth.client_event` if account creation still fails.
+
 ```sh
 api=$(aws cloudformation describe-stacks --profile conn --region us-east-1 --stack-name CastleChef \
   --query "Stacks[0].Outputs[?OutputKey=='ApiUrlOutput'].OutputValue" --output text)
@@ -111,6 +113,7 @@ fields @timestamp, level, event, route, status, detail, user_id, entry.event, en
 ```
 
 - A member's lines: add `| filter user_id = "<id>"` (`client.batch` lines give the id and email for each phone's uploads). The app's own lines are `client.log`, with what it logged in `entry`.
+- A sign-in before membership: filter `event = "auth.client_event" and email = "<address>"`. These lines record code delivery, verification, and failures with provider status and code, without the one-time code. The `auth.sign_up_allowed` webhook line means the API allowed signup; it does not prove Neon created the account.
 - A request that failed unexpectedly is `http.failed` (level error), with its route, member, and traceback in `exception`.
 - An order or job: `filter grocery_order_id = "<id>" or job_id = "<id>"`, on the worker's log group too (and the failure handler's, for a worker that stopped).
 - A job's agent: its record ([Job records](#job-records)) has everything it was given and did.

@@ -3420,12 +3420,55 @@ def before_create(client: TestClient, email: str, genuine: bool = True) -> Respo
 def test_neon_auth_makes_an_account_only_for_an_invited_email(client: TestClient) -> None:
     ok(invite(client, "sam@example.com"), 201)
 
-    assert ok(before_create(client, "SAM@example.com")) == {"allowed": True, "error_message": None}
+    assert ok(before_create(client, "SAM@example.com")) == {"allowed": True}
     refused = ok(before_create(client, "eve@example.com"))
     assert refused["allowed"] is False
     assert "invite-only" in refused["error_message"]
     # A request Neon Auth didn't sign is refused outright (and so is the sign-up).
     detail(before_create(client, "sam@example.com", genuine=False), 401)
+
+
+def test_new_users_auth_failures_are_logged_without_a_session(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    ok(invite(client, "sam@example.com"), 201)
+    with caplog.at_level(logging.INFO, logger="castle_chef.client"):
+        assert (
+            client.post(
+                "/v1/auth/diagnostics",
+                json={
+                    "email": "SAM@example.com",
+                    "event": "verify_failed",
+                    "status": 400,
+                    "code": "INVALID_OTP",
+                    "error": "Invalid code 123456 for SAM@example.com",
+                },
+            ).status_code
+            == 204
+        )
+    [event] = [record for record in caplog.records if record.msg == "auth.client_event"]
+    fields: dict[str, object] = vars(event)
+    assert fields["email"] == "sam@example.com"
+    assert fields["auth_event"] == "verify_failed"
+    assert (fields["status"], fields["code"]) == (400, "INVALID_OTP")
+    error = fields["error"]
+    assert isinstance(error, str)
+    assert "123456" not in error
+    assert "sam@example.com" not in error.lower()
+
+
+def test_unknown_email_cannot_fill_auth_diagnostic_logs(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="castle_chef.client"):
+        assert (
+            client.post(
+                "/v1/auth/diagnostics",
+                json={"email": "unknown@example.com", "event": "verify_failed"},
+            ).status_code
+            == 204
+        )
+    assert all(record.msg != "auth.client_event" for record in caplog.records)
 
 
 def test_someone_who_already_has_a_name_keeps_it_when_they_join(

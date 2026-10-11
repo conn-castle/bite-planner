@@ -500,6 +500,15 @@ export interface LogsIn {
   entries: Record<string, unknown>[]
 }
 
+/** Body of `POST /v1/auth/diagnostics`, before there is a session for log upload. */
+export interface AuthDiagnosticIn {
+  email: string
+  event: 'code_sent' | 'code_send_failed' | 'code_verified' | 'verify_failed' | 'session_failed'
+  status?: number
+  code?: string
+  error?: string
+}
+
 export interface MealIngredient {
   name: string
   quantity: number | null

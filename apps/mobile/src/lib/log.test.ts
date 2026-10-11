@@ -23,6 +23,16 @@ beforeEach(() => {
 })
 
 describe('log outbox', () => {
+  it('keeps provider error codes and statuses for sign-in diagnostics', async () => {
+    const { errorFields } = await freshLog()
+    const error = Object.assign(new Error('Invalid OTP'), { code: 'INVALID_OTP', status: 400 })
+    expect(errorFields(error)).toMatchObject({
+      error: 'Invalid OTP',
+      code: 'INVALID_OTP',
+      status: 400,
+    })
+  })
+
   it('queues entries at info and above for upload, not debug ones', async () => {
     const { logger, nextLogBatch } = await freshLog()
     logger.debug('jobs.loaded')

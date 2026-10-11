@@ -106,7 +106,13 @@ export const logger = {
 /** Fields describing an error, for `logger.error('x.failed', errorFields(e))`. */
 export function errorFields(error: unknown): LogFields {
   if (error instanceof Error) {
-    return { error: error.message, errorName: error.name, stack: error.stack }
+    return {
+      error: error.message,
+      errorName: error.name,
+      stack: error.stack,
+      ...(isRecord(error) && typeof error.code === 'string' ? { code: error.code } : {}),
+      ...(isRecord(error) && typeof error.status === 'number' ? { status: error.status } : {}),
+    }
   }
   // neon-js returns plain error objects: { message, code, status }.
   if (isRecord(error) && 'message' in error) {

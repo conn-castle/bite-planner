@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { type FormEvent, useRef, useState } from 'react'
 import { auth } from '../../lib/auth/auth'
+import { reportAuth } from '../../lib/auth/diagnostics'
 import { errorMessage } from '../../lib/errorMessage'
 import { haptics } from '../../lib/haptics'
 import { isRecord } from '../../lib/isRecord'
@@ -29,28 +30,24 @@ export function SignInPage() {
   const [busy, setBusy] = useState(false)
   const verifying = useRef(false)
 
-  async function run(event: string, action: () => Promise<void>) {
+  async function sendCode(event?: FormEvent) {
+    event?.preventDefault()
+    const address = email.trim()
     setBusy(true)
     setError(null)
     try {
-      await action()
-      logger.info(event)
-      return true
-    } catch (e) {
-      logger.warn(`${event}_failed`, errorFields(e))
-      haptics.error()
-      setError(describeError(e))
-      return false
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function sendCode(event?: FormEvent) {
-    event?.preventDefault()
-    if (await run('auth.code_sent', () => auth.sendCode(email.trim()))) {
+      await auth.sendCode(address)
+      logger.info('auth.code_sent')
+      void reportAuth(address, 'code_sent')
       setCode('')
       setStep('code')
+    } catch (error) {
+      logger.warn('auth.code_sent_failed', errorFields(error))
+      await reportAuth(address, 'code_send_failed', error)
+      haptics.error()
+      setError(describeError(error))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -58,12 +55,27 @@ export function SignInPage() {
     // Autofill completes the code and a tap on Continue can follow: a code works once.
     if (verifying.current) return
     verifying.current = true
-    await run('auth.signed_in', async () => {
+    setBusy(true)
+    setError(null)
+    const address = email.trim()
+    let verified = false
+    try {
       await auth.verifyCode(email.trim(), value)
+      verified = true
+      logger.info('auth.code_verified')
+      void reportAuth(address, 'code_verified')
       haptics.success()
       await afterSignIn(queryClient)
-    })
-    verifying.current = false
+      logger.info('auth.signed_in')
+    } catch (error) {
+      logger.warn(verified ? 'auth.session_failed' : 'auth.signed_in_failed', errorFields(error))
+      await reportAuth(address, verified ? 'session_failed' : 'verify_failed', error)
+      haptics.error()
+      setError(describeError(error))
+    } finally {
+      setBusy(false)
+      verifying.current = false
+    }
   }
 
   if (step === 'email') {

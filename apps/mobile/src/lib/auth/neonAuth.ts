@@ -33,10 +33,13 @@ async function call<T extends { error?: unknown }>(action: () => Promise<T>, fai
   const result = await action()
   if (result.error) {
     const message = isRecord(result.error) && typeof result.error.message === 'string' ? result.error.message : undefined
-    if (message === 'Invalid OTP') {
-      throw new Error('That code is wrong or has expired. Send a new one.')
+    const reason = result.error instanceof Error ? result.error : new Error(message ?? failure)
+    if (message === 'Invalid OTP') reason.message = 'That code is wrong or has expired. Send a new one.'
+    if (isRecord(result.error)) {
+      if (typeof result.error.code === 'string') Object.assign(reason, { code: result.error.code })
+      if (typeof result.error.status === 'number') Object.assign(reason, { status: result.error.status })
     }
-    throw result.error instanceof Error ? result.error : new Error(message ?? failure)
+    throw reason
   }
   return result
 }

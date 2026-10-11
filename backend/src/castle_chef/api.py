@@ -3,12 +3,13 @@ Web Adapter) in production, and with `uvicorn castle_chef.api:app` locally."""
 
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from functools import lru_cache
 from time import monotonic
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -560,6 +561,20 @@ class SignUpAnswer(BaseModel):
 
     allowed: bool
     error_message: str | None = None
+
+
+class AuthDiagnosticIn(BaseModel):
+    """A bounded sign-in event from a phone that does not have a session yet."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=254)
+    event: Literal[
+        "code_sent", "code_send_failed", "code_verified", "verify_failed", "session_failed"
+    ]
+    status: int | None = Field(default=None, ge=100, le=599)
+    code: str | None = Field(default=None, max_length=80)
+    error: str | None = Field(default=None, max_length=200)
 
 
 class LockIn(BaseModel):
@@ -1305,7 +1320,9 @@ def create_app() -> FastAPI:
         """Remove someone from the household, the caller too (leaving); never the last."""
         households.remove_member(session, caller.household_id, user_id)
 
-    @api.post("/v1/auth/neon-webhook")
+    # Neon rejects {"allowed": true, "error_message": null} as an invalid
+    # blocking-webhook response. Omit the optional field when allowing signup.
+    @api.post("/v1/auth/neon-webhook", response_model_exclude_none=True)
     async def neon_auth_webhook(
         request: Request,
         verifier: Annotated[WebhookVerifier, Depends(get_webhook_verifier)],
@@ -1336,6 +1353,39 @@ def create_app() -> FastAPI:
             error_message=(
                 "Castle Chef is invite-only: ask someone in your household to invite this email."
             ),
+        )
+
+    @api.post("/v1/auth/diagnostics", status_code=status.HTTP_204_NO_CONTENT)
+    def auth_diagnostics(body: AuthDiagnosticIn, session: DbSession) -> None:
+        """Record sign-in failures before a new member can upload normal app logs.
+
+        Only known emails are logged. The same empty response for unknown emails
+        does not reveal whether an address was invited or already has an account.
+        """
+        email = body.email.strip().lower()
+        known = session.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM household_invite WHERE lower(email) = :email) "
+                'OR EXISTS (SELECT 1 FROM neon_auth."user" WHERE lower(email) = :email)'
+            ),
+            {"email": email},
+        ).scalar_one()
+        if not known:
+            return
+        # Provider errors are useful for diagnosis, but must never contain an OTP.
+        error = re.sub(r"\b\d{6}\b", "[redacted]", body.error or "")
+        error = re.sub(re.escape(email), "[email]", error, flags=re.IGNORECASE)
+        code = re.sub(r"\b\d{6}\b", "[redacted]", body.code or "")
+        client_log.log(
+            logging.WARNING if body.event.endswith("failed") else logging.INFO,
+            "auth.client_event",
+            extra={
+                "email": email,
+                "auth_event": body.event,
+                "status": body.status,
+                "code": code or None,
+                "error": error or None,
+            },
         )
 
     # Why a request was refused, for its log line (the answer's detail).
