@@ -81,6 +81,11 @@
   transition: background-color 160ms var(--cc-ease);
 }
 
+.pressable:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: -2px;
+}
+
 .pressable:active:not(:disabled) {
   background: var(--cc-fill);
 }

@@ -37,6 +37,7 @@ const household = (settings: Partial<Household> = {}): Household => ({
   tip_percent: 10,
   tip_max_cents: 1500,
   product_gone: 'use_alternative',
+  delivery_address: null,
   members: [{ user_id: 'sam', name: 'Sam', email: 'sam@example.com' }],
   invites: [],
   ...settings,

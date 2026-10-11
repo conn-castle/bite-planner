@@ -17,7 +17,7 @@ from sqlalchemy import delete, literal, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import Session, col, func, select
 
-from castle_chef import products, quotes, ratings, shopping
+from castle_chef import delivery, products, quotes, ratings, shopping
 from castle_chef.db import for_update
 from castle_chef.jobs import shop_of
 from castle_chef.models import (
@@ -532,6 +532,13 @@ def shopped_problem(session: Session, order_id: UUID) -> str | None:
     shop = shop_of(session, build.id)
     if shop is None or shop.status != JobStatus.SUCCEEDED:
         return "The shopping list isn't shopped yet."
+    order = session.get_one(GroceryOrder, order_id)
+    household = session.get_one(Household, order.household_id)
+    if order.status == GroceryOrderStatus.DRAFT:
+        if delivery.selected(household) is None:
+            return delivery.ADDRESS_REQUIRED
+        if shop.delivery_address != household.delivery_address:
+            return delivery.ADDRESS_CHANGED
     undecided = [
         item.name
         for item in products.items_to_buy(session, build.id)

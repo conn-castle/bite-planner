@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
+from castle_chef_agent.address import Address
 from castle_chef_agent.meals import Color, Dish, Icon
 from castle_chef_agent.products import ProductCount
 from castle_chef_agent.shopping import Aisle
@@ -231,6 +232,8 @@ class Job(TimestampMixin, SQLModel, table=True):
 
     id: UUID = Field(primary_key=True)
     grocery_order_id: UUID = Field(foreign_key="grocery_order.id", ondelete="CASCADE", index=True)
+    # The destination when shopping started; changed settings invalidate its products.
+    delivery_address: Address | None = Field(default=None, sa_type=ModelJSONB(Address))
     kind: JobKind = Field(sa_type=Enum(JobKind, name="job_kind", values_callable=_values))
     status: JobStatus = Field(
         default=JobStatus.PENDING,
@@ -510,6 +513,7 @@ class Household(TimestampMixin, SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
+    delivery_address: Address | None = Field(default=None, sa_type=ModelJSONB(Address))
     # Days before an order's target date that the household decides by.
     decide_by_offset_days: int = Field(default=1, sa_column_kwargs={"server_default": "1"})
     # Days before the decide-by date that reminders start; 0 is the decide-by day.

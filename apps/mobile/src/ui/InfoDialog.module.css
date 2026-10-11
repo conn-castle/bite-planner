@@ -25,12 +25,18 @@
   align-items: center;
   gap: 14px;
   width: min(320px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
   padding: 24px 20px 20px;
   border-radius: var(--cc-radius-lg);
   background: var(--cc-bg);
   box-shadow: var(--cc-shadow-float);
   text-align: center;
   animation: pop 260ms var(--cc-ease) both;
+}
+
+.dialog > * {
+  flex-shrink: 0;
 }
 
 @keyframes pop {

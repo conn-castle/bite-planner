@@ -105,7 +105,7 @@ function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClos
   const store = storeName(order)
 
   // What went wrong is for the logs (the screen says it plainly): once per failed job.
-  const failedJob = state === 'failed' || state === 'shopFailed' ? job : undefined
+  const failedJob = (state === 'failed' || state === 'shopFailed') && job?.status === 'failed' ? job : undefined
   const failedId = failedJob?.id
   const failedError = failedJob?.error ?? null
   useEffect(() => {
@@ -161,7 +161,7 @@ function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClos
               message={
                 state === 'failed'
                   ? "We couldn't make your shopping list this time. Your meals and servings are saved."
-                  : `We couldn't finish shopping at ${store} this time. Your list is saved.`
+                  : list?.address_problem ?? `We couldn't finish shopping at ${store} this time. Your list is saved.`
               }
               onRetry={onRetry}
               busy={retrying}

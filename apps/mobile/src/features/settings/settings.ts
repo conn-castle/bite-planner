@@ -61,6 +61,7 @@ const HOUSEHOLD_SETTINGS: Record<keyof HouseholdSettings | 'name', (value: unkno
   tip_percent: (value) => typeof value === 'number',
   tip_max_cents: (value) => typeof value === 'number',
   product_gone: (value) => value === 'use_alternative' || value === 'ask',
+  delivery_address: (value) => isRecord(value) && ['street_address', 'apartment_number', 'city', 'state', 'postal_code'].every((field: string) => typeof value[field] === 'string'),
 }
 
 const isSettingName = (key: string): key is keyof typeof HOUSEHOLD_SETTINGS => Object.hasOwn(HOUSEHOLD_SETTINGS, key)
@@ -117,7 +118,8 @@ export function registerSettingsMutations(queryClient: QueryClient) {
         )
       }
       // Decide-by and reminder dates are computed from the offset and the lead.
-      if (change.decide_by_offset_days !== undefined || change.reminder_lead_days !== undefined) {
+      if (change.decide_by_offset_days !== undefined || change.reminder_lead_days !== undefined
+        || change.delivery_address !== undefined) {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: queryKeys.nextOrder }),
           queryClient.invalidateQueries({ queryKey: queryKeys.orders }),

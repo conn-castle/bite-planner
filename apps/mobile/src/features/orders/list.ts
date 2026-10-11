@@ -17,6 +17,8 @@ export type ListState = 'start' | 'building' | 'failed' | 'shopStart' | 'shoppin
 export function listState(list: ShoppingList | null): ListState {
   if (list === null) return 'start'
   if (list.current) {
+    if (list.address_problem !== null) return 'shopFailed'
+    if (!list.shop_current) return 'shopStart'
     if (list.shop === null) return 'shopStart'
     if (isRunning(list.shop)) return 'shopping'
     return list.shop.status === 'succeeded' ? 'ready' : 'shopFailed'

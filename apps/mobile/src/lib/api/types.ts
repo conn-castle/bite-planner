@@ -45,6 +45,8 @@ export type ProductGone = 'use_alternative' | 'ask'
 
 /** The household's settings, shared by everyone in it (`GET /v1/household`). */
 export interface HouseholdSettings {
+  /** Validated destination; matched to a saved Instacart address when shopping. */
+  delivery_address: DeliveryAddress | null
   /** Days before an order's target date that it's decided by: 1–7. */
   decide_by_offset_days: number
   /** Days before the decide-by date that reminders start: 0–7 (0: on the decide-by day). */
@@ -66,6 +68,23 @@ export interface Household extends HouseholdSettings {
   members: HouseholdMember[]
   /** Invitations not used yet, oldest first. */
   invites: HouseholdInvite[]
+}
+
+export interface DeliveryAddress {
+  street_address: string
+  apartment_number: string
+  city: string
+  state: string
+  postal_code: string
+}
+
+/** Transient address search results; a selected result is normalized before saving. */
+export interface AddressSearchIn {
+  query: string
+}
+
+export interface AddressSuggestions {
+  addresses: DeliveryAddress[]
 }
 
 /** Someone invited, who joins when they first sign in with this email. */
@@ -234,6 +253,8 @@ export interface ShoppingList {
   current: boolean
   /** Shopping the list at the store: its newest shop job (null until it starts). */
   shop: Job | null
+  shop_current: boolean
+  address_problem: string | null
   /** The store it's shopped at: "Wegmans". */
   store: string
   /** By aisle; empty until a build succeeds. */

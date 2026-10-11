@@ -1,6 +1,8 @@
 Find out what the household's $store cart costs at checkout on Instacart's
 website. The cart is already filled with what to price: don't change what's
-in it, the delivery address, or the payment card. Never place the order.
+in it or the payment card. Deliver to $address. If the website has switched
+away, select that saved address again; never add an address or choose another.
+Never place the order.
 
 You have a browser that's signed in to the household's Instacart account,
 and tools to look at what's on screen (its elements, each with a ref; when a

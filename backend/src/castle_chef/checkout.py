@@ -16,6 +16,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
+from castle_chef_agent.address import Address
 from castle_chef_agent.checkout import INSTACART_COOKIE, SITE, Checkout
 from castle_chef_agent.windows import Window
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -71,6 +72,8 @@ class QuoteRequest(BaseModel):
     lines: list[CartLine] = Field(min_length=1)
     tip_percent: int
     tip_max_cents: int
+    # Snapshot of the chosen saved address; part of the total the member approves.
+    delivery_address: Address | None = None
 
 
 class Quote(BaseModel):

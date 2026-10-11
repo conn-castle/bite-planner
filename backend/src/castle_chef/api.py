@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from castle_chef_agent import windows
+from castle_chef_agent.address import Address
 from castle_chef_agent.checkout import Checkout
 from castle_chef_agent.meals import Color, Dish, Icon
 from castle_chef_agent.products import ProductCount
@@ -37,7 +38,17 @@ from sqlmodel import Session, col, select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 
-from castle_chef import booking, failures, orders, push, quotes, ratings, reminders, shopping
+from castle_chef import (
+    booking,
+    delivery,
+    failures,
+    orders,
+    push,
+    quotes,
+    ratings,
+    reminders,
+    shopping,
+)
 from castle_chef import household as households
 from castle_chef import log as logging_config
 from castle_chef.auth import (
@@ -219,6 +230,8 @@ class ShoppingListOut(BaseModel):
     # Shopping the newest succeeded build's items at the store: its newest shop
     # job (null until it starts), and the store.
     shop: JobOut | None
+    shop_current: bool
+    address_problem: str | None
     store: str
     # The newest succeeded build's items, by aisle; [] until one succeeds.
     items: list[ShoppingItemOut]
@@ -394,10 +407,19 @@ class HouseholdOut(BaseModel):
     tip_max_cents: int
     # When an approved product is gone at booking.
     product_gone: ProductGone
+    delivery_address: Address | None
     # In the order they were invited.
     members: list[HouseholdMemberOut]
     # Invitations not used yet, oldest first.
     invites: list[InviteOut]
+
+
+class AddressSearchIn(BaseModel):
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=200)]
+
+
+class AddressSuggestionsOut(BaseModel):
+    addresses: list[Address]
 
 
 class PersonalSettingsOut(BaseModel):
@@ -472,6 +494,7 @@ class HouseholdSettingsIn(PartialUpdate):
     tip_percent: int | None = Field(default=None, ge=TIP_PERCENT.low, le=TIP_PERCENT.high)
     tip_max_cents: int | None = Field(default=None, ge=TIP_MAX_CENTS.low, le=TIP_MAX_CENTS.high)
     product_gone: ProductGone | None = None
+    delivery_address: Address | None = None
 
     _minute = field_validator("delivery_time")(clock_minute)
 
@@ -790,10 +813,28 @@ def shopping_list_out(
         return None
     built = shopping.newest_built(session, order.id)
     shop = shop_of(session, built.id) if built is not None else None
+    household = session.get_one(Household, order.household_id)
+    address_problem = None
+    if order.status == GroceryOrderStatus.DRAFT and delivery.selected(household) is None:
+        address_problem = delivery.ADDRESS_REQUIRED
+    elif (
+        shop is not None
+        and shop.delivery_address == household.delivery_address
+        and shop.error
+        and "Delivery address:" in shop.error
+    ):
+        address_problem = shop.error[shop.error.index("Delivery address:") :]
     return ShoppingListOut(
         job=job_out(newest, [], people, rated),
         current=shopping.is_current(session, order.id, newest),
         shop=job_out(shop, [], people, rated) if shop is not None else None,
+        shop_current=order.status == GroceryOrderStatus.PLACED
+        or (
+            shop is not None
+            and shop.delivery_address == household.delivery_address
+            and delivery.selected(household) is not None
+        ),
+        address_problem=address_problem,
         store=get_settings().instacart_store,
         items=[]
         if built is None
@@ -996,6 +1037,7 @@ def signed_in(
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
+        started = monotonic()
         principal = verifier.verify(token)
     except AuthError as error:
         raise HTTPException(
@@ -1006,6 +1048,8 @@ def signed_in(
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in is unavailable; try again."
         ) from error
+    finally:
+        request.state.auth_ms = round((monotonic() - started) * 1000)
     # Who made the request, for its log line.
     request.state.user_id = str(principal.user_id)
     return principal
@@ -1030,10 +1074,15 @@ def household_of(session: Session, user_id: UUID) -> Household | None:
 
 
 def member(
+    request: Request,
     principal: Annotated[Principal, Depends(signed_in)],
     session: DbSession,
 ) -> Member:
-    household = household_of(session, principal.user_id)
+    started = monotonic()
+    try:
+        household = household_of(session, principal.user_id)
+    finally:
+        request.state.membership_ms = round((monotonic() - started) * 1000)
     if household is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, NOT_IN_A_HOUSEHOLD)
     return Member(user_id=principal.user_id, household_id=household.id)
@@ -1094,6 +1143,7 @@ def household_out(session: Session, household: Household) -> HouseholdOut:
         tip_percent=household.tip_percent,
         tip_max_cents=household.tip_max_cents,
         product_gone=household.product_gone,
+        delivery_address=delivery.selected(household),
         members=[
             HouseholdMemberOut(user_id=person.user_id, name=person.name, email=person.email)
             for person in members
@@ -1145,6 +1195,8 @@ def create_app() -> FastAPI:
                 "route": getattr(request.scope.get("route"), "path", None),
                 "user_id": getattr(request.state, "user_id", None),
                 "ms": round((monotonic() - started) * 1000),
+                "auth_ms": getattr(request.state, "auth_ms", None),
+                "membership_ms": getattr(request.state, "membership_ms", None),
             }
 
         try:
@@ -1266,6 +1318,31 @@ def create_app() -> FastAPI:
         """The household's settings and members."""
         return household_out(session, session.get_one(Household, caller.household_id))
 
+    @api.post("/v1/household/delivery-address/suggestions")
+    def address_suggestions(
+        body: AddressSearchIn,
+        caller: Annotated[Member, Depends(member)],
+    ) -> AddressSuggestionsOut:
+        try:
+            return AddressSuggestionsOut(addresses=delivery.suggestions(body.query))
+        except delivery.AddressUnavailable as error:
+            log.exception("delivery.search_unavailable")
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(error)) from error
+
+    @api.post("/v1/household/delivery-address/normalize")
+    def normalize_address(
+        body: Address,
+        caller: Annotated[Member, Depends(member)],
+    ) -> Address:
+        """Review AWS's normalized address before approving it in Settings."""
+        try:
+            return delivery.validate_address(body)
+        except delivery.AddressInvalid as error:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+        except delivery.AddressUnavailable as error:
+            log.exception("delivery.validation_unavailable")
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(error)) from error
+
     @api.patch("/v1/household")
     def update_household(
         body: HouseholdSettingsIn,
@@ -1275,7 +1352,18 @@ def create_app() -> FastAPI:
         """Change the household's settings; only the fields sent, so members changing
         different settings at once don't undo each other."""
         household = session.get_one(Household, caller.household_id)
-        household.sqlmodel_update(body.model_dump(exclude_unset=True))
+        if body.delivery_address is not None:
+            try:
+                normalized_address: Address = delivery.validate_address(body.delivery_address)
+            except delivery.AddressInvalid as error:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
+            except delivery.AddressUnavailable as error:
+                log.exception("delivery.validation_unavailable")
+                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(error)) from error
+        changes = body.model_dump(exclude_unset=True, exclude={"delivery_address"})
+        household.sqlmodel_update(changes)
+        if "delivery_address" in body.model_fields_set:
+            household.delivery_address = normalized_address
         try:
             session.commit()
         except IntegrityError as error:

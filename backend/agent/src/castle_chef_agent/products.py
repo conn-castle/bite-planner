@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from castle_chef_agent.address import Address
 from castle_chef_agent.instacart import Product
 from castle_chef_agent.jobfiles import locked, read_context, replace_file
 
@@ -35,6 +36,7 @@ class ShopJob(BaseModel):
     """The worker's context for the checks: the list's items to shop for."""
 
     items: list[ShopItem]
+    delivery_address: Address | None = None
 
 
 class ProductCount(BaseModel):
@@ -64,6 +66,8 @@ class ShopState(BaseModel):
 
     # The products each item's searches returned, by item and id: what may be
     # chosen for it (a product found for one item can't be chosen for another).
+    # Transport a startup failure to the worker; MCP otherwise only reports a closed pipe.
+    instacart_error: str | None = None
     searched: dict[int, dict[str, Product]] = {}
     choices: dict[int, ItemChoice] = {}
 
@@ -85,6 +89,11 @@ def _changing(job_dir: Path) -> Iterator[ShopState]:
         state = load_state(job_dir)
         yield state
         replace_file(job_dir / STATE_FILE, state.model_dump_json())
+
+
+def record_instacart_error(job_dir: Path, error: str) -> None:
+    with _changing(job_dir) as state:
+        state.instacart_error = error
 
 
 def record_search(job_dir: Path, item: int, products: list[Product]) -> None:

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
+from castle_chef_agent.address import Address
 from castle_chef_agent.instacart import (
     AppServer,
     Instacart,
@@ -97,7 +98,7 @@ def job_lock(job_id: str) -> Iterator[None]:
 
 
 @contextmanager
-def store() -> Iterator[Instacart]:
+def store(address: Address | None = None) -> Iterator[Instacart]:
     """The household's store at Instacart, for the length of the block."""
     settings = get_settings()
     with connect(
@@ -106,6 +107,7 @@ def store() -> Iterator[Instacart]:
         lock_file=settings.codex_lock_file,
         command=shlex.split(settings.codex_command),
         uid=settings.agent_uid,
+        address=address,
     ) as instacart:
         yield instacart
 

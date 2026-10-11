@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -33,10 +34,27 @@ os.environ["DATABASE_URL"] = (
     make_url(TEST_DATABASE_URL).set(database=DATABASE_NAME).render_as_string(hide_password=False)
 )
 
+from castle_chef_agent.address import Address  # noqa: E402
+from castle_chef_agent.instacart import DeliveryAddress  # noqa: E402
+
 from castle_chef.db import get_engine  # noqa: E402
 from castle_chef.dispatch import get_dispatcher  # noqa: E402
 from castle_chef.models import GroceryOrder, Household, Job, JobKind  # noqa: E402
 from castle_chef.settings import get_settings  # noqa: E402
+
+TEST_ADDRESSES: list[DeliveryAddress] = [
+    DeliveryAddress.model_validate(address)
+    for address in json.loads(
+        (BACKEND_DIR / "tests/fixtures/instacart/addresses.json").read_text()
+    )["structuredContent"]["artifacts"]["addresses"]
+]
+TEST_ADDRESS: Address = Address.model_validate(
+    TEST_ADDRESSES[0].model_dump(include=set(Address.model_fields))
+)
+OTHER_ADDRESS: Address = Address.model_validate(
+    TEST_ADDRESSES[1].model_dump(include=set(Address.model_fields))
+)
+
 
 # Held while a worker makes its database: the stubs create cluster-wide roles,
 # which workers creating them at once would collide on.
@@ -111,7 +129,10 @@ def session() -> Iterator[Session]:
 @pytest.fixture
 def household_id(session: Session) -> UUID:
     """A household for orders whose household doesn't matter to the test."""
-    household = Household(name="Test Castle")
+    household = Household(
+        name="Test Castle",
+        delivery_address=TEST_ADDRESS,
+    )
     session.add(household)
     session.commit()
     return household.id

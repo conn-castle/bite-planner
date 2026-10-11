@@ -43,7 +43,7 @@ scripts/worker-docker.sh build >/dev/null
 
 # Each server gets its own process group, so stopping it stops its children too.
 set -m
-(cd backend && exec uv run uvicorn castle_chef.api:app --reload) </dev/null &
+(cd backend && AWS_PROFILE=conn AWS_REGION=us-east-1 exec uv run uvicorn castle_chef.api:app --reload) </dev/null &
 api=$!
 (cd apps/mobile && CASTLE_CHEF_REVIEW_PORT=$REVIEW_PORT exec pnpm exec vite --port "$APP_PORT" --strictPort) </dev/null &
 web=$!

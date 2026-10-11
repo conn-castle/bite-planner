@@ -566,3 +566,24 @@ def test_services_log_the_deployed_release(runtime: Template) -> None:
     ]
     assert len(environments) == 4  # the worker, the API, the failure handler, Reminders
     assert all(env["CASTLE_CHEF_RELEASE"] == "2026.9.24.1" for env in environments)
+
+
+def test_only_the_api_can_verify_addresses_with_the_default_provider(runtime: Template) -> None:
+    [api] = [
+        f
+        for f in functions(runtime).values()
+        if "CASTLE_CHEF_NEON_AUTH_URL" in f["Environment"]["Variables"]
+    ]
+    matches = [
+        (policy["Properties"]["Roles"], statement)
+        for policy in runtime.find_resources("AWS::IAM::Policy").values()
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]
+        if "geo-places:Geocode" in json.dumps(statement.get("Action"))
+    ]
+    assert len(matches) == 1
+    roles, statement = matches[0]
+    assert roles == [{"Ref": api["Role"]["Fn::GetAtt"][0]}]
+    assert set(statement["Action"]) == {"geo-places:Geocode", "geo-places:Autocomplete"}
+    resource = json.dumps(statement["Resource"])
+    assert ":geo-places:" in resource and "::provider/default" in resource
+    assert statement["Effect"] == "Allow"

@@ -160,6 +160,8 @@ describe('changes to the shopping list', () => {
       },
       current: true,
       shop: null,
+      shop_current: false,
+      address_problem: null,
       store: 'Wegmans',
       items: [
         { id: 'onions', name: 'onions', quantity: 2, recipe_quantity: 2, unit: null, aisle: 'produce', meal_ids: [], on_hand: false, removed: false, product: YELLOW, alternatives: [SWEET], no_alternatives_reason: null, not_found: false, skippable_reason: null },

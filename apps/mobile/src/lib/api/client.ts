@@ -41,9 +41,12 @@ export async function apiRequest<T>(
   path: string,
   body?: unknown,
   orderSession?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
+    signal?.throwIfAborted()
     const token = await auth.getToken()
+    signal?.throwIfAborted()
     if (!token) throw new ApiError(401, 'Sign in first.')
     // Timed from the send to the whole answer, so a connection that hangs (e.g.
     // just after the phone wakes) shows in the log.
@@ -52,6 +55,7 @@ export async function apiRequest<T>(
     const fields = () => ({ method, route: requestRoute(path), ms: Math.round(performance.now() - started) })
     try {
       const response = await fetch(`${baseUrl()}${path}`, {
+        signal,
         method,
         headers: {
           Authorization: `Bearer ${token}`,
@@ -75,7 +79,7 @@ export async function apiRequest<T>(
       return answer
     } catch (error) {
       // Once per failure: refused (with its status), or never answered in full.
-      if (logged) {
+      if (logged && !signal?.aborted) {
         const why = error instanceof ApiError ? { status: error.status } : errorFields(error)
         logger.warn('api.request_failed', { ...fields(), ...why })
       }

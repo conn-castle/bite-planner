@@ -13,6 +13,8 @@ from castle_chef import cart
 from castle_chef.checkout import CartLedger, CartLine, OwnItem
 from castle_chef.models import Household
 
+from .conftest import TEST_ADDRESS
+
 ONIONS, SWEET_ONIONS = "17499438", "3371870"  # recorded products (fixtures/instacart)
 
 
@@ -37,7 +39,7 @@ def test_the_households_own_items_are_set_aside_while_the_cart_is_filled_then_pu
     start_cart(codex_home, {ONIONS: 1, "555": 4})
     lines = [CartLine(product_id=SWEET_ONIONS, quantity=2), CartLine(product_id="777", quantity=3)]
 
-    with cart.filled(household_id, lines) as filled:
+    with cart.filled(household_id, lines, TEST_ADDRESS) as filled:
         inside = cart_now(codex_home)
         kept = ledger(session, household_id)
         cart.check(filled.cart, lines, {})
@@ -59,7 +61,7 @@ def test_a_product_the_household_already_has_goes_back_to_its_own_count(
 ) -> None:
     start_cart(codex_home, {ONIONS: 1})
 
-    with cart.filled(household_id, [CartLine(product_id=ONIONS, quantity=3)]):
+    with cart.filled(household_id, [CartLine(product_id=ONIONS, quantity=3)], TEST_ADDRESS):
         inside = cart_now(codex_home)
 
     assert (inside, cart_now(codex_home)) == ({ONIONS: 3}, {ONIONS: 1})
@@ -72,7 +74,7 @@ def test_the_cart_is_put_back_when_the_run_fails(
 
     with (
         pytest.raises(RuntimeError),
-        cart.filled(household_id, [CartLine(product_id="777", quantity=3)]),
+        cart.filled(household_id, [CartLine(product_id="777", quantity=3)], TEST_ADDRESS),
     ):
         raise RuntimeError("checkout changed")
 
@@ -92,7 +94,7 @@ def test_a_run_that_stopped_midway_is_put_back_by_the_next(
     )
     session.commit()
 
-    with cart.filled(household_id, [CartLine(product_id="999", quantity=2)]):
+    with cart.filled(household_id, [CartLine(product_id="999", quantity=2)], TEST_ADDRESS):
         inside = cart_now(codex_home)
         kept = ledger(session, household_id)
 
@@ -110,7 +112,7 @@ def test_a_product_the_cart_doesnt_take_is_named(
 
     with (
         pytest.raises(cart.CartMismatch, match="Wegmans didn't take Curry Leaves"),
-        cart.filled(household_id, lines) as filled,
+        cart.filled(household_id, lines, TEST_ADDRESS) as filled,
     ):
         cart.check(filled.cart, lines, {"777": "Curry Leaves"})
 
@@ -125,7 +127,7 @@ def test_an_item_the_cart_wont_take_back_is_tried_again_by_the_next_run(
 
     with (
         pytest.raises(cart.CartNotPutBack, match="Product 555"),
-        cart.filled(household_id, [CartLine(product_id="777", quantity=1)]),
+        cart.filled(household_id, [CartLine(product_id="777", quantity=1)], TEST_ADDRESS),
     ):
         pass
 
@@ -134,7 +136,7 @@ def test_an_item_the_cart_wont_take_back_is_tried_again_by_the_next_run(
     kept = ledger(session, household_id)
     assert kept is not None and [line.product_id for line in kept.set_aside] == ["555"]
     # which, when Instacart still won't take them, says so as an error and goes on.
-    with cart.filled(household_id, [CartLine(product_id="777", quantity=1)]):
+    with cart.filled(household_id, [CartLine(product_id="777", quantity=1)], TEST_ADDRESS):
         pass
     assert ledger(session, household_id) is None
     [error] = [r for r in caplog.records if r.getMessage() == "cart.not_put_back"][1:]

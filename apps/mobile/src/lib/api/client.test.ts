@@ -24,6 +24,23 @@ afterEach(() => {
 const sentHeaders = () => new Headers(fetchMock.mock.calls[0]?.[1]?.headers)
 
 describe('apiRequest', () => {
+  it('cancels an obsolete search without recording it as a request failure', async () => {
+    const { apiRequest } = await import('./client')
+    const controller: AbortController = new AbortController()
+    fetchMock.mockImplementation((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')))
+    }))
+    const pending: Promise<unknown> = apiRequest('POST', '/v1/household/delivery-address/suggestions',
+      { query: '1600 Penn' }, undefined, controller.signal)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(logged.warn).not.toHaveBeenCalled()
+    await expect(apiRequest('POST', '/v1/household/delivery-address/suggestions',
+      { query: '1600 Penn' }, undefined, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it("sends the phone's time zone with every request", async () => {
     vi.stubEnv('TZ', 'Pacific/Auckland') // Node applies a new TZ at once
     fetchMock.mockResolvedValue(new Response('null', { status: 200 }))

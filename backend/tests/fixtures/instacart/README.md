@@ -5,3 +5,6 @@ refusal's `error_data` (it held the household's location), and the cart's id
 (replaced with 1). `cart-with-items.json` is the recorded empty cart holding two
 recorded search products (quantities and subtotal set to match), since a cart with
 items wasn't recorded.
+
+`addresses.json` uses the saved-address reply shape inspected on 2026-10-11,
+with synthetic IDs and locations. It contains no household addresses or tokens.

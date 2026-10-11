@@ -1,0 +1,13 @@
+{
+  "structuredContent": {
+    "tool": "cart",
+    "summary": "Please select a retailer to start shopping.",
+    "artifacts": {
+      "addresses": [
+        {"id": "101", "street_address": "1 Main Street", "apartment_number": "", "city": "Rochester", "state": "NY", "postal_code": "14604", "is_default": false, "instructions": "", "unattended_delivery": false},
+        {"id": "202", "street_address": "2 Beach Road", "apartment_number": "", "city": "Emerald Isle", "state": "NC", "postal_code": "28594", "is_default": true, "instructions": "", "unattended_delivery": true}
+      ]
+    }
+  },
+  "isError": false
+}

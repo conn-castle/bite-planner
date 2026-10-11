@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, case
 from sqlmodel import Session, col, func, select, update
 
-from castle_chef.models import GroceryOrder, Job, JobKind, JobStatus, ListSource
+from castle_chef.models import GroceryOrder, Household, Job, JobKind, JobStatus, ListSource
 from castle_chef.settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -302,12 +302,15 @@ def shop_of(session: Session, build_id: UUID) -> Job | None:
 
 def create_shop(session: Session, build: Job, job_id: UUID, member_id: UUID) -> Job:
     """Stage a shop job for the build's list (the caller commits)."""
+    order = session.get_one(GroceryOrder, build.grocery_order_id)
+    household = session.get_one(Household, order.household_id)
     job = Job(
         id=job_id,
         grocery_order_id=build.grocery_order_id,
         kind=JobKind.SHOP,
         requested_by=member_id,
         build_id=build.id,
+        delivery_address=household.delivery_address,
     )
     session.add(job)
     return job
@@ -332,7 +335,12 @@ def submit_shop(
         raise ListNotReady("The shopping list isn't ready yet.")
     fail_stale_jobs(session, order.id)
     current = shop_of(session, build.id)
-    if current is not None and current.status in (*ACTIVE, JobStatus.SUCCEEDED):
+    household = session.get_one(Household, order.household_id)
+    if (
+        current is not None
+        and current.status in (*ACTIVE, JobStatus.SUCCEEDED)
+        and current.delivery_address == household.delivery_address
+    ):
         session.rollback()
         return current, False
     return add_job(session, create_shop(session, build, job_id, member_id)), True

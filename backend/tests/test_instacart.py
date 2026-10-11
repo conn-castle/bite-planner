@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 from castle_chef import instacart
 from castle_chef.cli import app
 from castle_chef.settings import get_settings
+from tests.conftest import TEST_ADDRESS, TEST_ADDRESSES
 
 
 def configure(home: Path, **config: Any) -> None:
@@ -57,6 +58,60 @@ def test_a_search_for_something_the_store_doesnt_carry_has_no_matches(codex_home
         results = store.search("curry leaves")
     assert results.matches == []
     assert results.related  # Instacart still suggests other products
+
+
+def test_selected_address_is_reselected_after_instacart_switches_away(codex_home: Path) -> None:
+    for _ in range(2):
+        (codex_home / "selected-address.txt").write_text("202")
+        with instacart.store(TEST_ADDRESS) as store:
+            assert store.search("yellow onions").matches
+            assert store.address is not None and store.address.city == "Rochester"
+        assert (codex_home / "selected-address.txt").read_text() == "101"
+    calls = [r["params"] for r in requests(codex_home) if r.get("method") == "mcpServer/tool/call"]
+    selections = [
+        i for i, call in enumerate(calls) if "set_default_address_id" in call["arguments"]
+    ]
+    searches = [i for i, call in enumerate(calls) if call["tool"] == "instacart.search_products"]
+    assert len(selections) == len(searches) == 2
+    assert all(selected < searched for selected, searched in zip(selections, searches, strict=True))
+    assert all(
+        calls[i]["arguments"]
+        == {"retailer_name": "Wegmans", "service_type": "DELIVERY", "set_default_address_id": "101"}
+        for i in selections
+    )
+
+
+def test_reading_saved_addresses_does_not_change_the_default_or_cart(codex_home: Path) -> None:
+    with instacart.store() as store:
+        addresses = store.addresses()
+    assert [(a.id, a.city) for a in addresses] == [("101", "Rochester"), ("202", "Emerald Isle")]
+    calls = [
+        r["params"]["arguments"]
+        for r in requests(codex_home)
+        if r.get("method") == "mcpServer/tool/call"
+    ]
+    assert calls == [{"show_retailer_selector": True}]
+    assert not (codex_home / "selected-address.txt").exists()
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        ({"addresses": []}, "isn't saved"),
+        ({"ignore_address_selection": True}, "didn't select"),
+        ({"address_unavailable": True}, "Wegmans isn't available"),
+    ],
+)
+def test_unusable_selected_address_stops_before_search(
+    codex_home: Path,
+    config: dict[str, object],
+    message: str,
+) -> None:
+    configure(codex_home, **config)
+    with pytest.raises(InstacartError, match=message), instacart.store(TEST_ADDRESS) as store:
+        store.search("yellow onions")
+    calls = [r["params"] for r in requests(codex_home) if r.get("method") == "mcpServer/tool/call"]
+    assert all(call["tool"] != "instacart.search_products" for call in calls)
 
 
 def test_a_cart_under_the_store_minimum_cant_check_out(codex_home: Path) -> None:
@@ -244,3 +299,34 @@ def test_searches_made_at_once_each_get_their_own_answer(codex_home: Path) -> No
         results = list(pool.map(store.search, queries))
     matches = [len(result.matches) for result in results]
     assert matches == [5, 0] * 3
+
+
+def test_matching_uses_street_abbreviations_and_zip_but_not_the_default(codex_home: Path) -> None:
+    entered = TEST_ADDRESS.model_copy(
+        update={"street_address": "1 MAIN ST.", "postal_code": "14604-1234"}
+    )
+    with instacart.store(entered) as store:
+        assert store.address is not None and store.address.id == "101"
+
+
+@pytest.mark.parametrize("unit", ["", "Apt 2"])
+def test_duplicate_or_wrong_unit_saved_addresses_stop_before_selecting(
+    codex_home: Path,
+    unit: str,
+) -> None:
+    saved = TEST_ADDRESSES[0].model_dump()
+    saved["is_default"] = False
+    if unit:
+        saved["apartment_number"] = "1"
+        addresses = [saved]
+        expected = TEST_ADDRESS.model_copy(update={"apartment_number": unit})
+        message = "isn't saved"
+    else:
+        addresses = [saved, saved | {"id": "303", "unattended_delivery": True}]
+        expected = TEST_ADDRESS
+        message = "more than one"
+    configure(codex_home, addresses=addresses)
+    with pytest.raises(InstacartError, match=message), instacart.store(expected):
+        pytest.fail("An ambiguous or different unit must not yield a usable store.")
+    calls = [r["params"] for r in requests(codex_home) if r.get("method") == "mcpServer/tool/call"]
+    assert [call["arguments"] for call in calls] == [{"show_retailer_selector": True}]

@@ -8,6 +8,7 @@ import { isRecord } from '../../lib/isRecord'
 import { errorFields, logger } from '../../lib/log'
 import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
+import { TextField } from '../../ui/TextField'
 import { CODE_LENGTH, CodeInput } from './CodeInput'
 import { afterSignIn } from './session'
 import styles from './SignInPage.module.css'
@@ -82,19 +83,20 @@ export function SignInPage() {
     return (
       <Welcome title="Sign in to Castle Chef" subtitle="Enter your email and we'll send you a sign-in code.">
         <form className={styles.form} onSubmit={(event) => void sendCode(event)}>
-          <label className={styles.label}>
-            Email
-            <input
-              className={styles.field}
-              type="email"
-              placeholder="name@example.com"
-              autoComplete="email"
-              autoCapitalize="none"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-          </label>
+          <TextField
+            label="Email"
+            id="signin-email"
+            name="username"
+            type="email"
+            inputMode="email"
+            placeholder="you@example.com"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            required
+          />
           {error && <Notice>{error}</Notice>}
           <Button type="submit" block disabled={busy || !email.trim()}>
             {busy ? 'Sending…' : 'Continue'}

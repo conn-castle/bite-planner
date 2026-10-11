@@ -163,6 +163,28 @@ def test_a_reported_checkout_is_read_from_the_elements_pointed_at(job_dir: Path)
     assert [cookie["name"] for cookie in renewed["cookies"]] == ["session"]
 
 
+@pytest.mark.parametrize("matches", [True, False])
+def test_checkout_must_use_the_selected_delivery_address(job_dir: Path, matches: bool) -> None:
+    context = read_context(job_dir, CheckoutJob)
+    address = (
+        "1 Main Street, Rochester, NY 14604" if matches else "2 Beach Road, Emerald Isle, NC 28594"
+    )
+    write_context(job_dir, context.model_copy(update={"delivery_address": address}))
+
+    async def steps(opened: Browser) -> checkout.Checkout:
+        page = await schedule_and_tip(opened, await to_checkout(opened))
+        return await checkout.report(
+            job_dir, opened, refs_of(page, ["Delivery with Instacart", "Service fee"])
+        )
+
+    if matches:
+        assert in_browser(job_dir, steps).address == "1 Main Street Rochester, NY 14604"
+    else:
+        with pytest.raises(CheckoutRefused, match="Delivery address: checkout shows"):
+            in_browser(job_dir, steps)
+        assert load_state(job_dir).checkout is None
+
+
 def test_a_report_that_doesnt_add_up_or_breaks_a_rule_is_refused_with_why(job_dir: Path) -> None:
     async def steps(opened: Browser) -> list[str]:
         page = await to_checkout(opened)

@@ -1,6 +1,8 @@
 Book the household's $store order on Instacart's website, for delivery on
 $day by $by. The cart is already filled with exactly what to order: don't
-change what's in it, the delivery address, or the payment card.
+change what's in it or the payment card. The approved delivery address is
+$address. If the website has switched away, select that saved address again;
+never add an address or choose another.
 
 You have a browser that's signed in to the household's Instacart account,
 and tools to look at what's on screen (its elements, each with a ref; when a

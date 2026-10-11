@@ -90,6 +90,8 @@ aws ecs run-task --profile conn --region us-east-1 --launch-type FARGATE \
 aws logs tail "$(out WorkerLogGroupOutput)" --follow --profile conn --region us-east-1
 ```
 
+**Delivery address.** Start typing an address already saved in Instacart in Settings. Choose an AWS suggestion, review the normalized address, then save. The API's Lambda role can call `geo-places:Autocomplete` and `geo-places:Geocode` on the region's default provider. Autocomplete uses `SingleUse` and `Core` address components; its results remain transient in the form and never enter the persisted query cache. Choosing one calls Geocode with Storage intent before showing the approval preview; saving confirms the address again and persists AWS's normalized fields. A synchronous lookup (`IntendedUse=Storage`) requires an exact known US street address; estimated, corrected or approximate results are refused. Local `make dev` and `make review` use the `conn` profile. No worker job runs when opening Settings or saving the address. Shopping and checkout match the destination to exactly one saved Instacart address (including unit), then select its id and verify delivery mode before touching products. Missing or duplicate entries require correcting the saved Instacart addresses or Settings; an unavailable retailer stops explicitly. A changed Settings address invalidates draft shopping and quotes, while approved orders retain their approved destination. Never repair this by manually changing production household data or Instacart state.
+
 **Deploying by hand** (not needed normally; e.g. the first deploy of a new account or of `CastleChef-dev`), with AWS credentials from the `conn` profile:
 
 ```sh

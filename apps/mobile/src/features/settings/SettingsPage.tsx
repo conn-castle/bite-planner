@@ -29,6 +29,7 @@ import { askPermission, openNotificationSettings, pushAvailable, usePermission }
 import { useSession } from '../session/session'
 import { signOut } from '../session/signOut'
 import styles from './SettingsPage.module.css'
+import { DeliveryAddressRow } from './DeliveryAddressRow'
 import {
   useChangeHousehold,
   useChangeName,
@@ -144,6 +145,7 @@ function HouseholdGroup({ household }: { household: Household }) {
         footerIcon="truck"
         footer="Each order arrives by the delivery time unless you choose another. The tip is added when it's booked at Instacart."
       >
+        <DeliveryAddressRow household={household} />
         <Row
           label="Delivery time"
           sub="The latest it should arrive"

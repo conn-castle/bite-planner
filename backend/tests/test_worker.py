@@ -61,7 +61,7 @@ from castle_chef.models import (
 )
 from castle_chef.push import Notification, NotificationKind, Outcome, Sent
 from castle_chef.settings import get_settings
-from tests.conftest import BACKEND_DIR
+from tests.conftest import BACKEND_DIR, OTHER_ADDRESS, TEST_ADDRESS
 
 runner = CliRunner()
 FAKE_AGENT = Path(__file__).parent / "fake_agent.py"
@@ -573,6 +573,7 @@ def picked(session: Session, job: Job, *servings: int) -> list[Meal]:
         session.exec(select(Meal).where(Meal.job_id == job.id).order_by(col(Meal.name))).all()
     )
     for meal, count in zip(meals, servings, strict=True):
+        assert job.grocery_order_id is not None
         session.add(
             GroceryOrderMeal(grocery_order_id=job.grocery_order_id, meal_id=meal.id, servings=count)
         )
@@ -889,6 +890,38 @@ def test_shopping_a_list_replaced_meanwhile_saves_nothing(
     assert [item.product for item in list_items(session, build)] == [None, None]
 
 
+def test_a_changed_address_discards_inflight_shopping_results(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    codex_home: Path,
+) -> None:
+    from castle_chef import delivery
+
+    picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=1)
+    real_process_job = worker.process_job
+
+    def shop_then_change_address(claimed: Job) -> worker.JobResult:
+        result = real_process_job(claimed)
+        if claimed.kind == JobKind.SHOP:
+            with Session(get_engine()) as member:
+                household = member.get_one(Household, draft.household_id)
+                household.delivery_address = OTHER_ADDRESS
+                member.add(household)
+                member.commit()
+        return result
+
+    monkeypatch.setattr(worker, "process_job", shop_then_change_address)
+    run_job(build)
+
+    shop = shop_of(session, build)
+    assert (shop.status, shop.error) == (JobStatus.FAILED, delivery.ADDRESS_CHANGED)
+    assert all(item.product is None for item in list_items(session, build))
+
+
 def test_whoever_is_waiting_hears_when_shopping_fails(
     session: Session,
     draft: GroceryOrder,
@@ -943,6 +976,7 @@ def quote_job(session: Session, draft: GroceryOrder, *lines: tuple[str, float]) 
         lines=[CartLine(product_id=pid, quantity=quantity) for pid, quantity in lines],
         tip_percent=10,
         tip_max_cents=1500,
+        delivery_address=TEST_ADDRESS,
     )
     pending = Job(
         id=uuid4(),
@@ -1173,6 +1207,7 @@ def approved(
             ],
             tip_percent=10,
             tip_max_cents=1500,
+            delivery_address=TEST_ADDRESS,
         ),
         quote=Quote(
             checkout=Checkout(
@@ -1266,6 +1301,30 @@ def test_development_books_as_a_dry_run_that_shows_as_booked_and_puts_the_cart_b
         "total_cents": 1959 + 249 + 196,
         "swaps": 0,
     }
+
+
+def test_booking_keeps_its_approved_address_after_settings_changes(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    household = session.get_one(Household, draft.household_id)
+    household.delivery_address = OTHER_ADDRESS
+    session.add(household)
+    session.commit()
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(book)
+
+    assert reload(session, book).status == JobStatus.SUCCEEDED
+    assert booked_order(session, book).book_state == BookState.BOOKED
+    assert (codex_home / "selected-address.txt").read_text() == "101"
 
 
 def test_a_live_booking_records_the_click_before_pressing_and_keeps_the_confirmation(
@@ -1711,3 +1770,31 @@ def test_a_jobs_record_is_also_kept_while_it_runs(
     assert [e["final"] for e in saved].count(True) == 1 and saved[-1]["final"] is True
     assert False in [e["final"] for e in saved]
     assert saved[-1]["parts"] == ["job"]
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_a_saved_address_startup_failure_reaches_the_shopping_error(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: bool,
+) -> None:
+    from tests.conftest import TEST_ADDRESSES
+
+    picked(session, job, 4)
+    build = start_list(session, draft)
+    saved = TEST_ADDRESSES[0].model_dump() | {"is_default": False}
+    addresses = [] if missing else [saved, saved | {"id": "303"}]
+    (codex_home / "fake.json").write_text(json.dumps({"addresses": addresses}))
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(build)
+
+    shop = shop_of(session, build)
+    assert shop.status == JobStatus.FAILED
+    assert shop.error is not None and shop.error.startswith("Delivery address:")
+    assert ("isn't saved" if missing else "more than one") in shop.error
+    assert all(item.product is None for item in list_items(session, build))
+    assert not (codex_home / "selected-address.txt").exists()

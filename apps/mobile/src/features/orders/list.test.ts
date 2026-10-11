@@ -16,6 +16,8 @@ const list = (status: Job['status'], current: boolean, shopped: Job['status'] | 
   job: job(status),
   current,
   shop: shopped === null ? null : shop(shopped),
+  shop_current: shopped !== null,
+  address_problem: null,
   store: 'Wegmans',
   items: [],
 })
@@ -49,6 +51,15 @@ const item = (fields: Partial<ShoppingItem>): ShoppingItem => ({
 })
 
 describe('listState', () => {
+  it('shops the saved list again when the selected delivery address changes', () => {
+    expect(listState({ ...list('succeeded', true), shop_current: false })).toBe('shopStart')
+  })
+
+  it('requires choosing a delivery address before shopping can continue', () => {
+    expect(listState({ ...list('succeeded', true), shop_current: false, address_problem: 'Choose an address in Settings.' }))
+      .toBe('shopFailed')
+  })
+
   it('is ready only when the list was made for the picks now and shopped', () => {
     expect(listState(list('succeeded', true))).toBe('ready')
   })

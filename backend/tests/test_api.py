@@ -29,7 +29,7 @@ from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive, Scope, Send
 
 from castle_chef import api as api_module
-from castle_chef import booking, household, orders, products
+from castle_chef import booking, delivery, household, orders, products
 from castle_chef.api import app, create_app
 from castle_chef.auth import AuthError, AuthUnavailable, Principal, WebhookRejected
 from castle_chef.checkout import SIGNED_OUT_ERROR, Quote
@@ -49,6 +49,7 @@ from castle_chef.models import (
 )
 from castle_chef.settings import get_settings, load_ssm_parameters
 from castle_chef.shopping import ListEntry, add_items
+from tests.conftest import OTHER_ADDRESS, TEST_ADDRESS
 
 CASTLE = uuid4()  # the household of MOM and DAD
 OTHER_HOUSE = uuid4()  # a separate household
@@ -118,10 +119,14 @@ def grocer(monkeypatch: pytest.MonkeyPatch) -> list[UUID]:
 @pytest.fixture(autouse=True)
 def households(session: Session) -> None:
     for household_id, name in [(CASTLE, "Conn Castle"), (OTHER_HOUSE, "Test Household")]:
-        session.execute(
-            text("INSERT INTO household (id, name) VALUES (:id, :name)"),
-            {"id": household_id, "name": name},
+        session.add(
+            Household(
+                id=household_id,
+                name=name,
+                delivery_address=TEST_ADDRESS,
+            )
         )
+    session.flush()
     for user_id, email, name, household_id in [
         (MOM, "mom@example.com", "Mom", CASTLE),
         (DAD, "dad@example.com", "Dad", CASTLE),
@@ -1506,6 +1511,7 @@ def test_a_household_starts_with_the_default_settings_and_lists_its_members(
         "tip_percent": 10,
         "tip_max_cents": 1500,
         "product_gone": "use_alternative",
+        "delivery_address": TEST_ADDRESS.model_dump(),
         "members": [
             {"user_id": str(DAD), "name": "Dad", "email": "dad@example.com"},
             {"user_id": str(MOM), "name": "Mom", "email": "mom@example.com"},
@@ -1513,6 +1519,130 @@ def test_a_household_starts_with_the_default_settings_and_lists_its_members(
         "invites": [],
     }
     assert [m["name"] for m in household_settings(client, NEIGHBOR)["members"]] == ["Neighbor"]
+
+
+def test_entered_address_is_verified_and_shared_without_starting_a_job(
+    client: TestClient,
+    dispatcher: RecordingDispatcher,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verified: list[object] = []
+    normalized = OTHER_ADDRESS.model_copy(
+        update={"street_address": "2 Beach Rd", "postal_code": "28594-1234"}
+    )
+
+    def verify(address: object) -> object:
+        verified.append(address)
+        return normalized
+
+    monkeypatch.setattr(delivery, "validate_address", verify)
+    changed = ok(patch_household(client, {"delivery_address": OTHER_ADDRESS.model_dump()}))
+    assert changed["delivery_address"] == normalized.model_dump()
+    assert household_settings(client, DAD)["delivery_address"] == normalized.model_dump()
+    assert household_settings(client, NEIGHBOR)["delivery_address"] == TEST_ADDRESS.model_dump()
+    assert verified == [OTHER_ADDRESS]
+    assert dispatcher.dispatched == []
+
+
+@pytest.mark.parametrize(
+    "failure,code",
+    [
+        (delivery.AddressInvalid("Check your street address."), 422),
+        (delivery.AddressUnavailable("Try saving again."), 503),
+    ],
+)
+def test_address_verification_failure_preserves_the_previous_destination(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    code: int,
+) -> None:
+    def refuse(address: object) -> None:
+        raise failure
+
+    monkeypatch.setattr(delivery, "validate_address", refuse)
+    response = patch_household(
+        client, {"delivery_address": OTHER_ADDRESS.model_dump(), "default_servings": 12}
+    )
+    assert response.status_code == code
+    assert detail(response, code) == str(failure)
+    assert household_settings(client)["delivery_address"] == TEST_ADDRESS.model_dump()
+    assert household_settings(client)["default_servings"] == 4
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"state": "New York"},
+        {"postal_code": "123"},
+        {"street_address": "  "},
+        {"city": ""},
+    ],
+)
+def test_incomplete_address_is_refused_before_validation(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    change: dict[str, str],
+) -> None:
+    def unexpected(address: object) -> None:
+        pytest.fail("Invalid input must not reach the provider.")
+
+    monkeypatch.setattr(delivery, "validate_address", unexpected)
+    assert (
+        patch_household(
+            client, {"delivery_address": TEST_ADDRESS.model_dump() | change}
+        ).status_code
+        == 422
+    )
+
+
+def test_search_and_normalize_allow_review_without_saving_household_settings(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    dispatcher: RecordingDispatcher,
+) -> None:
+    normalized = OTHER_ADDRESS.model_copy(
+        update={"street_address": "2 Beach Rd", "postal_code": "28594-1234"}
+    )
+    queries: list[str] = []
+
+    def search(query: str) -> list[object]:
+        queries.append(query)
+        return [OTHER_ADDRESS]
+
+    monkeypatch.setattr(delivery, "suggestions", search)
+    monkeypatch.setattr(delivery, "validate_address", lambda address: normalized)
+    results = ok(
+        client.post(
+            "/v1/household/delivery-address/suggestions",
+            json={"query": " 2 Bea "},
+            headers=as_user(MOM),
+        )
+    )
+    assert results["addresses"] == [OTHER_ADDRESS.model_dump()]
+    assert queries == ["2 Bea"]
+    preview = ok(
+        client.post(
+            "/v1/household/delivery-address/normalize",
+            json=OTHER_ADDRESS.model_dump(),
+            headers=as_user(MOM),
+        )
+    )
+    assert preview == normalized.model_dump()
+    assert household_settings(client)["delivery_address"] == TEST_ADDRESS.model_dump()
+    assert dispatcher.dispatched == []
+    assert (
+        client.post(
+            "/v1/household/delivery-address/suggestions", json={"query": "x"}, headers=as_user(MOM)
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/v1/household/delivery-address/suggestions", json={"query": "2 Bea"}
+        ).status_code
+        == 401
+    )
 
 
 def test_household_settings_are_shared_and_only_those_sent_change(client: TestClient) -> None:
@@ -2301,6 +2431,8 @@ def test_leaving_servings_starts_one_list_for_the_picks(
         "job": None,
         "current": False,
         "shop": None,
+        "shop_current": False,
+        "address_problem": None,
         "store": "Wegmans",
         "items": [],
     }
@@ -2926,6 +3058,21 @@ def test_a_quote_for_the_same_products_is_reused_and_a_change_needs_a_new_one(
     finish_quote(second["id"])
     ok(patch_household(client, {"tip_percent": 20}))
     assert get_order(client, order_id)["quote"]["current"] is False
+
+
+def test_a_delivery_address_change_requires_reshopping_and_a_new_total(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(delivery, "validate_address", lambda address: address)
+    order_id, _ = shopped_draft(client)
+    first = ok(request_quote(client, order_id), 201)
+    finish_quote(first["id"])
+    ok(patch_household(client, {"delivery_address": OTHER_ADDRESS.model_dump()}))
+    shown = get_order(client, order_id)
+    assert shown["shopping_list"]["current"] is True
+    assert shown["shopping_list"]["shop_current"] is False
+    assert shown["quote"]["current"] is False
+    assert "Shop your list again" in detail(request_quote(client, order_id), 409)
 
 
 def test_placing_needs_the_current_quote(client: TestClient, grocer: list[UUID]) -> None:

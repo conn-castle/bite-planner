@@ -68,6 +68,8 @@ const list = (current: boolean) => ({
   job: { ...batch, id: 'build', kind: 'build_list' as const },
   current,
   shop: { ...batch, id: 'shop', kind: 'shop' as const },
+  shop_current: true,
+  address_problem: null,
   store: 'Wegmans',
   items: [onions],
 })

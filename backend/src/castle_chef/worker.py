@@ -18,6 +18,7 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
 from castle_chef_agent import windows
+from castle_chef_agent.address import Address
 from castle_chef_agent.checkout import (
     CLICK_ANSWER_FILE,
     CLICK_REQUEST_FILE,
@@ -33,6 +34,7 @@ from castle_chef_agent.instacart import InstacartError
 from castle_chef_agent.jobfiles import replace_file
 from castle_chef_agent.meals import MealInput, MealsJob, load_meals, meal_problems
 from castle_chef_agent.products import ItemChoice
+from castle_chef_agent.products import load_state as load_products_state
 from castle_chef_agent.server import Tools
 from pydantic import ValidationError
 from sqlalchemy import update
@@ -41,6 +43,7 @@ from sqlmodel import Session, col, select
 from castle_chef import (
     booking,
     cart,
+    delivery,
     instacart,
     orders,
     products,
@@ -236,6 +239,13 @@ def _save(job: Job, result: JobResult, fields: dict[str, str]) -> tuple[bool, UU
                 case Meals():
                     add_meals(session, job.id, result.meals)
                 case Quote():
+                    order = session.get_one(GroceryOrder, job.grocery_order_id)
+                    household = session.get_one(Household, order.household_id)
+                    if job.quote_request is None or (
+                        delivery.selected(household) != job.quote_request.delivery_address
+                    ):
+                        finish_job(session, job.id, error=delivery.ADDRESS_CHANGED)
+                        return False, None
                     session.execute(update(Job).where(col(Job.id) == job.id).values(quote=result))
                 case Booked():
                     if result.state == BookState.BOOKED:
@@ -246,6 +256,12 @@ def _save(job: Job, result: JobResult, fields: dict[str, str]) -> tuple[bool, UU
                             session.add(item)
                     booking.finish(session, job.id, result.state, result.booking, result.issue)
                 case Products():
+                    order = session.get_one(GroceryOrder, job.grocery_order_id)
+                    household = session.get_one(Household, order.household_id)
+                    if household.delivery_address != job.delivery_address:
+                        finish_job(session, job.id, error=delivery.ADDRESS_CHANGED)
+                        log.info("job.superseded", extra=fields | counts)
+                        return False, None
                     current = shopping.current_build(session, job.grocery_order_id)
                     if current is None or current.id != result.build_id:
                         # Its list was replaced (the picks changed) while it shopped.
@@ -400,6 +416,11 @@ def process_job(job: Job) -> JobResult:
                 if build is None:
                     raise JobDiscarded
                 context = products.shop_context(session, build, settings.instacart_store)
+                order = session.get_one(GroceryOrder, job.grocery_order_id)
+                address = delivery.require_address(session.get_one(Household, order.household_id))
+                context.job.delivery_address = address
+                if job.delivery_address != address:
+                    raise InstacartError(delivery.ADDRESS_CHANGED)
             lock = settings.codex_lock_file
             instacart_args = [
                 "--codex-home", str(settings.codex_home),
@@ -408,7 +429,14 @@ def process_job(job: Job) -> JobResult:
                 "--store", settings.instacart_store,
             ]  # fmt: skip
             with instacart.job_lock(str(job.id)):
-                run_agent(job_dir, context.prompt, Tools.PRODUCTS, context.job, instacart_args)
+                try:
+                    run_agent(job_dir, context.prompt, Tools.PRODUCTS, context.job, instacart_args)
+                except AgentRunError:
+                    if startup_error := load_products_state(job_dir).instacart_error:
+                        raise InstacartError(startup_error) from None
+                    raise
+            if startup_error := load_products_state(job_dir).instacart_error:
+                raise InstacartError(startup_error)
             # Checked against the items as the worker numbered them.
             return Products(
                 build_id=build.id,
@@ -443,15 +471,22 @@ def process_quote(job: Job, job_dir: Path) -> Quote:
     request = job.quote_request
     if request is None:
         raise AgentRunError(f"Quote job {job.id} has nothing to price.")
+    if request.delivery_address is None:
+        raise InstacartError(delivery.ADDRESS_REQUIRED)
     with get_session() as session:
         order = session.get(GroceryOrder, job.grocery_order_id)
         if order is None:
             raise JobDiscarded
         household_id = order.household_id
+        if delivery.selected(session.get_one(Household, household_id)) != request.delivery_address:
+            raise InstacartError(delivery.ADDRESS_CHANGED)
         names = quotes.product_names(session, order.id)
     store = get_settings().instacart_store
     sessions = session_store()
-    with instacart.job_lock(str(job.id)), cart.filled(household_id, request.lines) as filled:
+    with (
+        instacart.job_lock(str(job.id)),
+        cart.filled(household_id, request.lines, request.delivery_address) as filled,
+    ):
         cart.check(filled.cart, request.lines, names)
         if filled.cart.below_minimum:
             return Quote(blocked_because=filled.cart.blocked_because)
@@ -460,13 +495,19 @@ def process_quote(job: Job, job_dir: Path) -> Quote:
             raise CheckoutError(
                 f"Instacart won't check this cart out: {filled.cart.blocked_because}"
             )
-        prompt = prompts.fill("checkout_quote", store=store, slug=store.lower())
+        prompt = prompts.fill(
+            "checkout_quote",
+            store=store,
+            slug=store.lower(),
+            address=request.delivery_address.label,
+        )
         with _checkout(
             job_dir,
             sessions,
             tip_percent=request.tip_percent,
             tip_max_cents=request.tip_max_cents,
             cart_items=len(request.lines),
+            delivery_address=request.delivery_address.label,
         ) as context:
             run_agent(job_dir, prompt, Tools.CHECKOUT, context)
     read = load_checkout_state(job_dir)
@@ -482,6 +523,7 @@ class _ToBook:
     """What a book job books, read from its order as it starts."""
 
     household_id: UUID
+    delivery_address: Address
     lines: list[CartLine]
     tip_percent: int
     tip_max_cents: int
@@ -507,6 +549,10 @@ def _to_book(job: Job) -> _ToBook:
         approved = session.get(Job, order.quote_id) if order.quote_id else None
         if approved is None or approved.quote is None or approved.quote.checkout is None:
             raise CheckoutError("The order has no approved total to book it by.")
+        if approved.quote_request is None or approved.quote_request.delivery_address is None:
+            raise CheckoutError(
+                "Delivery address: review and approve a total with your selected address first."
+            )
         if order.delivery_date is None:
             raise CheckoutError("The order has no delivery date.")
         try:
@@ -532,6 +578,7 @@ def _to_book(job: Job) -> _ToBook:
                 names.setdefault(alternative.product.product_id, alternative.product.name)
         return _ToBook(
             household_id=order.household_id,
+            delivery_address=approved.quote_request.delivery_address,
             lines=request.lines,
             tip_percent=household.tip_percent,
             tip_max_cents=household.tip_max_cents,
@@ -561,7 +608,7 @@ def process_book(job: Job, job_dir: Path) -> Booked:
     try:
         with (
             instacart.job_lock(str(job.id)),
-            cart.filled(to_book.household_id, to_book.lines) as filled,
+            cart.filled(to_book.household_id, to_book.lines, to_book.delivery_address) as filled,
         ):
             outcome = _book_filled(job, job_dir, to_book, filled)
     except cart.CartNotPutBack:
@@ -627,6 +674,7 @@ def _book_filled(job: Job, job_dir: Path, to_book: _ToBook, filled: cart.FilledC
         slug=store.lower(),
         day=f"{target.day:%A, %b} {target.day.day}",
         by=windows.time_label(target.by),
+        address=target.address,
     )
     with (
         _checkout(
@@ -636,6 +684,7 @@ def _book_filled(job: Job, job_dir: Path, to_book: _ToBook, filled: cart.FilledC
             tip_max_cents=to_book.tip_max_cents,
             cart_items=len(lines),
             book=target,
+            delivery_address=to_book.delivery_address.label,
         ) as context,
         answering_clicks(job_dir, job.id),
     ):
@@ -765,6 +814,7 @@ def _checkout(
     tip_max_cents: int,
     cart_items: int,
     book: BookTarget | None = None,
+    delivery_address: str | None = None,
 ) -> Iterator[CheckoutJob]:
     """The checkout tools' context for the job, with the household's session
     handed over to them for the block (read then, under the caller's locks: a
@@ -783,6 +833,7 @@ def _checkout(
         cart_items=cart_items,
         session_dir=session_dir,
         book=book,
+        delivery_address=delivery_address,
     )
     try:
         _hand_over_session(session_dir, sessions.load())

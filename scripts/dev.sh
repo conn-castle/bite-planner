@@ -17,7 +17,7 @@ scripts/worker-docker.sh build >/dev/null
 # (uvicorn's reloader, vite). No stdin: a background process group reading the
 # terminal would be stopped.
 set -m
-(cd backend && exec uv run uvicorn castle_chef.api:app --reload) </dev/null &
+(cd backend && AWS_PROFILE=conn AWS_REGION=us-east-1 exec uv run uvicorn castle_chef.api:app --reload) </dev/null &
 api=$!
 (cd apps/mobile && exec pnpm dev) </dev/null &
 web=$!

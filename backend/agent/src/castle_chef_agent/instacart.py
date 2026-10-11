@@ -20,9 +20,11 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from castle_chef_agent.address import Address, same_address
 
 # The Instacart app's tools, on the app-server's ChatGPT apps MCP server.
 APPS_SERVER = "codex_apps"
@@ -37,6 +39,37 @@ type Json = dict[str, Any]
 
 class InstacartError(Exception):
     """Instacart (or the app-server in front of it) refused or failed a call."""
+
+
+class DeliveryAddress(Address):
+    """A saved Instacart address, identified by Instacart's own id."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    id: str = Field(pattern=r"^\d+$")
+    instructions: str = ""
+    unattended_delivery: bool = False
+
+
+class _SavedAddress(DeliveryAddress):
+    is_default: bool
+
+
+class _AddressArtifacts(BaseModel):
+    addresses: list[_SavedAddress]
+
+
+class _AddressReply(BaseModel):
+    artifacts: _AddressArtifacts
+
+
+def _addresses_from(result: Json) -> list[_SavedAddress]:
+    try:
+        return _AddressReply.model_validate(result.get("structuredContent")).artifacts.addresses
+    except ValidationError as error:
+        raise InstacartError(
+            f"Instacart's saved-address reply wasn't as expected: {_problems(error)}"
+        ) from error
 
 
 def cents(price: str | None) -> int | None:
@@ -177,6 +210,7 @@ class _WidgetCart(BaseModel):
 class _CartData(BaseModel):
     cart: _WidgetCart
     checkout_button: _CheckoutButton = Field(default_factory=_CheckoutButton)
+    selected_service_type: Literal["DELIVERY", "PICKUP"]
 
 
 class _SearchData(BaseModel):
@@ -435,6 +469,57 @@ class Instacart:
     def __init__(self, server: AppServer, retailer: str) -> None:
         self.server = server
         self.retailer = retailer
+        self.address: DeliveryAddress | None = None
+
+    def addresses(self) -> list[DeliveryAddress]:
+        """Read saved addresses without selecting one or modifying a cart."""
+        result = self.server.call_tool(CART_TOOL, {"show_retailer_selector": True})
+        return [DeliveryAddress.model_validate(a.model_dump()) for a in _addresses_from(result)]
+
+    def select_address(self, expected: Address) -> DeliveryAddress:
+        """Select the unique saved destination; never add an address or guess among duplicates."""
+        matches = [address for address in self.addresses() if same_address(address, expected)]
+        if not matches:
+            raise InstacartError(
+                "Delivery address: this address isn't saved in Instacart. "
+                "Add it in Instacart, or change it in Settings, then try again."
+            )
+        if len(matches) != 1:
+            raise InstacartError(
+                "Delivery address: more than one saved Instacart address matches. "
+                "Remove duplicate entries in Instacart, then try again."
+            )
+        address = matches[0]
+        address_id = address.id
+        try:
+            result = self.server.call_tool(
+                CART_TOOL,
+                {
+                    "retailer_name": self.retailer,
+                    "service_type": "DELIVERY",
+                    "set_default_address_id": address_id,
+                },
+            )
+        except InstacartError as error:
+            if "was not found or is unavailable" in str(error):
+                raise InstacartError(
+                    f"Delivery address: {self.retailer} isn't available at {address.label}. "
+                    "Choose another address in Settings, then try again."
+                ) from error
+            raise
+        if not any(
+            a.id == address_id and a.is_default and same_address(a, expected)
+            for a in _addresses_from(result)
+        ):
+            raise InstacartError(
+                "Delivery address: Instacart didn't select your address. Try again from Settings."
+            )
+        # A retailer refusal or malformed cart must stop before searching or changing its items.
+        data = _widget_data(result, _CartData, CART_TOOL)
+        if data.selected_service_type != "DELIVERY":
+            raise InstacartError("Delivery address: Instacart didn't switch the cart to delivery.")
+        self.address = address
+        return address
 
     def search(self, query: str) -> SearchResults:
         """The store's products for the query (up to 10 in all), best first."""
@@ -501,10 +586,14 @@ def connect(
     command: list[str] | None = None,
     timeout_seconds: float = 120,
     uid: int | None = None,
+    address: Address | None = None,
 ) -> Iterator[Instacart]:
     """The store at Instacart, for the length of the block (holding the Codex lock)."""
     with (
         codex_lock(lock_file, uid),
         AppServer(codex_home, command or ["codex"], timeout_seconds, uid) as server,
     ):
-        yield Instacart(server, retailer)
+        store = Instacart(server, retailer)
+        if address is not None:
+            store.select_address(address)
+        yield store

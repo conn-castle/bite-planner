@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlmodel import Session
 
-from castle_chef import products, shopping
+from castle_chef import delivery, products, shopping
 from castle_chef.checkout import CartLine, QuoteRequest
 from castle_chef.jobs import ACTIVE, add_job, fail_stale_jobs, newest_job, retried
 from castle_chef.models import GroceryOrder, Household, Job, JobKind, JobStatus
@@ -36,6 +36,7 @@ def request_for(session: Session, order: GroceryOrder) -> QuoteRequest:
         lines=[CartLine(product_id=pid, quantity=count) for pid, count in sorted(counts.items())],
         tip_percent=household.tip_percent,
         tip_max_cents=household.tip_max_cents,
+        delivery_address=delivery.selected(household),
     )
 
 

@@ -435,14 +435,24 @@ def serve(tools: Tools, job_dir: Path, instacart: InstacartSettings | None = Non
         case Tools.PRODUCTS:
             if instacart is None:
                 raise ValueError("The products tools need Instacart's settings.")
-            # One Instacart session (and the Codex login's lock) for the server's life.
-            with connect(
-                instacart.codex_home,
-                instacart.store,
-                lock_file=instacart.lock_file,
-                command=shlex.split(instacart.command),
-            ) as store:
-                products_server(job_dir, store).run("stdio")
+            address = read_context(job_dir, products.ShopJob).delivery_address
+            if address is None:
+                raise InstacartError(
+                    "Delivery address: enter your address in Settings before shopping."
+                )
+            try:
+                # One Instacart session (and the Codex login's lock) for the server's life.
+                with connect(
+                    instacart.codex_home,
+                    instacart.store,
+                    lock_file=instacart.lock_file,
+                    command=shlex.split(instacart.command),
+                    address=address,
+                ) as store:
+                    products_server(job_dir, store).run("stdio")
+            except InstacartError as error:
+                products.record_instacart_error(job_dir, str(error))
+                raise
         case Tools.CHECKOUT:
             checkout_server(job_dir).run("stdio")
         case _:

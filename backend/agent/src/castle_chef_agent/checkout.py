@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field
 
 from castle_chef_agent import windows
+from castle_chef_agent.address import normalized_label
 from castle_chef_agent.jobfiles import locked, read_context, replace_file
 from castle_chef_agent.windows import Window
 
@@ -95,6 +96,7 @@ class CheckoutJob(BaseModel):
     cart_items: int
     session_dir: Path
     book: BookTarget | None = None
+    delivery_address: str | None = None
     # Instacart's website: the worker passes its setting (tests point it at stand-ins).
     site: str = SITE
     # How often a page is checked for having stopped changing: the worker passes
@@ -565,6 +567,14 @@ async def report(job_dir: Path, opened: Browser, refs: ReportRefs) -> Checkout:
     )
     if problems := check_checkout(checkout, opened.job):
         raise CheckoutRefused(" ".join(problems))
+    expected_address = opened.job.delivery_address
+    if expected_address is not None and (
+        normalized_label(checkout.address) != normalized_label(expected_address)
+    ):
+        raise CheckoutRefused(
+            f"Delivery address: checkout shows {checkout.address}, but this order is for "
+            f"{expected_address}. Select that saved address before continuing."
+        )
     if book is not None and (changed := account_changes(checkout, book)):
         with _changing(job_dir) as state:
             state.changed = changed

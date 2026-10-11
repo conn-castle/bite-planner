@@ -103,6 +103,20 @@ def stateful_cart(arguments: dict[str, Any]) -> dict[str, Any]:
     return reply
 
 
+def with_addresses(reply: dict[str, Any]) -> dict[str, Any]:
+    if reply.get("isError"):
+        return reply
+    addresses = config.get(
+        "addresses", fixture("addresses")["structuredContent"]["artifacts"]["addresses"]
+    )
+    path = home / "selected-address.txt"
+    selected = path.read_text() if path.exists() else "202"
+    reply.setdefault("structuredContent", {}).setdefault("artifacts", {})["addresses"] = [
+        address | {"is_default": address["id"] == selected} for address in addresses
+    ]
+    return reply
+
+
 def tool_call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if tool == "instacart.search_products":
         slug = re.sub(r"[^a-z0-9]+", "-", arguments["query"].lower()).strip("-")
@@ -114,18 +128,34 @@ def tool_call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if config.get("drop_search_items"):
             del reply["_meta"]["instacart/widgetData"]["data"]["items"]
         return reply
+    if tool == "instacart.cart" and arguments.get("show_retailer_selector"):
+        return with_addresses(fixture("addresses"))
+    if tool == "instacart.cart" and "set_default_address_id" in arguments:
+        if config.get("address_unavailable"):
+            return {
+                "isError": True,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Retailer 'Wegmans' was not found or is unavailable "
+                        "near the address.",
+                    }
+                ],
+            }
+        if not config.get("ignore_address_selection"):
+            (home / "selected-address.txt").write_text(arguments["set_default_address_id"])
     if tool == "instacart.cart" and "cart" in config:
-        return stateful_cart(arguments)
+        return with_addresses(stateful_cart(arguments))
     if tool == "instacart.cart":
         if "item_updates" not in arguments:
-            return fixture("cart-empty")
+            return with_addresses(fixture("cart-empty"))
         if config.get("refuse_cart"):
             return fixture("cart-refused")
         reply = fixture("cart-with-items")
         if config.get("drop_cart_quantities"):
             for item in reply["_meta"]["instacart/widgetData"]["data"]["cart"]["items"]:
                 del item["quantity"]
-        return reply
+        return with_addresses(reply)
     raise ValueError(tool)
 
 

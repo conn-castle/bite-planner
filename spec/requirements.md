@@ -140,6 +140,7 @@ Household settings (shared by all members):
 - [x] Reminder lead: days before the decide-by date that reminders start, default 2.
 - [x] Default servings: the servings each picked meal starts at, default 4.
 - [x] Delivery time: the latest time deliveries should arrive by, default 6:00 PM; each order's delivery starts at it (stage 3).
+- [x] Delivery address: start typing a US street address in Settings, select an AWS autocomplete suggestion, then review and approve the normalized address. Shopping and checkout require exactly one matching saved Instacart address, including the unit, and reselect it even if the account's default changed elsewhere. Missing or ambiguous addresses and an unavailable retailer stop with an actionable error. Changing the destination requires shopping and a fresh final review; approved orders keep their approved destination.
 - [x] Tip: a percentage of the items' total, default 10%, and a maximum tip, default $15: the tip is the percentage, but never more than the maximum (stage 3).
 - [x] A product gone at booking: use an alternative (default), or ask (stage 3).
 

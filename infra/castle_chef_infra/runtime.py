@@ -528,6 +528,13 @@ class RuntimeStack(Stack):
         )
         # The group is named, not referenced: created first.
         booking_schedule.add_dependency(schedule_group)
+        # Settings confirms a specific street address synchronously through Amazon Location.
+        api.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["geo-places:Geocode", "geo-places:Autocomplete"],
+                resources=[f"arn:{self.partition}:geo-places:{self.region}::provider/default"],
+            )
+        )
         for statement in manage_schedules:
             reminders.add_to_role_policy(statement)
             api.add_to_role_policy(statement)

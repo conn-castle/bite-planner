@@ -13,7 +13,8 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from uuid import UUID
 
-from castle_chef_agent.instacart import Cart, CartUpdate, Instacart
+from castle_chef_agent.address import Address, same_address
+from castle_chef_agent.instacart import Cart, CartUpdate, Instacart, InstacartError
 from sqlalchemy import update
 from sqlmodel import col
 
@@ -126,11 +127,16 @@ def check(cart: Cart, lines: list[CartLine], names: dict[str, str]) -> None:
 
 
 @contextmanager
-def filled(household_id: UUID, lines: list[CartLine]) -> Iterator[FilledCart]:
+def filled(household_id: UUID, lines: list[CartLine], address: Address) -> Iterator[FilledCart]:
     """The household's cart with just these products and counts, for the length
     of the block; its own items are set aside until then. Yields the cart as
     Instacart has it after filling (the caller checks it)."""
-    with instacart.store() as store:
+    with instacart.store(address) as store:
+        if store.address is None or not same_address(store.address, address):
+            raise InstacartError(
+                "Delivery address: your saved address changed in Instacart. "
+                "Check your address in Settings and review the order again."
+            )
         if (leftover := _ledger(household_id)) is not None:
             # A run stopped (or couldn't put everything back) before this one.
             if problems := put_back(store, leftover):

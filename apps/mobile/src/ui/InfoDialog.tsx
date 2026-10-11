@@ -12,6 +12,7 @@ interface InfoDialogProps {
   icon: IconName
   title: string
   children: ReactNode
+  footer?: ReactNode
 }
 
 /**
@@ -20,7 +21,7 @@ interface InfoDialogProps {
  * everything (not an Ionic modal: inside the order flow, Ionic moves a modal's
  * content where its taps never reach React).
  */
-export function InfoDialog({ isOpen, onClose, icon, title, children }: InfoDialogProps) {
+export function InfoDialog({ isOpen, onClose, icon, title, children, footer }: InfoDialogProps) {
   const dialog = useRef<HTMLDivElement>(null)
   // Where it goes: inside the Ionic modal it's opened from (e.g. the order flow), whose focus
   // trap would otherwise pull focus back out of it; else the page's body.
@@ -89,9 +90,7 @@ export function InfoDialog({ isOpen, onClose, icon, title, children }: InfoDialo
         </span>
         <h2 className={styles.title}>{title}</h2>
         {children}
-        <Button block onClick={onClose}>
-          Got it
-        </Button>
+        {footer ?? <Button block onClick={onClose}>Got it</Button>}
       </div>
     </div>,
     host,
