@@ -66,8 +66,8 @@ instacart-login: ## Sign Castle Chef in to Instacart's website for checkout (a b
 	  CASTLE_CHEF_INSTACART_SESSION_PARAMETER=/castle-chef/shared/instacart-session \
 	  uv run castle-chef instacart sign-in
 
-worker-login: ## Sign the local worker image in: Grok, or AGENT=codex to connect Instacart (once)
-	scripts/worker-docker.sh login $(or $(AGENT),grok)
+worker-login: ## Connect the local worker image to Instacart through Codex (once)
+	scripts/worker-docker.sh login codex
 
 worker-job: ## Run one pending job in the worker image, as Fargate does: make worker-job JOB=<id>
 	@test -n "$(JOB)" || { echo 'Usage: make worker-job JOB=<job-id>' >&2; exit 2; }

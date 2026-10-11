@@ -106,33 +106,17 @@ COPY --from=chromium /opt/ms-playwright /opt/ms-playwright
 # The agent runs as this unprivileged user; the worker (root) starts it.
 RUN groupadd --gid 65532 agent \
  && useradd --uid 65532 --gid 65532 --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin agent
-ADD --checksum=sha256:ea16cc701e4ce62eb079e1d0520a56eb05f1d406fa6a72adda1998f79ff656e0 --chmod=0555 \
-    https://github.com/conn-castle/agent-layer/releases/download/v0.22.0/al-linux-amd64 \
-    /usr/local/bin/al
-ADD --checksum=sha256:9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407 --chmod=0555 \
-    https://x.ai/cli/grok-1.0.41-linux-x86_64 \
-    /usr/local/bin/grok
-# The Agent Layer project the agent is launched from: only the worker's Grok
-# settings (docker/agent-project). `al` syncs its generated files (and Grok's
-# home, .grok-config) into the project on every launch, and the root filesystem
-# is read-only, so the worker copies this template to a writable
-# /tmp/agent-project owned by the agent for each job.
-COPY docker/agent-project /opt/castle-chef/agent-project
 COPY --from=agent-build /opt/castle-chef-agent /opt/castle-chef-agent
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=worker-build /app/backend /app/backend
 # The backend is the worker's (root) alone: the agent's user can't list or read it.
 RUN chmod 700 /app
-# The Grok login lives on EFS (GROK_AUTH_PATH, set by the task definition), never
-# an API key; Grok doesn't update itself.
-ENV GROK_DISABLE_API_KEY_AUTH=true \
-    GROK_DISABLE_AUTOUPDATER=true \
-    CASTLE_CHEF_AGENT_COMMAND="al -q grok" \
+# The OpenAI key comes from SSM through the worker task's ECS secret. Only the
+# isolated runner gets it; its MCP tool subprocess does not.
+ENV CASTLE_CHEF_AGENT_COMMAND="castle-chef run-agent" \
     CASTLE_CHEF_AGENT_UID=65532 \
     CASTLE_CHEF_AGENT_PATH=/opt/castle-chef-agent/bin:/usr/local/bin:/usr/bin:/bin \
-    CASTLE_CHEF_AGENT_ENV='["GROK_AUTH_PATH","GROK_DISABLE_API_KEY_AUTH","GROK_DISABLE_AUTOUPDATER","PLAYWRIGHT_BROWSERS_PATH"]' \
-    CASTLE_CHEF_AGENT_PROJECT_TEMPLATE=/opt/castle-chef/agent-project \
-    CASTLE_CHEF_AGENT_PROJECT_DIR=/tmp/agent-project \
+    CASTLE_CHEF_AGENT_ENV='["OPENAI_API_KEY","PLAYWRIGHT_BROWSERS_PATH"]' \
     CASTLE_CHEF_CODEX_COMMAND=/opt/codex/bin/codex \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     CASTLE_CHEF_JOBS_DIR=/tmp/jobs \
@@ -144,6 +128,6 @@ ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
 # saving: a hung process can't keep the task (and its bill) running.
 # castle_chef.jobs.WORKER_LIMIT is this limit: a booking isn't counted lost before it.
 ENTRYPOINT ["timeout", "--kill-after=30s", "2400s", "castle-chef"]
-# One job (the task gets CASTLE_CHEF_JOB_ID); `agent-login grok` signs the agent in,
-# and `agent-login codex` connects Instacart (CODEX_HOME on EFS, set by the task).
+# One job (the task gets CASTLE_CHEF_JOB_ID); `agent-login codex` connects
+# Instacart (CODEX_HOME on EFS, set by the task).
 CMD ["job", "run"]

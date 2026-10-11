@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 
+from castle_chef_agent.runner import main as run_agent
 from castle_chef_agent.server import InstacartSettings, Tools, serve
 
 app = typer.Typer(no_args_is_help=True)
@@ -40,3 +41,12 @@ def mcp_serve(
         else None
     )
     serve(tools, job_dir, instacart)
+
+
+@app.command("run-agent")
+def run_openai_agent(
+    cwd: Annotated[Path, typer.Option(exists=True, file_okay=False)],
+    prompt_file: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+) -> None:
+    """Run a job with GPT-6.1 Sol and only that job's MCP tools."""
+    raise typer.Exit(run_agent(cwd, prompt_file))

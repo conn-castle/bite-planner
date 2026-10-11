@@ -2,6 +2,7 @@
 with this environment's settings), and connecting it: signing Codex in to the
 household's ChatGPT account and connecting the Instacart app there."""
 
+import fcntl
 import logging
 import shlex
 import sys
@@ -74,6 +75,28 @@ def _codex_home() -> Path:
 
 
 @contextmanager
+def job_lock(job_id: str) -> Iterator[None]:
+    """Queue Instacart jobs before their 15-minute agent timer starts.
+
+    The tool server takes the Codex login lock during startup. A separate lock
+    here makes a job wait behind another job's cart or login before its runner
+    starts, so the wait does not consume the model's time limit.
+    """
+    home = get_settings().codex_home
+    if home is None:
+        yield
+        return
+    started = time.monotonic()
+    with (home / "job.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        log.info(
+            "instacart.job_lock_acquired",
+            extra={"job_id": job_id, "waited_seconds": round(time.monotonic() - started, 1)},
+        )
+        yield
+
+
+@contextmanager
 def store() -> Iterator[Instacart]:
     """The household's store at Instacart, for the length of the block."""
     settings = get_settings()
@@ -96,6 +119,7 @@ def login() -> int:
     deadline = time.monotonic() + APPROVAL_TIMEOUT_SECONDS
     try:
         with (
+            job_lock("login"),
             codex_lock(settings.codex_lock_file, settings.agent_uid),
             AppServer(
                 _codex_home(), shlex.split(settings.codex_command), 120, settings.agent_uid

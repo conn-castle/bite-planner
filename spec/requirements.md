@@ -74,7 +74,7 @@ The list is made in three stages:
 Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-27):
 
 - No grocery service offers a public, self-serve way for another app to place orders on a shopper's account. Instacart's developer program isn't accepting applications; its tools that fill a real cart and check out are for partners (ChatGPT, Claude, Gemini, Muse). Walmart's checkout API and grocery program need approval and a business case.
-- For our household it works today, with the household's accounts (Nick's): Instacart's own tools in the ChatGPT apps, called through the Codex app-server with the household's ChatGPT sign-in, search Wegmans (with sizes, prices, pictures, and "Buy it again") and fill the cart; a headless browser with the household's Instacart session reads checkout (times, fees, total) and places the order after the user approves it in the app. The agent (Grok) only searches and chooses, through our tools; our code writes the cart and checks out. Instacart's terms don't allow an automated system to operate an account without its authorization; the account owner accepts that for personal use.
+- For our household it works today, with the household's accounts (Nick's): Instacart's own tools in the ChatGPT apps, called through the Codex app-server with the household's ChatGPT sign-in, search Wegmans (with sizes, prices, pictures, and "Buy it again") and fill the cart; a headless browser with the household's Instacart session reads checkout (times, fees, total) and places the order after the user approves it in the app. The model only searches and chooses, through our tools; our code writes the cart and checks out. Instacart's terms don't allow an automated system to operate an account without its authorization; the account owner accepts that for personal use.
 - Walmart is the path if Castle Chef is ever offered to other households: its product API is self-serve, and one link fills anyone's Walmart cart with chosen products and quantities; the shopper then checks out themselves.
 
 - [x] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings (stages 1 and 2), asynchronously (it takes minutes), starting as soon as the servings are chosen; the user sees it when it's done.
@@ -159,7 +159,7 @@ Personal settings:
 
 - Walmart, and ordering for households other than ours (see stage 3).
 - Setting up the ChatGPT and Instacart connections from the app (after the MVP; until then they're set up with commands).
-- Making shopping faster, once ordering works end to end: find out where its time goes (a 24-item list took 11 minutes with Grok at extra-high reasoning; now high).
+- Making shopping faster, once ordering works end to end: find out where its time goes (a 24-item list took 11 minutes with Grok at extra-high reasoning; the current OpenAI runner uses GPT-6.1 Sol at high reasoning).
 - Real delivery status updates.
 - Handling gaps between orders (for now, reminders go out every day).
 - The suggestion agent using ratings.

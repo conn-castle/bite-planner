@@ -208,7 +208,7 @@ def test_connecting_gives_up_when_instacart_isnt_connected_in_time(
 def test_an_unknown_login_provider_is_a_usage_error() -> None:
     result = CliRunner().invoke(app, ["agent-login", "gemini"])
     assert result.exit_code == 2
-    assert "grok or codex" in result.stderr
+    assert "codex" in result.stderr
 
 
 def test_the_login_is_released_only_once_everything_codex_started_has_stopped(

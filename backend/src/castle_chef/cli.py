@@ -87,11 +87,9 @@ def job_book_due() -> None:
 
 @app.command("agent-login")
 def agent_login(
-    provider: Annotated[str, typer.Argument(help="grok, or codex (Instacart).")] = "grok",
+    provider: Annotated[str, typer.Argument(help="codex (Instacart).")],
 ) -> None:
-    """Sign the worker's agent in to its subscription (device code), or with `codex`,
-    Codex in to the household's ChatGPT account with Instacart connected. In AWS this
-    runs as a one-off worker task with the command `agent-login grok` (or codex)."""
+    """Connect Codex to the household's ChatGPT and Instacart accounts."""
     try:
         status = harness.login_agent(provider)
     except ValueError as error:  # an unknown provider

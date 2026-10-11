@@ -1,7 +1,6 @@
 """A job's record: what its agent was given and did, kept once the worker's task
 is gone, for finding out what happened. It is the job's directory (the prompt,
-the agent's output and errors, the files its tools wrote) and Grok's session
-files (every tool call and what it returned), as one gzipped tar in S3
+the agent's responses and tool calls, and the files its tools wrote), as one gzipped tar in S3
 (`jobs/<job-id>.tar.gz`; docs/operations/aws.md, "Job records")."""
 
 import io
@@ -46,14 +45,8 @@ def record_store() -> RecordStore | None:
     return RecordStore(bucket) if bucket else None
 
 
-def grok_sessions_dir() -> Path:
-    """Where Grok keeps its sessions: in the agent project it was launched from."""
-    return get_settings().agent_project_dir / ".grok-config" / "sessions"
-
-
-def pack(job_dir: Path, sessions_dir: Path) -> tuple[bytes, list[str]]:
-    """The job's directory as `job/`, and Grok's sessions as `grok-sessions/`;
-    and which of the two there were (a job can fail before it has either)."""
+def pack(job_dir: Path) -> tuple[bytes, list[str]]:
+    """The job's directory as `job/`, if it exists."""
 
     def keep(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
         return None if Path(info.name).name in SECRET_FILES else info
@@ -61,10 +54,9 @@ def pack(job_dir: Path, sessions_dir: Path) -> tuple[bytes, list[str]]:
     parts: list[str] = []
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        for path, name in [(job_dir, "job"), (sessions_dir, "grok-sessions")]:
-            if path.exists():
-                archive.add(path, arcname=name, filter=keep)
-                parts.append(name)
+        if job_dir.exists():
+            archive.add(job_dir, arcname="job", filter=keep)
+            parts.append("job")
     return buffer.getvalue(), parts
 
 
@@ -78,7 +70,7 @@ def save_record(job_id: UUID, *, final: bool) -> None:
         store = record_store()
         if store is None:
             return
-        data, parts = pack(get_settings().jobs_dir / str(job_id), grok_sessions_dir())
+        data, parts = pack(get_settings().jobs_dir / str(job_id))
         store.put(key, data)
     except Exception:
         log.log(
