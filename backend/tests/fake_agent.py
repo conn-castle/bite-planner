@@ -1,8 +1,8 @@
-"""Stands in for `al grok` in worker tests.
+"""Stands in for the OpenAI Responses runner in worker tests.
 
 Usage (as CASTLE_CHEF_AGENT_COMMAND): fake_agent.py MEALS STOP_REASON EXIT_CODE SECONDS
-followed by the Grok arguments the worker appends. Like Grok, it starts the MCP
-server the job directory's `.grok/config.toml` names and uses its tools: MEALS meals
+followed by the runner arguments the worker appends. It starts the MCP
+server the job directory's `tools.json` names and uses its tools: MEALS meals
 with `add_meal` (or, given a shopping list prompt, MEALS items sharing its lines with
 `add_item`, and salt with `add_staple`; or, given a list to shop, each item's first
 search result, with the second as its alternative), then `done`; or, given checkout
@@ -10,7 +10,7 @@ to read, checkout on the stand-in pages the prompt's tools open, reporting it (M
 finding it signed out); or, given an order to book, the window `choose_window` says
 on the order's day, the report, `place_order`, and the confirmation (MEALS 0: signed
 out; 3: no confirmation found after the press). It takes SECONDS and prints
-Grok-style JSON. Settings are arguments because the worker gives the agent a minimal
+runner JSON. Settings are arguments because the worker gives the agent a minimal
 environment.
 """
 
@@ -20,9 +20,9 @@ import os
 import re
 import sys
 import time
-import tomllib
 from typing import Any
 
+from castle_chef_agent.runner import AgentSummary, tool_environment
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import CallToolResult, TextContent
@@ -64,8 +64,8 @@ with open(os.path.join(cwd, "fake-agent-prompt.md"), "w") as file:
     file.write(prompt)
 with open(os.path.join(cwd, "fake-agent-env.json"), "w") as file:
     json.dump(sorted(os.environ), file)
-with open(os.path.join(cwd, ".grok", "config.toml"), "rb") as config:
-    server = tomllib.load(config)["mcp_servers"]["castle-chef"]
+with open(os.path.join(cwd, "tools.json")) as config:
+    server = json.load(config)
 
 
 def text_of(result: CallToolResult) -> str:
@@ -86,7 +86,7 @@ def found(pattern: str, text: str) -> str:
 
 async def use_tools() -> None:
     parameters = StdioServerParameters(
-        command=server["command"], args=server["args"], env=dict(os.environ), cwd=cwd
+        command=server["command"], args=server["args"], env=tool_environment(), cwd=cwd
     )
     async with stdio_client(parameters) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
@@ -240,5 +240,5 @@ async def use_tools() -> None:
 
 asyncio.run(use_tools())
 time.sleep(float(seconds))
-print(json.dumps({"text": "done", "stopReason": stop_reason}))
+print(AgentSummary.model_validate({"stopReason": stop_reason}).model_dump_json(by_alias=True))
 sys.exit(int(exit_code))

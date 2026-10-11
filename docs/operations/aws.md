@@ -34,9 +34,9 @@ have their own roles (the task role, the Lambdas' roles, and GitHub's OIDC role
 Account `123456789012` (profile `conn`), region `us-east-1`, defined in `infra/` (CDK, Python). Releases deploy it ([Releases](../../README.md#releases)); nothing needs a manual deploy. Stacks:
 
 - `CastleChefRepositories`: ECR repositories `castle-chef-api` and `castle-chef-worker` (immutable tags; the last 30 released images `commit-<sha>` and 5 development pushes `dev-…` are kept), and the role `castle-chef-github-deploy`, which only this repository's `main` branch can assume (GitHub OIDC).
-- `CastleChef` (stage `prod`, Neon `main`): a VPC with public subnets only (no NAT), the API, failure-handler, and Reminders Lambdas (Reminders also runs the hourly booking), the jobs queue and its dead-letter queue, the Pipe, the ECS cluster and worker task definition, EFS for the agent logins (Grok's and Codex's), the reminder schedule group and the role its schedules run as, log groups, the job records bucket, and alarms. Its outputs name the API URL, cluster, task definition, subnets, security group, log group, job records bucket, Pipe, and Reminders function. `CastleChef-dev` (stage `dev`, Neon `dev`) is the same stack for trying infrastructure changes; it is not deployed now.
+- `CastleChef` (stage `prod`, Neon `main`): a VPC with public subnets only (no NAT), the API, failure-handler, and Reminders Lambdas (Reminders also runs the hourly booking), the jobs queue and its dead-letter queue, the Pipe, the ECS cluster and worker task definition, EFS for Codex's Instacart login, the reminder schedule group and the role its schedules run as, log groups, the job records bucket, and alarms. Its outputs name the API URL, cluster, task definition, subnets, security group, log group, job records bucket, Pipe, and Reminders function. `CastleChef-dev` (stage `dev`, Neon `dev`) is the same stack for trying infrastructure changes; it is not deployed now.
 
-Costs: nothing runs while idle; EFS, ECR, and alarms are well under $1 a month, a job is a fraction of a cent of Fargate, and Grok is the subscription. Lambda and the Pipe scale to zero.
+Costs: nothing runs while idle; EFS, ECR, and alarms are well under $1 a month, a job is a fraction of a cent of Fargate plus GPT-6.1 Sol token usage. The dedicated Castle Chef project in the OpenAI Usage dashboard shows the app's API cost separately. Lambda and the Pipe scale to zero.
 
 Secrets never sit in configuration: the Lambdas read `DATABASE_URL` (and the failure handler and Reminders the APNs key) from SSM at startup (`CASTLE_CHEF_SSM_PARAMETERS`), and ECS injects them into the worker from SSM. Both use Neon's pooled endpoint.
 
@@ -70,11 +70,15 @@ neonctl api "/projects/example-project/branches/$(neonctl branches get main \
   -d "{\"enabled\": true, \"webhook_url\": \"${api%/}/v1/auth/neon-webhook\", \"enabled_events\": [\"user.before_create\"], \"timeout_seconds\": 10}"
 ```
 
-**Alarms** email `operator@example.com` (SNS topic "Castle Chef alarms"; the subscription must be confirmed from the first email): any error-level log line, Lambda errors, Pipe failures, and reminder or booking schedules that couldn't invoke Reminders (or dropped a firing). A request that fails because of the agent (bad output, timeout, an expired login) also logs at error level, so it emails too.
+**Alarms** email `operator@example.com` (SNS topic "Castle Chef alarms"; the subscription must be confirmed from the first email): any error-level log line, Lambda errors, Pipe failures, and reminder or booking schedules that couldn't invoke Reminders (or dropped a firing). A request that fails because of the agent (bad output, timeout, an API authentication error) also logs at error level, so it emails too.
 
 **Failures** mark jobs failed without polling: a message the Pipe can't start a task for goes to the dead-letter queue after 3 tries, and a worker task that stops with a non-zero exit (crash, out of memory, image pull or EFS failure, the 40-minute cap) sends an ECS event; the failure handler fails its job either way, and the shopping its task went on to. As a backstop, the API fails a person's jobs that stayed pending for 10 minutes or running for 20.
 
-**Agent login.** The worker's agent signs in to its subscription (Grok) once, with a device code; the login lives on EFS and the agent refreshes it. To sign in again (e.g. after `job.failed` with an authentication error), run a one-off worker task with the command `agent-login grok` and approve the code it prints:
+**OpenAI API.** The worker calls GPT-6.1 Sol at high reasoning with the Castle Chef project's API key from SSM (`/castle-chef/shared/openai-api-key`). The key belongs only to that project, so its usage and cost can be filtered in the [OpenAI Usage dashboard](https://platform.openai.com/usage). The Responses API runner passes only the job's MCP functions to the model and keeps each response and tool result in the job record. It has no device login.
+
+After the new worker is deployed, its task no longer mounts the old Grok login. The old files remain on EFS until that subscription session is signed out and the orphaned directory is removed.
+
+**Instacart connection.** `agent-login codex` signs Codex in to the household's ChatGPT account with a device code (skipped if it's signed in), then installs the Instacart app and prints its connect link. Open the link signed in to **the same** ChatGPT account and connect the household's Instacart account; the task waits until Instacart answers (`instacart.connected`, "Instacart is connected: …"), up to 15 minutes for both steps together. Its login is on EFS (`/codex`) and refreshes itself. To reconnect, run:
 
 ```sh
 out() { aws cloudformation describe-stacks --profile conn --region us-east-1 --stack-name CastleChef \
@@ -82,13 +86,9 @@ out() { aws cloudformation describe-stacks --profile conn --region us-east-1 --s
 aws ecs run-task --profile conn --region us-east-1 --launch-type FARGATE \
   --cluster "$(out ClusterNameOutput)" --task-definition "$(out WorkerTaskDefinitionOutput)" \
   --network-configuration "awsvpcConfiguration={subnets=[$(out WorkerSubnetsOutput)],securityGroups=[$(out WorkerSecurityGroupOutput)],assignPublicIp=ENABLED}" \
-  --overrides '{"containerOverrides":[{"name":"worker","command":["agent-login","grok"]}]}'
-aws logs tail "$(out WorkerLogGroupOutput)" --follow --profile conn --region us-east-1   # the link and code
+  --overrides '{"containerOverrides":[{"name":"worker","command":["agent-login","codex"]}]}'
+aws logs tail "$(out WorkerLogGroupOutput)" --follow --profile conn --region us-east-1
 ```
-
-The task ends when you approve (`agent.login_finished`) or the code expires. The login is shared by every job; this is one of the two credentials not in SSM, because the agent rewrites it as it refreshes.
-
-**Instacart connection.** The same way, with the command `agent-login codex`: Codex signs in to the household's ChatGPT account with a device code (skipped if it's signed in), then installs the Instacart app and prints its connect link. Open the link signed in to **the same** ChatGPT account and connect the household's Instacart account; the task waits until Instacart answers (`instacart.connected`, "Instacart is connected: …"), up to 15 minutes for both steps together. The login is on EFS next to Grok's (`/codex`), and Codex refreshes it itself.
 
 **Deploying by hand** (not needed normally; e.g. the first deploy of a new account or of `CastleChef-dev`), with AWS credentials from the `conn` profile:
 
@@ -100,7 +100,7 @@ npx aws-cdk@2.1143.0 deploy CastleChefRepositories -c repositoriesOnly=true
 npx aws-cdk@2.1143.0 deploy CastleChef-dev -c stage=dev -c release=dev-<sha> -c apiImageDigest=sha256:… -c workerImageDigest=sha256:…
 ```
 
-A new stack has its own EFS, so run both logins for it once. `cd infra && uv run pytest` checks what the stacks must guarantee (CI runs it).
+A new stack has its own EFS, so connect Codex to Instacart for it once. `cd infra && uv run pytest` checks what the stacks must guarantee (CI runs it).
 
 ## Finding a problem
 
@@ -121,7 +121,7 @@ fields @timestamp, level, event, route, status, detail, user_id, entry.event, en
 
 ## Job records
 
-Each job's record is kept in the S3 bucket `JobRecordsBucketOutput` for 90 days (like the logs) as `jobs/<job-id>.tar.gz`: the job's directory as `job/` (the prompt, the agent's output and errors, what its tools wrote) and Grok's session files as `grok-sessions/` (every tool call and what it returned). The Instacart session never goes in. The worker saves it every minute while the job runs (so a task that's killed still leaves most of it) and once the job ends, however it ended (`job.record_saved`, with the parts it has; `job.record_failed` if it couldn't, at error level once the job has ended, which changes nothing about the job). The worker can only add records; to read one:
+Each job's record is kept in the S3 bucket `JobRecordsBucketOutput` for 90 days (like the logs) as `jobs/<job-id>.tar.gz`: the job's directory as `job/` (the prompt, Responses API and tool transcript, output and errors, and what its tools wrote). The Instacart session never goes in. The worker saves it every minute while the job runs (so a task that's killed still leaves most of it) and once the job ends, however it ended (`job.record_saved`, with the parts it has; `job.record_failed` if it couldn't, at error level once the job has ended, which changes nothing about the job). The worker can only add records; to read one:
 
 ```sh
 mkdir -p /tmp/job-record && aws s3 cp "s3://$(out JobRecordsBucketOutput)/jobs/<job-id>.tar.gz" - --profile conn | tar xz -C /tmp/job-record
@@ -148,11 +148,12 @@ mkdir -p /tmp/job-record && aws s3 cp "s3://$(out JobRecordsBucketOutput)/jobs/<
 | `/castle-chef/shared/match-password` (encrypts `conn-castle-apple-certs`) | GitHub `MATCH_PASSWORD` | set |
 | `/castle-chef/shared/apns-key-base64` (APNs auth key `EXAMP12345`, `.p8` base64; Production, topic `com.conncastle.castlechef` only) | the failure handler and Reminders Lambdas (read at startup) and the worker (ECS secret) | set |
 | `/castle-chef/shared/apns-key-id` (`EXAMP12345`, not secret) | the failure handler and Reminders Lambdas, and the worker | set |
+| `/castle-chef/shared/openai-api-key` (Castle Chef OpenAI project-scoped service account key) | the worker (ECS secret); local worker jobs read it from SSM | set |
 | `/castle-chef/shared/instacart-session` (the household's Instacart website session: its instacart.com cookies, gzip then base64) | the worker's browser for checkout (read, and written back as Instacart renews it; the task role may get and put only it), from piece 9 part 3; locally, `make worker-job` passes short-lived `conn` credentials by environment | set |
 | `/castle-chef/production/instacart-booking` (String, not secret: `off`, `live`, or `dry_run`) | the `CastleChef` worker (ECS secret): whether booking presses Place order ([Stack and services](#stack-and-services), Booking) | `live` (since 2026-10-04) |
 | `/castle-chef/development/instacart-booking` (String, not secret) | the `CastleChef-dev` worker, when deployed | `dry_run` |
 
-The two credentials not in SSM are the worker's subscription logins on the stack's EFS: Grok's, and Codex's (the household's ChatGPT sign-in, with Instacart connected). Each refreshes itself, so a copy would go stale. `castle-chef agent-login grok` and `agent-login codex` write them ([Stack and services](#stack-and-services)). AWS access from GitHub uses OIDC, so there are no AWS keys.
+The only credential not in SSM is Codex's ChatGPT sign-in with Instacart connected, on the stack's EFS. It refreshes itself, so a copy would go stale. `castle-chef agent-login codex` writes it ([Stack and services](#stack-and-services)). AWS access from GitHub uses OIDC, so there are no AWS keys.
 
 **Castle Chef Bot** is this repository's own GitHub App (one app per repository): private, read-only access to repository contents, installed on `castle-chef` and `conn-castle-apple-certs`, settings at https://github.com/settings/apps. Nothing stores a GitHub token: the release workflow mints a one-hour token from its key that can read only `conn-castle-apple-certs`, for fastlane match.
 

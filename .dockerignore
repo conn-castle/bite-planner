@@ -7,6 +7,5 @@
 !backend/migrations
 !backend/src
 !backend/agent
-!docker/agent-project
 !docker/castle-chef
 **/__pycache__

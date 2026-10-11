@@ -38,17 +38,17 @@ from constructs import Construct
 
 WORKER_CONTAINER = "worker"  # castle_chef.failures.WORKER_CONTAINER
 AGENT_UID = 65532  # the image's agent user (CASTLE_CHEF_AGENT_UID)
-GROK_AUTH_DIR = "/mnt/agent-auth/grok"
 # Codex's login (the household's ChatGPT account, with Instacart connected).
 CODEX_HOME_DIR = "/mnt/agent-auth/codex"
-# Each agent's login directory, by provider (its EFS access point, volume, and mount).
-LOGIN_DIRS = {"grok": GROK_AUTH_DIR, "codex": CODEX_HOME_DIR}
+# The Codex login's EFS access point, volume, and mount.
+LOGIN_DIRS = {"codex": CODEX_HOME_DIR}
 LOG_RETENTION = logs.RetentionDays.THREE_MONTHS
 # Job records are kept as long as the logs (THREE_MONTHS is 90 days).
 RECORD_RETENTION = Duration.days(90)
 # The APNs auth key (Production, topic com.conncastle.castlechef) and its id.
 APNS_KEY_PARAMETER = "/castle-chef/shared/apns-key-base64"
 APNS_KEY_ID_PARAMETER = "/castle-chef/shared/apns-key-id"
+OPENAI_API_KEY_PARAMETER = "/castle-chef/shared/openai-api-key"
 # The household's Instacart website session (browser cookies), which the worker
 # reads for checkout and writes back as Instacart renews it.
 INSTACART_SESSION_PARAMETER = "/castle-chef/shared/instacart-session"
@@ -109,6 +109,9 @@ class RuntimeStack(Stack):
         )
         apns_key_id = ssm.StringParameter.from_string_parameter_name(
             self, "ApnsKeyId", string_parameter_name=APNS_KEY_ID_PARAMETER
+        )
+        openai_api_key = ssm.StringParameter.from_secure_string_parameter_attributes(
+            self, "OpenAiApiKey", parameter_name=OPENAI_API_KEY_PARAMETER
         )
         instacart_booking = ssm.StringParameter.from_string_parameter_name(
             self, "InstacartBooking", string_parameter_name=config.instacart_booking_parameter
@@ -229,13 +232,12 @@ class RuntimeStack(Stack):
                 "CASTLE_CHEF_APNS_KEY": ecs.Secret.from_ssm_parameter(apns_key),
                 "CASTLE_CHEF_APNS_KEY_ID": ecs.Secret.from_ssm_parameter(apns_key_id),
                 "CASTLE_CHEF_INSTACART_BOOKING": ecs.Secret.from_ssm_parameter(instacart_booking),
+                "OPENAI_API_KEY": ecs.Secret.from_ssm_parameter(openai_api_key),
             },
             environment={
                 "CASTLE_CHEF_RELEASE": config.release,
                 # "Your meal ideas are ready", when a batch succeeds.
                 "CASTLE_CHEF_PUSH": "apns",
-                "GROK_AUTH_PATH": f"{GROK_AUTH_DIR}/auth.json",
-                "CASTLE_CHEF_AGENT_LOCK_FILE": f"{GROK_AUTH_DIR}/agent.lock",
                 "CASTLE_CHEF_CODEX_HOME": CODEX_HOME_DIR,
                 "CASTLE_CHEF_CODEX_LOCK_FILE": f"{CODEX_HOME_DIR}/codex.lock",
                 "CASTLE_CHEF_INSTACART_SESSION_PARAMETER": INSTACART_SESSION_PARAMETER,

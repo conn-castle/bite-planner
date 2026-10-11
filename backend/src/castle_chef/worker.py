@@ -41,6 +41,7 @@ from sqlmodel import Session, col, select
 from castle_chef import (
     booking,
     cart,
+    instacart,
     orders,
     products,
     prompts,
@@ -61,7 +62,7 @@ from castle_chef.checkout import (
     session_store,
 )
 from castle_chef.db import for_update, get_engine, get_session
-from castle_chef.harness import AgentRunError, agent_lock, run_agent
+from castle_chef.harness import AgentRunError, run_agent
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, create_shop, finish_job
 from castle_chef.meals import add_meals
 from castle_chef.models import (
@@ -406,7 +407,8 @@ def process_job(job: Job) -> JobResult:
                 "--codex-command", settings.codex_command,
                 "--store", settings.instacart_store,
             ]  # fmt: skip
-            run_agent(job_dir, context.prompt, Tools.PRODUCTS, context.job, instacart_args)
+            with instacart.job_lock(str(job.id)):
+                run_agent(job_dir, context.prompt, Tools.PRODUCTS, context.job, instacart_args)
             # Checked against the items as the worker numbered them.
             return Products(
                 build_id=build.id,
@@ -449,9 +451,7 @@ def process_quote(job: Job, job_dir: Path) -> Quote:
         names = quotes.product_names(session, order.id)
     store = get_settings().instacart_store
     sessions = session_store()
-    # The agent's lock before the Codex login's (the cart), the order shopping takes
-    # them in (its tools reach Instacart while its agent runs), so they can't deadlock.
-    with agent_lock(job_id=str(job.id)), cart.filled(household_id, request.lines) as filled:
+    with instacart.job_lock(str(job.id)), cart.filled(household_id, request.lines) as filled:
         cart.check(filled.cart, request.lines, names)
         if filled.cart.below_minimum:
             return Quote(blocked_because=filled.cart.blocked_because)
@@ -468,7 +468,7 @@ def process_quote(job: Job, job_dir: Path) -> Quote:
             tip_max_cents=request.tip_max_cents,
             cart_items=len(request.lines),
         ) as context:
-            run_agent(job_dir, prompt, Tools.CHECKOUT, context, agent_locked=True)
+            run_agent(job_dir, prompt, Tools.CHECKOUT, context)
     read = load_checkout_state(job_dir)
     if read.signed_out:
         raise CheckoutError(SIGNED_OUT_ERROR)
@@ -560,7 +560,7 @@ def process_book(job: Job, job_dir: Path) -> Booked:
     outcome: Booked | None = None
     try:
         with (
-            agent_lock(job_id=str(job.id)),
+            instacart.job_lock(str(job.id)),
             cart.filled(to_book.household_id, to_book.lines) as filled,
         ):
             outcome = _book_filled(job, job_dir, to_book, filled)
@@ -640,7 +640,7 @@ def _book_filled(job: Job, job_dir: Path, to_book: _ToBook, filled: cart.FilledC
         answering_clicks(job_dir, job.id),
     ):
         try:
-            run_agent(job_dir, prompt, Tools.CHECKOUT, context, agent_locked=True)
+            run_agent(job_dir, prompt, Tools.CHECKOUT, context)
         except AgentRunError as error:
             # Once Place order was pressed, what the tools recorded says how it went.
             if not load_checkout_state(job_dir).clicked:

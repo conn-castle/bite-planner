@@ -7,7 +7,6 @@ import logging
 import os
 import sys
 import tarfile
-import threading
 import time
 from datetime import date, timedelta
 from datetime import time as clock
@@ -20,8 +19,10 @@ from castle_chef_agent.checkout import RENEWED_SESSION_FILE, SESSION_FILE, Check
 from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ProductCount
+from castle_chef_agent.server import Tools
 from castle_chef_agent.shopping import Aisle
 from castle_chef_agent.windows import Window
+from pydantic import BaseModel
 from sqlmodel import Session, col, select
 from typer.testing import CliRunner
 
@@ -38,6 +39,7 @@ from castle_chef.checkout import (
 )
 from castle_chef.cli import app
 from castle_chef.db import get_engine
+from castle_chef.harness import run_agent
 from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, fail_job, submit_build_list
 from castle_chef.meals import add_meals
 from castle_chef.models import (
@@ -428,27 +430,6 @@ def test_agent_timeout_stops_everything_the_agent_started(
         os.kill(child_pid, 0)  # the agent's own child is gone too
 
 
-def test_parallel_jobs_wait_for_the_agent_lock(
-    session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    lock_path = tmp_path / "agent.lock"
-    monkeypatch.setenv("CASTLE_CHEF_AGENT_LOCK_FILE", str(lock_path))
-    use_fake_agent(monkeypatch, meals=1)
-    agent_started = tmp_path / "jobs" / str(job.id) / "fake-agent-prompt.md"
-
-    with lock_path.open("a") as other_job:  # another job's agent is running
-        fcntl.flock(other_job, fcntl.LOCK_EX)
-        waiting = threading.Thread(target=worker.run_job, args=(job.id,))
-        waiting.start()
-        time.sleep(1)
-        assert not agent_started.exists()
-        assert reload(session, job).status == JobStatus.RUNNING
-    waiting.join(timeout=30)
-
-    assert agent_started.exists()
-    assert reload(session, job).status == JobStatus.SUCCEEDED
-
-
 # The prompt.
 
 
@@ -792,6 +773,41 @@ def test_a_built_list_is_shopped_right_after(
     assert [a.product.name for a in items[0].alternatives] == ["Sweet Onions"]
     assert items[0].product is not None and items[0].product.count == 1
     assert not any(item.not_found for item in items)
+
+
+def test_shopping_holds_its_job_lock_before_starting_the_agent(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    codex_home: Path,
+) -> None:
+    picked(session, job, 4)
+    build = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=2)
+    real_run_agent = run_agent
+    saw_products_lock = False
+
+    def checked_run_agent(
+        job_dir: Path,
+        prompt: str,
+        tools: Tools,
+        context: BaseModel,
+        tool_args: list[str] | None = None,
+    ) -> None:
+        nonlocal saw_products_lock
+        if tools is Tools.PRODUCTS:
+            with (codex_home / "job.lock").open("a") as other, pytest.raises(BlockingIOError):
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            saw_products_lock = True
+        real_run_agent(job_dir, prompt, tools, context, tool_args)
+
+    monkeypatch.setattr(worker, "run_agent", checked_run_agent)
+
+    run_job(build)
+
+    assert saw_products_lock
+    assert shop_of(session, build).status == JobStatus.SUCCEEDED
 
 
 def test_shopping_without_an_instacart_connection_fails_but_keeps_the_list(
@@ -1621,16 +1637,9 @@ def record_files(data: bytes) -> dict[str, bytes]:
 
 
 @pytest.fixture
-def store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> RecordingStore:
+def store(monkeypatch: pytest.MonkeyPatch) -> RecordingStore:
     recording = RecordingStore()
     monkeypatch.setattr(records, "record_store", lambda: recording)
-    # Grok's session files, as Grok keeps them in the project it's launched from.
-    project = tmp_path / "project"
-    session_files = project / ".grok-config" / "sessions" / "a-session"
-    session_files.mkdir(parents=True)
-    (session_files / "updates.jsonl").write_text('{"tool": "add_meal"}\n')
-    monkeypatch.setenv("CASTLE_CHEF_AGENT_PROJECT_DIR", str(project))
-    get_settings.cache_clear()
     return recording
 
 
@@ -1645,7 +1654,7 @@ def test_a_jobs_record_keeps_what_its_agent_was_given_and_did(
     files = record_files(store.kept[f"jobs/{job.id}.tar.gz"])
     assert b"Create 1 distinct meals" in files["job/fake-agent-prompt.md"]
     assert "job/agent-output.json" in files
-    assert files["grok-sessions/a-session/updates.jsonl"] == b'{"tool": "add_meal"}\n'
+    assert "job/tools.json" in files
 
 
 def test_a_failed_jobs_record_is_kept_too(
@@ -1666,7 +1675,7 @@ def test_a_record_never_keeps_the_instacart_session(tmp_path: Path) -> None:
     (job_dir / "session" / SESSION_FILE).write_text('{"cookies": []}')
     (job_dir / RENEWED_SESSION_FILE).write_text('{"cookies": []}')
 
-    data, parts = records.pack(job_dir, tmp_path / "no-sessions")
+    data, parts = records.pack(job_dir)
 
     assert list(record_files(data)) == ["job/report.json"]
     assert parts == ["job"]
@@ -1701,4 +1710,4 @@ def test_a_jobs_record_is_also_kept_while_it_runs(
     saved = [e for e in log_events(tmp_path / "logs") if e["event"] == "job.record_saved"]
     assert [e["final"] for e in saved].count(True) == 1 and saved[-1]["final"] is True
     assert False in [e["final"] for e in saved]
-    assert saved[-1]["parts"] == ["job", "grok-sessions"]
+    assert saved[-1]["parts"] == ["job"]

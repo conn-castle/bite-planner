@@ -70,9 +70,8 @@ class Settings(BaseSettings):
 
     # Hard limit for one agent run.
     agent_timeout_seconds: int = 900
-    # Command that starts the agent harness; Grok flags are appended to it. Set in
-    # the worker image (`al -q grok`), which is where a real agent runs; unset, a
-    # job fails rather than run an agent on this machine (tests set a fake one).
+    # Command that starts the OpenAI Responses runner. Set in the worker image;
+    # unset, a job fails rather than run an agent here (tests set a fake one).
     agent_command: str | None = None
     # The agent's PATH, exactly (the worker image: the agent's own `castle-chef`
     # and system commands, nothing of the backend). None: this environment's
@@ -81,20 +80,9 @@ class Settings(BaseSettings):
     # Run the agent as this uid/gid (the worker container runs as root and
     # starts the agent as an unprivileged user); None: as the worker's user.
     agent_uid: int | None = None
-    # If set, parallel jobs run the agent one at a time, locking this file (next
-    # to the provider's login on EFS): two agents refreshing one subscription
-    # login at once can invalidate it.
-    agent_lock_file: Path | None = None
-    # Environment variables passed through to the agent (JSON list), e.g.
-    # GROK_AUTH_PATH for a login kept outside Grok's home.
+    # Environment variables passed through to the runner (JSON list), including
+    # its project-scoped OpenAI API key. Its MCP tool process doesn't receive it.
     agent_env: list[str] = []
-    # The Agent Layer project `al` launches the agent from (it syncs its generated
-    # files there on every launch, and Grok's home is its `.grok-config`).
-    agent_project_dir: Path = REPO_ROOT
-    # If set, copied to agent_project_dir, owned by the agent user, before each
-    # run: the worker container's /app is read-only, so the agent gets a writable
-    # copy of the project's .agent-layer.
-    agent_project_template: Path | None = None
     # Instacart, through its tools in the ChatGPT apps (castle_chef_agent.instacart):
     # the Codex login (CODEX_HOME: the household's ChatGPT sign-in with Instacart
     # connected; EFS in AWS), its lock (next to it, like the agent's), how to start

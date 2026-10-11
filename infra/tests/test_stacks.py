@@ -84,6 +84,7 @@ def test_worker_is_locked_down_and_pinned(runtime: Template) -> None:
         "CASTLE_CHEF_APNS_KEY",
         "CASTLE_CHEF_APNS_KEY_ID",
         "CASTLE_CHEF_INSTACART_BOOKING",
+        "OPENAI_API_KEY",
     ]
     assert [s["Name"] for s in container["Secrets"]] == secrets
     environment = {e["Name"] for e in container.get("Environment", [])}
@@ -93,7 +94,6 @@ def test_worker_is_locked_down_and_pinned(runtime: Template) -> None:
 @pytest.mark.parametrize(
     ("volume", "path", "variables"),
     [
-        ("grok-login", "/grok", ["GROK_AUTH_PATH", "CASTLE_CHEF_AGENT_LOCK_FILE"]),
         ("codex-login", "/codex", ["CASTLE_CHEF_CODEX_HOME", "CASTLE_CHEF_CODEX_LOCK_FILE"]),
     ],
 )

@@ -1,73 +1,30 @@
-"""The agent harness: the agent (Grok, through Agent Layer) run on a prompt in a
-job directory, with the job's MCP tools as its only tools, one agent at a time;
-and its sign-in to its subscription. It knows nothing of jobs or the database."""
+"""Run the OpenAI agent with one job's MCP tools and no database credentials."""
 
-import fcntl
-import json
 import logging
 import os
 import shlex
-import shutil
 import signal
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager, nullcontext
+from contextlib import suppress
 from pathlib import Path
-from string import Template
 from typing import TypedDict
 
 from castle_chef_agent.jobfiles import write_context
+from castle_chef_agent.runner import AgentSummary, ToolServerConfig
 from castle_chef_agent.server import Tools
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from castle_chef import instacart
 from castle_chef.settings import Settings, get_settings
 
 log = logging.getLogger(__name__)
-
-# Grok flags that make the run bare: the job's MCP tools are its only tools (no
-# shell, no files, no subagents). Grok reaches MCP tools through its search_tool
-# and use_tool, and starts the job directory's MCP server only in a trusted
-# folder. `al grok` supplies the model, reasoning effort, and `--no-memory` from
-# its project's .agent-layer/config.toml. Grok's headless mode auto-approves every
-# tool call; the worker container limits the MCP server.
-GROK_ARGS = [
-    "--output-format", "json",
-    "--tools", "search_tool,use_tool",
-    "--trust",
-    "--max-turns", "60",
-]  # fmt: skip
-
-# The job's tools, as an MCP server Grok starts from the job directory's project
-# config: the agent's only tools (it gets no shell).
-MCP_TOML = Template("""[mcp_servers.castle-chef]
-command = "castle-chef"
-args = $args
-""")
+TIMEOUT_GRACE_SECONDS = 8
 
 
 class AgentRunError(Exception):
     pass
-
-
-def prepare_agent_project() -> Path:
-    """The Agent Layer project to launch the agent from: the repository, or (in
-    the worker container) a fresh writable copy of the image's template owned
-    by the agent user."""
-    settings = get_settings()
-    project = settings.agent_project_dir
-    if settings.agent_uid is not None:
-        # Fargate's empty task volumes hide the image's /tmp permissions; the
-        # agent's tools need a shared, sticky /tmp.
-        os.chmod("/tmp", 0o1777)
-    if settings.agent_project_template is not None:
-        shutil.copytree(settings.agent_project_template, project, dirs_exist_ok=True)
-        if settings.agent_uid is not None:
-            for path in [project, *project.rglob("*")]:
-                os.chown(path, settings.agent_uid, settings.agent_uid)
-    return project
 
 
 class _AgentUser(TypedDict):
@@ -86,77 +43,74 @@ def _agent_user(settings: Settings) -> _AgentUser:
 
 def _agent_env(settings: Settings, **variables: str) -> dict[str, str]:
     """The agent's environment: the variables given, and those passed through
-    from the worker's (settings.agent_env). Nothing else: no database
-    credentials or other secrets reach the agent."""
+    from the worker's (settings.agent_env). The project-scoped OpenAI key is
+    included; database credentials and other secrets are not."""
     names = ["LANG", *settings.agent_env]
     return variables | {name: os.environ[name] for name in names if name in os.environ}
 
 
+def _process_groups(pid: int) -> set[int]:
+    """The runner's groups, including MCP servers that start a new session."""
+    pending = [pid]
+    visited: set[int] = set()
+    groups: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        try:
+            groups.add(os.getpgid(current))
+            children = Path(f"/proc/{current}/task/{current}/children").read_text()
+        except OSError, ValueError:  # a process exited while we inspected it
+            continue
+        pending.extend(int(child) for child in children.split())
+    groups.discard(os.getpgrp())
+    return groups
+
+
+def _group_alive(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _stop_timed_out_agent(agent: subprocess.Popen[bytes]) -> None:
+    groups = _process_groups(agent.pid)
+    with suppress(ProcessLookupError):
+        # asyncio.run cancels its task on SIGINT, letting MCP close the tool
+        # server and its own process group. The fallback covers a stuck runner.
+        os.killpg(agent.pid, signal.SIGINT)
+    deadline = time.monotonic() + TIMEOUT_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        if agent.poll() is not None and not any(_group_alive(group) for group in groups):
+            break
+        time.sleep(0.05)
+    groups.update(_process_groups(agent.pid))
+    for group in groups:
+        with suppress(ProcessLookupError):
+            os.killpg(group, signal.SIGKILL)
+    agent.wait()
+
+
 def login_agent(provider: str) -> int:
-    """Sign the agent in to its subscription with a device code (the link and
-    code are printed; the owner approves in a browser). Runs as the agent user,
-    so the login (on EFS in AWS, via GROK_AUTH_PATH) is owned by it. Returns
-    the login command's exit status."""
+    """Sign Codex in to the household's ChatGPT and Instacart connection."""
     if provider == "codex":
-        # Codex reaches Instacart for the worker and the agent's tools; it isn't
-        # the job's agent.
         return instacart.login()
-    if provider != "grok":
-        raise ValueError(f"Unsupported agent provider {provider!r}: grok or codex.")
-    settings = get_settings()
-    project = prepare_agent_project()
-    env = _agent_env(
-        settings,
-        # Agent Layer writes some clients' settings under HOME: somewhere the
-        # agent user can write.
-        HOME=str(project) if settings.agent_uid is not None else os.environ.get("HOME", "/tmp"),
-        PATH=os.environ.get("PATH", os.defpath),
-    )
-    command = [*shlex.split(required_agent_command()), "login", "--device-auth"]
-    with agent_lock(provider=provider):
-        log.info("agent.login_started", extra={"provider": provider})
-        completed = subprocess.run(
-            command,
-            cwd=project,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            check=False,
-            **_agent_user(settings),
-        )
-    event = "agent.login_finished" if completed.returncode == 0 else "agent.login_failed"
-    (log.info if completed.returncode == 0 else log.error)(
-        event, extra={"provider": provider, "returncode": completed.returncode}
-    )
-    return completed.returncode
+    raise ValueError(f"Unsupported agent provider {provider!r}: codex.")
 
 
 def required_agent_command() -> str:
-    """The agent harness's command; real agents run only in the worker image."""
+    """The Responses runner's command; real agents run only in the worker image."""
     command = get_settings().agent_command
     if command is None:
         raise AgentRunError(
-            "No agent command here: a real agent runs only in the worker image "
+            "No OpenAI agent command here: a real agent runs only in the worker image "
             "(make worker-job JOB=<id> runs one locally)."
         )
     return command
-
-
-@contextmanager
-def agent_lock(**fields: str) -> Iterator[None]:
-    """Hold the agent provider's lock (settings.agent_lock_file) while the agent
-    runs or signs in, so parallel jobs take turns with the one subscription login."""
-    path = get_settings().agent_lock_file
-    if path is None:
-        yield
-        return
-    started = time.monotonic()
-    with path.open("a") as lock:  # closing it releases the lock
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        log.info(
-            "agent.lock_acquired",
-            extra=fields | {"waited_seconds": round(time.monotonic() - started, 1)},
-        )
-        yield
 
 
 def run_agent(
@@ -165,27 +119,24 @@ def run_agent(
     tools: Tools,
     context: BaseModel,
     tool_args: list[str] | None = None,
-    agent_locked: bool = False,
 ) -> None:
-    """Run the agent on the prompt in a new job directory, with the job's tools (and
-    their server's extra arguments) and the context they check against. It holds
-    the agent's lock while it runs, unless the caller already does (`agent_locked`)."""
+    """Run the agent with the job's tools and checked context."""
     settings = get_settings()
     agent_command = required_agent_command()
     job_dir.mkdir(mode=0o700, parents=True)
     prompt_path = job_dir / "prompt.md"
     prompt_path.write_text(prompt)
     write_context(job_dir, context)
-    (job_dir / ".grok").mkdir()
-    (job_dir / ".grok" / "config.toml").write_text(
-        MCP_TOML.substitute(
-            args=json.dumps(["mcp", tools.value, "--job-dir", str(job_dir), *(tool_args or [])])
-        )
+    (job_dir / "tools.json").write_text(
+        ToolServerConfig(
+            command="castle-chef",
+            args=["mcp", tools.value, "--job-dir", str(job_dir), *(tool_args or [])],
+        ).model_dump_json()
     )
     venv_bin = Path(sys.executable).parent
-    project = prepare_agent_project()
     if settings.agent_uid is not None:
-        # The agent writes its meals into the job directory.
+        # The agent and its tools write results into the job directory.
+        os.chmod("/tmp", 0o1777)
         for path in [job_dir, *job_dir.rglob("*")]:
             os.chown(path, settings.agent_uid, settings.agent_uid)
 
@@ -193,7 +144,6 @@ def run_agent(
         *shlex.split(agent_command),
         "--cwd", str(job_dir),
         "--prompt-file", str(prompt_path),
-        *GROK_ARGS,
     ]  # fmt: skip
     env = _agent_env(
         settings,
@@ -205,17 +155,13 @@ def run_agent(
     stdout_path = job_dir / "agent-output.json"
     stderr_path = job_dir / "agent-stderr.log"
     # The job directory is named after the job, which ties these events to it.
-    with (
-        nullcontext() if agent_locked else agent_lock(job_id=job_dir.name),
-        stdout_path.open("w") as stdout,
-        stderr_path.open("w") as stderr,
-    ):
+    with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
         log.info("agent.started", extra={"job_id": job_dir.name, "job_dir": str(job_dir)})
         started = time.monotonic()
-        # Its own process group, so a timeout kills everything the agent started.
+        # Its own process group; the MCP server makes another, collected on timeout.
         agent = subprocess.Popen(
             command,
-            cwd=project,  # `al` resolves the Agent Layer project from here.
+            cwd=job_dir,
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=stdout,
@@ -228,14 +174,15 @@ def run_agent(
         try:
             returncode = agent.wait(timeout=settings.agent_timeout_seconds)
         except subprocess.TimeoutExpired as error:
-            os.killpg(agent.pid, signal.SIGKILL)
-            agent.wait()
+            _stop_timed_out_agent(agent)
             raise AgentRunError(
                 f"Agent timed out after {settings.agent_timeout_seconds}s; see {job_dir}."
             ) from error
 
     duration = round(time.monotonic() - started, 1)
     if returncode != 0:
+        lines = stderr_path.read_text().strip().splitlines()
+        detail = lines[-1] if lines else None
         log.error(
             "agent.exited",
             extra={
@@ -243,14 +190,18 @@ def run_agent(
                 "job_dir": str(job_dir),
                 "returncode": returncode,
                 "seconds": duration,
+                "detail": detail,
             },
         )
-        raise AgentRunError(f"Agent exited with code {returncode}; see {stderr_path}.")
+        message = f"Agent exited with code {returncode}"
+        if detail:
+            message += f": {detail}"
+        raise AgentRunError(f"{message}; see {stderr_path}.")
     try:
-        output = json.loads(stdout_path.read_text())
-    except json.JSONDecodeError as error:
-        raise AgentRunError(f"Agent output is not JSON; see {stdout_path}.") from error
-    stop_reason = output.get("stopReason")
+        output = AgentSummary.model_validate_json(stdout_path.read_text())
+    except ValidationError as error:
+        raise AgentRunError(f"Agent output is not a valid summary; see {stdout_path}.") from error
+    stop_reason = output.stop_reason
     log.info(
         "agent.finished",
         extra={
@@ -258,8 +209,10 @@ def run_agent(
             "job_dir": str(job_dir),
             "seconds": duration,
             "stop_reason": stop_reason,
-            "turns": output.get("num_turns"),
-            "cost_usd": output.get("total_cost_usd"),
+            "turns": output.turns,
+            "model": output.model,
+            "usage": output.usage.model_dump() if output.usage else None,
+            "response_id": output.response_id,
         },
     )
     if stop_reason != "end_turn":
