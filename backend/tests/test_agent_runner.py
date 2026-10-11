@@ -5,7 +5,7 @@ import json
 import shutil
 from datetime import date, time
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 import httpx2 as httpx
 import pytest
@@ -38,11 +38,15 @@ MEAL: dict[str, object] = {
 
 
 class FakeOpenAI:
-    def __init__(self, error: BaseException | None = None, incomplete: bool = False) -> None:
+    def __init__(
+        self,
+        error: BaseException | None = None,
+        status: Literal["incomplete", "failed"] | None = None,
+    ) -> None:
         self.responses = self
         self.inputs: list[tuple[str | ResponseInputParam, str | None]] = []
         self.error = error
-        self.incomplete = incomplete
+        self.status = status
 
     async def __aenter__(self) -> Self:
         return self
@@ -64,10 +68,10 @@ class FakeOpenAI:
         assert model == "gpt-6.1-sol"
         assert reasoning["effort"] == "high"
         assert {tool["name"] for tool in tools} == {"add_meal", "done"}
-        if self.incomplete:
+        if self.status is not None:
             return Response.model_validate(
                 {
-                    "id": "resp_incomplete",
+                    "id": f"resp_{self.status}",
                     "created_at": 0,
                     "model": model,
                     "object": "response",
@@ -75,8 +79,16 @@ class FakeOpenAI:
                     "parallel_tool_calls": False,
                     "tool_choice": "auto",
                     "tools": [],
-                    "status": "incomplete",
-                    "incomplete_details": {"reason": "max_output_tokens"},
+                    "status": self.status,
+                    "error": {
+                        "code": "server_error",
+                        "message": "The server had an error processing your request.",
+                    }
+                    if self.status == "failed"
+                    else None,
+                    "incomplete_details": {"reason": "max_output_tokens"}
+                    if self.status == "incomplete"
+                    else None,
                 }
             )
         self.inputs.append((input, previous_response_id))
@@ -230,8 +242,19 @@ def test_api_errors_are_reported_after_mcp_cleanup(
     assert "WXYZ" not in stderr
 
 
-def test_incomplete_response_fails_with_actionable_summary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("status", "diagnostics"),
+    [
+        ("incomplete", ["max_output_tokens"]),
+        ("failed", ["server_error", "The server had an error processing your request."]),
+    ],
+)
+def test_unsuccessful_response_fails_with_actionable_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: Literal["incomplete", "failed"],
+    diagnostics: list[str],
 ) -> None:
     launcher = shutil.which("castle-chef")
     assert launcher is not None
@@ -243,14 +266,14 @@ def test_incomplete_response_fails_with_actionable_summary(
             command=launcher, args=["mcp", "meals", "--job-dir", str(tmp_path)]
         ).model_dump_json()
     )
-    monkeypatch.setattr(runner, "AsyncOpenAI", lambda: FakeOpenAI(incomplete=True))
+    monkeypatch.setattr(runner, "AsyncOpenAI", lambda: FakeOpenAI(status=status))
 
     assert runner.main(tmp_path, prompt) == 1
 
-    assert (
-        "OpenAI response resp_incomplete ended with status incomplete"
-        in (capsys.readouterr().err.strip().splitlines()[-1])
-    )
+    summary = capsys.readouterr().err.strip().splitlines()[-1]
+    assert f"OpenAI response resp_{status} ended with status {status}" in summary
+    for diagnostic in diagnostics:
+        assert diagnostic in summary
 
 
 def test_tool_process_does_not_receive_the_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

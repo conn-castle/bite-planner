@@ -97,7 +97,7 @@ async def run(job_dir: Path, prompt_path: Path) -> AgentSummary:
                 if response.status != "completed":
                     raise RuntimeError(
                         f"OpenAI response {response.id} ended with status {response.status}: "
-                        f"{response.incomplete_details}"
+                        f"{response.error or response.incomplete_details}"
                     )
                 calls = [
                     item for item in response.output if isinstance(item, ResponseFunctionToolCall)
