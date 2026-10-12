@@ -254,7 +254,6 @@ def recipe(name: str) -> MealInput:
     return MealInput(
         name=name,
         description=f"{name}, the quick way.",
-        servings=4,
         active_time_minutes=15,
         total_time_minutes=30,
         dish=Dish.TACOS,
@@ -1892,7 +1891,7 @@ def test_a_suggestion_opens_as_its_full_recipe(client: TestClient) -> None:
                 {"icon": "ground_meat", "color": "brown"},
             ],
         },
-        "servings": 4,
+        "servings": 2,
         # Each step with its timer and the ingredients it uses (by position).
         "steps": [
             {"text": "Brown the beef.", "timer_minutes": None, "ingredients": [1]},

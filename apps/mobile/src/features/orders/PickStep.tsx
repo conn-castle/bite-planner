@@ -30,8 +30,8 @@ const PLACEHOLDER_CARDS = 4
 
 interface PickStepProps {
   order: GroceryOrder
-  /** Opens a recipe: a picked meal's at its servings. */
-  onOpenMeal: (mealId: string, servings?: number) => void
+  /** Opens a recipe, as written: servings are chosen in the next step. */
+  onOpenMeal: (mealId: string) => void
   onNext: () => void
   onClose: () => void
 }
@@ -50,7 +50,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
   const queryClient = useQueryClient()
   // Why a pick couldn't start (the household's default servings aren't known yet).
   const [pickProblem, setPickProblem] = useState<string | null>(null)
-  const picked = new Map(order.picks.map((pick) => [pick.meal_id, pick.servings]))
+  const picked = new Set(order.picks.map((pick) => pick.meal_id))
   const count = order.picks.length
   const running = newestBatchState(order).status === 'running'
 
@@ -121,7 +121,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
             added={picked.has(meal.id)}
             onToggle={() => void toggle(meal)}
             onDismiss={() => dismiss(meal)}
-            onOpen={() => onOpenMeal(meal.id, picked.get(meal.id))}
+            onOpen={() => onOpenMeal(meal.id)}
           />
         ))}
         {running &&

@@ -29,7 +29,6 @@ from mcp.types import CallToolResult, TextContent
 
 MEAL = {
     "name": "Sheet Pan Sausage and Peppers",
-    "servings": 4,
     "dish": "plate",
     "ingredients": [
         {

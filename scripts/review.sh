@@ -19,6 +19,14 @@ readonly REVIEW_TOOL=.agent-layer/skills-imported/request-html-comments/scripts/
 aws sts get-caller-identity --profile conn >/dev/null 2>&1 \
   || { echo "Sign in to AWS first: aws sso login --profile conn --use-device-code" >&2; exit 1; }
 
+# Prepare the API's database with the same command as `make migrate` before any
+# server starts: `/health` alone doesn't detect a schema behind this checkout.
+(cd backend
+  if [[ -n ${CASTLE_CHEF_REVIEW_DATABASE_URL:-} ]]; then
+    export DATABASE_URL=$CASTLE_CHEF_REVIEW_DATABASE_URL
+  fi
+  uv run alembic upgrade head)
+
 # The address other devices reach this machine at (the default route's source).
 lan_ip=$(ip -4 route get 1.1.1.1 | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')
 [[ -n $lan_ip ]] || { echo "Could not find this machine's local network address" >&2; exit 1; }

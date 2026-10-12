@@ -78,6 +78,11 @@ class Color(StrEnum):
     DARK_GREEN = "dark_green"
 
 
+# How many servings every recipe is written for; the servings to make are chosen
+# for each order (they start at the household's default).
+RECIPE_SERVINGS = 2
+
+
 class IngredientInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -90,7 +95,8 @@ class IngredientInput(BaseModel):
         default=None,
         gt=0,
         allow_inf_nan=False,
-        description="Amount in `unit`, or the item count when `unit` is null.",
+        description=f"Amount in `unit`, or the item count when `unit` is null, for the "
+        f"recipe's {RECIPE_SERVINGS} servings.",
     )
     unit: str | None = Field(
         default=None,
@@ -157,7 +163,6 @@ class MealInput(BaseModel):
         "stews, risotto, salads, grain bowls), skillet (seared or pan-cooked mains: chops, "
         "steaks, fajitas), tacos (tacos, burritos, quesadillas), or plate (everything else)."
     )
-    servings: int = Field(ge=1, description="How many people the quantities feed.")
     active_time_minutes: int | None = Field(default=None, ge=0)
     total_time_minutes: int | None = Field(default=None, ge=0)
     ingredients: list[IngredientInput] = Field(min_length=1)

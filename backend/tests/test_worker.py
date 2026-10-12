@@ -120,8 +120,11 @@ def test_job_succeeds_when_agent_adds_a_batch_of_meals(
         (0, "Italian sausage"),
         (1, "bell peppers"),
     ]
+    # Every recipe is written for 2 servings; an order's picks choose how many to make.
+    assert [meal.servings for meal in meals] == [2, 2, 2]
     prompt = (tmp_path / "jobs" / str(job.id) / "fake-agent-prompt.md").read_text()
     assert "Create 3 distinct meals" in prompt
+    assert "Write every recipe for 2 servings" in prompt
 
 
 class RecordingSender:
@@ -442,7 +445,6 @@ def suggest(session: Session, job: Job, *meals: tuple[str, str | None]) -> list[
             MealInput(
                 name=name,
                 description=description,
-                servings=4,
                 dish=Dish.PLATE,
                 ingredients=[IngredientInput(name="onions", icon=Icon.ROUND, color=Color.CREAM)],
                 steps=[StepInput(text="Cook.")],
@@ -498,7 +500,7 @@ def test_the_prompt_asks_to_avoid_meals_like_the_households_not_for_us_ones(
         "Don't suggest meals like them:\n\n"
         "- Liver and Onions: Pan-fried liver.\n"
         "- Tofu\n\n"
-        "Add each meal"
+        "Write every recipe"
     ) in prompt
     assert "Meatloaf" not in prompt
     assert "Tacos" not in prompt
@@ -528,7 +530,7 @@ def test_the_prompt_has_no_meals_to_avoid_when_none_are_marked(
 
     assert prompt.startswith(
         "Create 5 distinct meals for a family. Every meal must be low effort to cook.\n\n"
-        "Add each meal"
+        "Write every recipe"
     )
     assert "Meatloaf" not in prompt
 
@@ -538,26 +540,25 @@ def test_the_prompt_has_no_meals_to_avoid_when_none_are_marked(
 
 def picked(session: Session, job: Job, *servings: int) -> list[Meal]:
     """The batch's meals, each picked for the draft at these servings (their
-    recipes serve 4: 1.5 lb sausage, 3 bell peppers, sliced)."""
+    recipes serve 2: 0.75 lb sausage, 1.5 bell peppers, sliced)."""
     add_meals(
         session,
         job.id,
         [
             MealInput(
                 name=f"Meal {index}",
-                servings=4,
                 dish=Dish.SKILLET,
                 ingredients=[
                     IngredientInput(
                         name="Italian sausage",
-                        quantity=1.5,
+                        quantity=0.75,
                         unit="lb",
                         icon=Icon.GROUND_MEAT,
                         color=Color.BROWN,
                     ),
                     IngredientInput(
                         name="bell peppers",
-                        quantity=3,
+                        quantity=1.5,
                         preparation="sliced",
                         icon=Icon.PEPPER,
                         color=Color.RED,
@@ -614,7 +615,7 @@ def test_a_list_is_built_from_the_picks_scaled_to_their_servings(
     run_job(build)
 
     prompt = (tmp_path / "jobs" / str(build.id) / "fake-agent-prompt.md").read_text()
-    # Stage 1: each recipe (for 4) scaled to its servings, meals numbered in the
+    # Stage 1: each recipe (for 2) scaled to its servings, meals numbered in the
     # list's order, each line with its id.
     source = shopping.current_source(session, draft.id)
     numbered = {pick.meal_id: number for number, pick in enumerate(source.picks, start=1)}
