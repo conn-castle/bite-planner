@@ -3,6 +3,7 @@ one product from its searches and how many, with alternatives, or that the store
 doesn't have it. Kept in the job directory for the worker; every choice is
 checked as it's made."""
 
+import math
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -10,7 +11,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from castle_chef_agent.instacart import Product
+from castle_chef_agent.instacart import Instacart, InstacartError, Product
 from castle_chef_agent.jobfiles import locked, read_context, replace_file
 
 STATE_FILE = "products.json"
@@ -29,6 +30,7 @@ class ShopItem(BaseModel):
     quantity: float | None
     unit: str | None
     meals: list[str]
+    more_alternatives_query: str | None = None
 
 
 class ShopJob(BaseModel):
@@ -53,6 +55,7 @@ class ItemChoice(BaseModel):
     # The product to buy, or null: the store doesn't have the item.
     chosen: ProductCount | None
     alternatives: list[ProductCount] = Field(max_length=MAX_ALTERNATIVES)
+    more_alternatives: list[ProductCount] = []
     # Why there are no alternatives (a chosen item with none).
     no_alternatives_reason: str | None = None
     # Why the meals work without it (an item the store doesn't have).
@@ -66,6 +69,8 @@ class ShopState(BaseModel):
     # chosen for it (a product found for one item can't be chosen for another).
     searched: dict[int, dict[str, Product]] = {}
     choices: dict[int, ItemChoice] = {}
+    # Separate from the model's searches: only direct matches from each saved broad query.
+    more_results: dict[int, list[Product]] = {}
 
 
 class ChoiceRefused(Exception):
@@ -92,6 +97,40 @@ def record_search(job_dir: Path, item: int, products: list[Product]) -> None:
     _item(read_context(job_dir, ShopJob), item)
     with _changing(job_dir) as state:
         state.searched.setdefault(item, {}).update({p.product_id: p for p in products})
+
+
+def prefetch_more_alternatives(job_dir: Path, store: Instacart) -> None:
+    """Automatically fetch each saved query once, independent of the shopping model."""
+    job = read_context(job_dir, ShopJob)
+    for item in job.items:
+        if item.more_alternatives_query is None or item.number in load_state(job_dir).more_results:
+            continue
+        try:
+            results = store.search(item.more_alternatives_query)
+        except InstacartError as error:
+            raise InstacartError(
+                f"Couldn't fetch More alternatives for {item.name} "
+                f"({item.more_alternatives_query!r}): {error}"
+            ) from error
+        with _changing(job_dir) as state:
+            state.more_results[item.number] = list(
+                {product.product_id: product for product in results.matches}.values()
+            )
+
+
+def more_choices(item: ShopItem, results: list[Product]) -> list[ProductCount]:
+    """Suggest enough packages when sizes compare; otherwise show a starting count of one."""
+    choices: list[ProductCount] = []
+    needed = _measure(item.quantity, item.unit) if item.quantity is not None else None
+    for product in results:
+        package = _package(product)
+        count = (
+            max(1, math.ceil(needed[1] / package[1]))
+            if needed is not None and package is not None and needed[0] == package[0]
+            else 1
+        )
+        choices.append(ProductCount(product=product, count=count))
+    return choices
 
 
 # Amounts in comparable units: ounces of weight, fluid ounces of volume, and counts.

@@ -203,6 +203,8 @@ class ShoppingItemOut(BaseModel):
     product: ProductOut | None
     # What the member can switch to (up to 8), or why there are none.
     alternatives: list[ProductOut]
+    more_alternatives_query: str | None
+    more_alternatives: list[ProductOut]
     no_alternatives_reason: str | None
     # The store doesn't have it; why the meals work without it, if they do.
     not_found: bool
@@ -772,6 +774,8 @@ def item_out(item: ShoppingListItem) -> ShoppingItemOut:
         removed=item.removed,
         product=product_out(item.product) if item.product else None,
         alternatives=[product_out(alternative) for alternative in item.alternatives],
+        more_alternatives_query=item.more_alternatives_query,
+        more_alternatives=[product_out(product) for product in item.more_alternatives],
         no_alternatives_reason=item.no_alternatives_reason,
         not_found=item.not_found,
         skippable_reason=item.skippable_reason,

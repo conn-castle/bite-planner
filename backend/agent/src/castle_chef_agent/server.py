@@ -82,6 +82,14 @@ def shopping_list_server(job_dir: Path) -> MCPServer:
         ],
         aisle: Annotated[Aisle, Field(description="Where it is in the store.")],
         lines: Lines,
+        more_alternatives_query: Annotated[
+            shopping.AlternativesQuery,
+            Field(
+                description="One broader product search for More alternatives, e.g. "
+                "'sausage' for chicken sausage. Keep the product category, remove optional "
+                "variety or brand restrictions; never combine queries."
+            ),
+        ],
         quantity: Annotated[
             float | None,
             Field(
@@ -100,7 +108,12 @@ def shopping_list_server(job_dir: Path) -> MCPServer:
         """Add an item to buy, covering the ingredient lines it's bought for."""
         try:
             item = shopping.ListItemInput(
-                name=name, quantity=quantity, unit=unit, aisle=aisle, lines=lines
+                name=name,
+                quantity=quantity,
+                unit=unit,
+                aisle=aisle,
+                lines=lines,
+                more_alternatives_query=more_alternatives_query,
             )
             saved = shopping.add_item(job_dir, item)
         except (ValidationError, shopping.ListRefused) as error:
@@ -442,6 +455,8 @@ def serve(tools: Tools, job_dir: Path, instacart: InstacartSettings | None = Non
                 lock_file=instacart.lock_file,
                 command=shlex.split(instacart.command),
             ) as store:
+                # Run saved broad searches before the model receives any shopping tools.
+                products.prefetch_more_alternatives(job_dir, store)
                 products_server(job_dir, store).run("stdio")
         case Tools.CHECKOUT:
             checkout_server(job_dir).run("stdio")

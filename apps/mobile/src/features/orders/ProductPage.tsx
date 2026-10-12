@@ -1,9 +1,11 @@
 import { useEffect } from 'react'
 import { ApiError } from '../../lib/api/errors'
-import type { Product, ShoppingItem } from '../../lib/api/types'
+import type { Product } from '../../lib/api/types'
 import { haptics } from '../../lib/haptics'
+import { logger } from '../../lib/log'
 import { formatMoney, isWeighed, productCost, productSize } from '../../lib/products'
 import { Group, Row } from '../../ui/Group'
+import { ProductAlternatives } from '../../ui/ProductAlternatives'
 import { Notice } from '../../ui/Notice'
 import { NavPage } from '../../ui/Page'
 import { BoughtBefore, ProductPicture } from '../../ui/ShoppingList'
@@ -13,7 +15,7 @@ import { pickedMeals } from './batches'
 import { useSession } from '../session/session'
 import { itemAmount, listState, mealNames, storeName } from './list'
 import { lockHolder, useOrderSession } from './lock'
-import { useOrder, useSetItem, useSetItemError } from './orders'
+import { useAcquiringOrder, useOrder, useSetItem, useSetItemError } from './orders'
 import styles from './ProductPage.module.css'
 
 // The most of a product the stepper goes to.
@@ -22,6 +24,8 @@ export const MAX_COUNT = 99
 interface ProductPageProps {
   orderId: string
   itemId: string
+  view?: 'product' | 'more-alternatives'
+  onMoreAlternatives?: () => void
   /** Back to the list, once an alternative is used. */
   onDone: () => void
   /** Back to the flow, when the page no longer applies (the flow then shows why). */
@@ -34,10 +38,11 @@ interface ProductPageProps {
  * For an item the store doesn't have: why the meals may work without it, Skip,
  * and its alternatives.
  */
-export function ProductPage({ orderId, itemId, onDone, onLeave }: ProductPageProps) {
+export function ProductPage({ orderId, itemId, view = 'product', onMoreAlternatives, onDone, onLeave }: ProductPageProps) {
   const session = useOrderSession()
   const userId = useSession().data?.user.id
   const shown = useOrder(orderId, session)
+  const acquiring: boolean = useAcquiringOrder(orderId, session)
   const order = shown.shown
   const setItem = useSetItem()
   const setItemError = useSetItemError()
@@ -53,12 +58,18 @@ export function ProductPage({ orderId, itemId, onDone, onLeave }: ProductPagePro
       ? shown.isPending
       : !gone &&
         order.status === 'draft' &&
-        (holder === 'this' || holder === 'none') &&
+        (holder === 'this' || holder === 'none' || (holder === 'you elsewhere' && acquiring)) &&
         listState(list) === 'ready' &&
         item !== undefined
   useEffect(() => {
-    if (!applies) onLeave()
-  }, [applies, onLeave])
+    if (!applies) {
+      logger.info('orders.product_left', {
+        orderId, itemId, status: order?.status, holder, listState: listState(list),
+        itemFound: item !== undefined, gone, pending: shown.isPending,
+      })
+      onLeave()
+    }
+  }, [applies, onLeave, orderId, itemId, order?.status, holder, list, item, gone, shown.isPending])
 
   if (!order || !item) return <NavPage title="Product">{null}</NavPage>
 
@@ -72,6 +83,29 @@ export function ProductPage({ orderId, itemId, onDone, onLeave }: ProductPagePro
   function change(edit: { removed?: boolean; count?: number; alternative?: string }) {
     haptics.tap()
     setItem.mutate({ kind: 'item', orderId, itemId, session, ...edit })
+  }
+
+  function useAlternative(alternative: string) {
+    haptics.tap()
+    setItem.mutate({ kind: 'item', orderId, itemId, session, alternative }, { onSuccess: onDone })
+  }
+
+  if (view === 'more-alternatives') {
+    return (
+      <NavPage title="More alternatives">
+        {setItemError && <Notice>Couldn't save that: {setItemError.message}</Notice>}
+        <ProductAlternatives
+          title={item.name}
+          products={item.more_alternatives.filter((alternative) =>
+            alternative.product_id !== product?.product_id &&
+            !item.alternatives.some((suggested) => suggested.product_id === alternative.product_id),
+          )}
+          query={item.more_alternatives_query}
+          emptyReason="No other matching products found."
+          onUse={useAlternative}
+        />
+      </NavPage>
+    )
   }
 
   return (
@@ -136,13 +170,19 @@ export function ProductPage({ orderId, itemId, onDone, onLeave }: ProductPagePro
         </>
       )}
 
-      <Alternatives
-        item={item}
-        // Back to the list once it's saved; a refusal stays here, said above.
-        onUse={(alternative) => {
-          haptics.tap()
-          setItem.mutate({ kind: 'item', orderId, itemId, session, alternative }, { onSuccess: onDone })
+      <ProductAlternatives
+        title="Recommended alternatives"
+        products={item.alternatives.filter((alternative) => alternative.product_id !== product?.product_id)}
+        emptyReason={item.no_alternatives_reason}
+        browse={item.more_alternatives_query === null || !onMoreAlternatives ? undefined : {
+          label: 'More alternatives',
+          onClick: () => {
+            haptics.tap()
+            onMoreAlternatives()
+          },
         }}
+        // Back to the list once it's saved; a refusal stays here, said above.
+        onUse={useAlternative}
       />
     </NavPage>
   )
@@ -155,48 +195,4 @@ function priceDetail(product: Product): string {
   if (isWeighed(product)) return `${cost} (estimate)`
   if (product.count > 1 && product.price_cents !== null) return `${cost} (${formatMoney(product.price_cents)} each)`
   return cost
-}
-
-/** An item's alternatives (up to 8), each to use instead; or why there are none. */
-function Alternatives({ item, onUse }: { item: ShoppingItem; onUse: (productId: string) => void }) {
-  if (item.alternatives.length === 0) {
-    return item.no_alternatives_reason ? (
-      <Group title="Alternatives">
-        <Row label="None" sub={item.no_alternatives_reason} />
-      </Group>
-    ) : null
-  }
-  return (
-    <Group title={`Alternatives (${item.alternatives.length})`}>
-      <ul className={styles.alternatives}>
-        {item.alternatives.map((alternative) => (
-          <li key={alternative.product_id}>
-            <ProductPicture product={alternative} size="small" />
-            <span className={styles.altName}>
-              <b>
-                {alternative.bought_before && <BoughtBefore />}
-                {alternative.name}
-              </b>
-              <small>
-                {[productSize(alternative), alternative.count > 1 ? `Qty ${alternative.count}` : '']
-                  .filter(Boolean)
-                  .join(' · ')}
-              </small>
-            </span>
-            <span className={styles.altPrice}>
-              <b>{productCost(alternative) ?? 'No price'}</b>
-              <button
-                type="button"
-                className={`${styles.use} cc-hit`}
-                aria-label={`Use ${alternative.name}`}
-                onClick={() => onUse(alternative.product_id)}
-              >
-                Use
-              </button>
-            </span>
-          </li>
-        ))}
-      </ul>
-    </Group>
-  )
 }

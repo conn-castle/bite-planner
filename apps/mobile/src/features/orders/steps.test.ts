@@ -60,6 +60,8 @@ const onions: ShoppingItem = {
     count: 1,
   },
   alternatives: [],
+  more_alternatives_query: null,
+  more_alternatives: [],
   no_alternatives_reason: null,
   not_found: false,
   skippable_reason: null,

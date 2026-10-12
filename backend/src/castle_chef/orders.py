@@ -601,11 +601,18 @@ def use_alternative(item: ShoppingListItem, product_id: str) -> None:
     product it had becomes one. Its product already: nothing to do (a retry)."""
     if item.product is not None and item.product.product.product_id == product_id:
         return
-    chosen = next((a for a in item.alternatives if a.product.product_id == product_id), None)
+    curated = any(a.product.product_id == product_id for a in item.alternatives)
+    source = item.alternatives if curated else item.more_alternatives
+    chosen = next((a for a in source if a.product.product_id == product_id), None)
     if chosen is None:
         raise NoSuchProduct("That product isn't one of the item's alternatives.")
-    others = [a for a in item.alternatives if a.product.product_id != product_id]
-    item.alternatives = [*others, item.product] if item.product else others
+    previous_id = item.product.product.product_id if item.product else None
+    others = [a for a in source if a.product.product_id not in (product_id, previous_id)]
+    alternatives = [*others, item.product] if item.product else others
+    if curated:
+        item.alternatives = alternatives
+    else:
+        item.more_alternatives = alternatives
     item.product = chosen
     item.removed = False
     # Found, then: the store has this instead.

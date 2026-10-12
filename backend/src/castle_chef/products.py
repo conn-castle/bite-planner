@@ -13,6 +13,7 @@ from castle_chef_agent.products import (
     ShopItem,
     ShopJob,
     load_state,
+    more_choices,
     problems,
 )
 from sqlmodel import Session, col, select
@@ -58,6 +59,7 @@ def shop_context(session: Session, build: Job, store: str) -> ShopContext:
             quantity=shopping.ordered_quantity(item),
             unit=item.unit,
             meals=[names[meal_id] for meal_id in item.meal_ids if meal_id in names],
+            more_alternatives_query=item.more_alternatives_query,
         )
         for number, item in enumerate(items, start=1)
     ]
@@ -93,7 +95,16 @@ def finished_choices(job_dir: Path, job: ShopJob) -> dict[int, ItemChoice]:
     state = load_state(job_dir)
     if missing := problems(job, state):
         raise InvalidProducts(" ".join(missing))
-    return {item.number: state.choices[item.number] for item in job.items}
+    choices: dict[int, ItemChoice] = {}
+    for item in job.items:
+        if item.more_alternatives_query is not None and item.number not in state.more_results:
+            raise InvalidProducts(f"More alternatives weren't fetched for {item.name}.")
+        choices[item.number] = state.choices[item.number].model_copy(
+            update={
+                "more_alternatives": more_choices(item, state.more_results.get(item.number, []))
+            }
+        )
+    return choices
 
 
 def save_choices(session: Session, items: dict[int, UUID], choices: dict[int, ItemChoice]) -> None:
@@ -108,6 +119,7 @@ def save_choices(session: Session, items: dict[int, UUID], choices: dict[int, It
         choice, row = choices[number], rows[item_id]
         row.product = choice.chosen
         row.alternatives = choice.alternatives
+        row.more_alternatives = choice.more_alternatives
         row.no_alternatives_reason = choice.no_alternatives_reason
         row.not_found = choice.chosen is None
         row.skippable_reason = choice.skippable_reason

@@ -112,11 +112,21 @@ async function openMeal(nav: HTMLIonNavElement | null, mealId: string, servings:
 }
 
 /** Pushes an item of the shopped list onto the flow's nav (in the flow's ordering session). */
-async function openProduct(nav: HTMLIonNavElement | null, session: string, orderId: string, itemId: string) {
+async function openProduct(
+  nav: HTMLIonNavElement | null, session: string, orderId: string, itemId: string,
+  view: 'product' | 'more-alternatives' = 'product',
+) {
   if (!nav) return
   await nav.push(() => (
     <OrderSession value={session}>
-      <ProductPage orderId={orderId} itemId={itemId} onDone={() => void nav.pop()} onLeave={() => void nav.popToRoot()} />
+      <ProductPage
+        orderId={orderId}
+        itemId={itemId}
+        view={view}
+        onMoreAlternatives={() => void openProduct(nav, session, orderId, itemId, 'more-alternatives')}
+        onDone={() => void nav.popToRoot()}
+        onLeave={() => void nav.popToRoot()}
+      />
     </OrderSession>
   ))
 }

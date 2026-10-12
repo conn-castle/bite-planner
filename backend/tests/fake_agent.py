@@ -224,6 +224,7 @@ async def use_tools() -> None:
                         "add_item",
                         {
                             "name": f"item {index}",
+                            "more_alternatives_query": f"item {index}",
                             "quantity": 2,
                             "aisle": "pantry",
                             "lines": covered,

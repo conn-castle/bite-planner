@@ -14,6 +14,14 @@ Staples are ingredients every kitchen already has: $staples. Never add them with
 
 4. Sum the specified amounts for a single item into one purchasable unit.
 
+For every item, also supply `more_alternatives_query`: one broader product search
+for the family's More alternatives list. For chicken sausage, use "sausage";
+for sharp cheddar cheese, use "cheddar cheese". Remove optional brand or variety
+restrictions while keeping the same useful product category. If the name is
+already broad, use it unchanged. Supply one query, never a list of queries or
+AND/OR combinations of different products. This term is saved now, before any Instacart shopping; code
+will automatically run this one search during shopping and save its matches.
+
 5. Count fresh produce that's bought by the piece, converting prepared amounts with reasonable yields for that ingredient. Make what's counted clear in the name, such as "broccoli heads" or "garlic cloves". Keep a weight or volume for produce not bought by the piece.
 
 6. Give each item one of these aisles, by the form being bought:

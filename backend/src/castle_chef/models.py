@@ -443,6 +443,13 @@ class ShoppingListItem(TimestampMixin, SQLModel, table=True):
     # of its alternatives.
     product: ProductCount | None = Field(default=None, sa_type=ModelJSONB(ProductCount))
     # What the member can choose instead.
+    more_alternatives_query: str | None = None
+    # Matching products from the one saved broader query, fetched during shopping.
+    more_alternatives: list[ProductCount] = Field(
+        default_factory=list,
+        sa_type=ModelJSONBList(ProductCount),
+        sa_column_kwargs={"server_default": text("'[]'::jsonb")},
+    )
     alternatives: list[ProductCount] = Field(
         default_factory=list,
         sa_type=ModelJSONBList(ProductCount),

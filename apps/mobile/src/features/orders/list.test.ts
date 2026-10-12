@@ -42,6 +42,8 @@ const item = (fields: Partial<ShoppingItem>): ShoppingItem => ({
   removed: false,
   product: ONIONS,
   alternatives: [],
+  more_alternatives_query: null,
+  more_alternatives: [],
   no_alternatives_reason: null,
   not_found: false,
   skippable_reason: null,

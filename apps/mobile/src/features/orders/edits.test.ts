@@ -162,8 +162,8 @@ describe('changes to the shopping list', () => {
       shop: null,
       store: 'Wegmans',
       items: [
-        { id: 'onions', name: 'onions', quantity: 2, recipe_quantity: 2, unit: null, aisle: 'produce', meal_ids: [], on_hand: false, removed: false, product: YELLOW, alternatives: [SWEET], no_alternatives_reason: null, not_found: false, skippable_reason: null },
-        { id: 'beef', name: 'ground beef', quantity: 1, recipe_quantity: 1, unit: 'lb', aisle: 'meat_seafood', meal_ids: [], on_hand: false, removed: false, product: null, alternatives: [], no_alternatives_reason: null, not_found: false, skippable_reason: null },
+        { id: 'onions', name: 'onions', quantity: 2, recipe_quantity: 2, unit: null, aisle: 'produce', meal_ids: [], on_hand: false, removed: false, product: YELLOW, alternatives: [SWEET], more_alternatives_query: null, more_alternatives: [], no_alternatives_reason: null, not_found: false, skippable_reason: null },
+        { id: 'beef', name: 'ground beef', quantity: 1, recipe_quantity: 1, unit: 'lb', aisle: 'meat_seafood', meal_ids: [], on_hand: false, removed: false, product: null, alternatives: [], more_alternatives_query: null, more_alternatives: [], no_alternatives_reason: null, not_found: false, skippable_reason: null },
       ],
     },
   }
@@ -183,6 +183,27 @@ describe('changes to the shopping list', () => {
     ]).shopping_list?.items ?? []
     expect([onions.product?.product_id, onions.product?.count]).toEqual(['sweet', 3])
     expect(onions.alternatives.map((product) => product.product_id)).toEqual(['yellow'])
+  })
+
+  it('shows a saved broad choice immediately, preserves curated options, and lets the old choice return', () => {
+    const red: Product = { ...SWEET, product_id: 'red', name: 'Red onions', count: 3 }
+    const withMore: GroceryOrder = {
+      ...listed,
+      shopping_list: listed.shopping_list && {
+        ...listed.shopping_list,
+        items: listed.shopping_list.items.map((item) => ({
+          ...item, more_alternatives_query: 'onions', more_alternatives: [red, YELLOW],
+        })),
+      },
+    }
+    const switched = applyEdits(withMore, [{ kind: 'item', session: 'phone', orderId: 'order-2', itemId: 'onions', alternative: 'red' }])
+    const onions = switched.shopping_list?.items[0]
+    expect(onions?.product).toEqual(red)
+    expect(onions?.alternatives).toEqual([SWEET])
+    expect(onions?.more_alternatives).toEqual([YELLOW])
+    const restored = applyEdits(switched, [{ kind: 'item', session: 'phone', orderId: 'order-2', itemId: 'onions', alternative: 'yellow' }])
+    expect(restored.shopping_list?.items[0].product).toEqual(YELLOW)
+    expect(restored.shopping_list?.items[0].alternatives).toEqual([SWEET])
   })
 
   it('is recognized as a change to the order', () => {
