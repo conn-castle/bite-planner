@@ -9,7 +9,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-readonly REVIEW_PORT=5174 APP_PORT=5175 API_PORT=8000
+readonly REVIEW_PORT=${CASTLE_CHEF_REVIEW_PORT:-5174}
+readonly APP_PORT=${CASTLE_CHEF_APP_PORT:-5175} API_PORT=${CASTLE_CHEF_API_PORT:-8000}
 readonly REVIEW_TOOL=.agent-layer/skills-imported/request-html-comments/scripts/html_review.mjs
 
 [[ -f backend/.env ]] || { echo "Missing backend/.env: run make env" >&2; exit 1; }
@@ -43,9 +44,14 @@ scripts/worker-docker.sh build >/dev/null
 
 # Each server gets its own process group, so stopping it stops its children too.
 set -m
-(cd backend && AWS_PROFILE=conn AWS_REGION=us-east-1 exec uv run uvicorn castle_chef.api:app --reload) </dev/null &
+(cd backend
+  if [[ -n ${CASTLE_CHEF_REVIEW_DATABASE_URL:-} ]]; then
+    export DATABASE_URL=$CASTLE_CHEF_REVIEW_DATABASE_URL
+  fi
+  AWS_PROFILE=conn AWS_REGION=us-east-1 exec uv run uvicorn castle_chef.api:app --reload --port "$API_PORT") </dev/null &
 api=$!
-(cd apps/mobile && CASTLE_CHEF_REVIEW_PORT=$REVIEW_PORT exec pnpm exec vite --port "$APP_PORT" --strictPort) </dev/null &
+(cd apps/mobile && CASTLE_CHEF_REVIEW_PORT=$REVIEW_PORT CASTLE_CHEF_API_DEV_URL="http://127.0.0.1:$API_PORT" \
+  exec pnpm exec vite --port "$APP_PORT" --strictPort) </dev/null &
 web=$!
 # Waits on the servers by pid, never a bare `wait`: a background child that a stop
 # signal reaches between its fork and exec runs these traps with this shell's jobs,

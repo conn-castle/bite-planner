@@ -43,11 +43,28 @@ def tools(job_dir: Path) -> MCPServer:
 def add_item(
     tools: MCPServer, name: str, aisle: str, *lines: str, **amount: Any
 ) -> tuple[bool, str]:
+    amount.setdefault("more_alternatives_query", name)
     return call(tools, "add_item", name=name, aisle=aisle, lines=list(lines), **amount)
 
 
 def add_staple(tools: MCPServer, staple: str, *lines: str) -> tuple[bool, str]:
     return call(tools, "add_staple", staple=staple, lines=list(lines))
+
+
+def test_the_list_agent_must_supply_one_nonblank_broad_query(
+    tools: MCPServer, job_dir: Path
+) -> None:
+    arguments: dict[str, object] = {
+        "name": "yellow onions",
+        "aisle": "produce",
+        "quantity": 1,
+        "lines": ["1a"],
+    }
+    assert call(tools, "add_item", **arguments)[0]
+    assert call(tools, "add_item", **arguments, more_alternatives_query="   ")[0]
+    assert not call(tools, "add_item", **arguments, more_alternatives_query="  onions  ")[0]
+    draft = agent_shopping.load_draft(job_dir)
+    assert draft.items[0].more_alternatives_query == "onions"
 
 
 def test_an_item_is_added_with_the_lines_it_covers(tools: MCPServer, job_dir: Path) -> None:
@@ -87,7 +104,9 @@ def test_any_part_of_a_count_is_rounded_up(
 def test_an_item_that_would_be_saved_invalid_is_refused(
     tools: MCPServer, name: str, quantity: float | None
 ) -> None:
-    refused, text = add_item(tools, name, "produce", "1b", quantity=quantity)
+    refused, text = add_item(
+        tools, name, "produce", "1b", quantity=quantity, more_alternatives_query="produce"
+    )
 
     assert refused
     assert "Invalid item:\n" in text
@@ -228,9 +247,28 @@ def test_done_says_what_is_not_covered_until_every_line_is(tools: MCPServer, job
     assert complete == (False, "Complete: 3 items and 1 staples cover all 6 lines.")
     # What the worker saves: each item and staple with the meals its lines are from.
     assert shopping.finished_list(job_dir, ListJob(lines=LINES)) == [
-        ListEntry(name="yellow onions", quantity=2, aisle=Aisle.PRODUCE, meals=[1, 2]),
-        ListEntry(name="lemons", quantity=2, aisle=Aisle.PRODUCE, meals=[1, 2]),
-        ListEntry(name="ground beef", quantity=8, unit="oz", aisle=Aisle.MEAT_SEAFOOD, meals=[2]),
+        ListEntry(
+            name="yellow onions",
+            more_alternatives_query="yellow onions",
+            quantity=2,
+            aisle=Aisle.PRODUCE,
+            meals=[1, 2],
+        ),
+        ListEntry(
+            name="lemons",
+            more_alternatives_query="lemons",
+            quantity=2,
+            aisle=Aisle.PRODUCE,
+            meals=[1, 2],
+        ),
+        ListEntry(
+            name="ground beef",
+            more_alternatives_query="ground beef",
+            quantity=8,
+            unit="oz",
+            aisle=Aisle.MEAT_SEAFOOD,
+            meals=[2],
+        ),
         ListEntry(name="salt", aisle=Aisle.PANTRY, meals=[1], on_hand=True),
     ]
 

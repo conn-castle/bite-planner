@@ -772,6 +772,20 @@ def test_a_built_list_is_shopped_right_after(
         ("salt", None),
     ]
     assert [a.product.name for a in items[0].alternatives] == ["Sweet Onions"]
+    assert [item.more_alternatives_query for item in items] == ["item 0", "item 1", None]
+    assert len(items[0].more_alternatives) == 5
+    assert not items[2].more_alternatives
+    # Broad searches run automatically for every item before the model's searches.
+    requests = [
+        json.loads(line) for line in (codex_home / "requests.jsonl").read_text().splitlines()
+    ]
+    searches = [
+        r["params"]["arguments"]["query"]
+        for r in requests
+        if r.get("method") == "mcpServer/tool/call"
+        and r["params"]["tool"] == "instacart.search_products"
+    ]
+    assert searches == ["item 0", "item 1", "item 0", "item 1"]
     assert items[0].product is not None and items[0].product.count == 1
     assert not any(item.not_found for item in items)
 

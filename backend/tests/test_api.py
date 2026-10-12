@@ -2686,6 +2686,48 @@ def test_a_shopped_list_shows_each_items_product_and_alternatives(client: TestCl
     assert item_named(get_order(client, order_id), "salt")["product"] is None
 
 
+def test_saved_broad_results_can_be_chosen_and_undone_without_shopping_again(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order_id, build_id = shopped_draft(client)
+    broad: ProductCount = ProductCount(
+        product=ONIONS.model_copy(update={"product_id": "broader", "name": "Red onions"}),
+        count=3,
+    )
+    with Session(get_engine()) as worker_session:
+        items = products.items_to_buy(worker_session, UUID(build_id))
+        item = next(i for i in items if i.name == "tortillas")
+        item.more_alternatives_query = "onions"
+        item.more_alternatives = [broad, item.product] if item.product else [broad]
+        # A full curated list must stay intact when a broad match is chosen.
+        item.alternatives = [
+            ProductCount(product=SWEET.model_copy(update={"product_id": f"curated-{n}"}), count=2)
+            for n in range(8)
+        ]
+        worker_session.add(item)
+        worker_session.commit()
+
+    def no_live_search() -> None:
+        raise AssertionError("Browsing or selecting saved results must not contact Instacart")
+
+    monkeypatch.setattr("castle_chef.instacart.store", no_live_search)
+    before = item_named(get_order(client, order_id), "tortillas")
+    assert before["more_alternatives_query"] == "onions"
+    assert before["more_alternatives"][0]["name"] == "Red onions"
+    swapped = item_named(
+        ok(change_item(client, order_id, before["id"], {"alternative": "broader"})), "tortillas"
+    )
+    assert (swapped["product"]["product_id"], swapped["product"]["count"]) == ("broader", 3)
+    assert swapped["alternatives"] == before["alternatives"]
+    assert [p["product_id"] for p in swapped["more_alternatives"]] == ["17499438"]
+    restored = item_named(
+        ok(change_item(client, order_id, before["id"], {"alternative": "17499438"})), "tortillas"
+    )
+    assert restored["product"] == before["product"]
+    assert restored["alternatives"] == before["alternatives"]
+
+
 def test_placing_waits_for_the_list_to_be_shopped(client: TestClient) -> None:
     order_id, build_id = shopped_draft(client, shop=False)
 

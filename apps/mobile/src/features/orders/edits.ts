@@ -158,14 +158,19 @@ function unknownEdit(edit: never): never {
 /** An item with one change applied, as the server applies it. */
 function changedItem(item: ShoppingItem, edit: SetItem): ShoppingItem {
   let changed = { ...item, removed: edit.removed ?? item.removed }
-  const chosen = item.alternatives.find((alternative) => alternative.product_id === edit.alternative)
+  const curated = item.alternatives.some((alternative) => alternative.product_id === edit.alternative)
+  const source = curated ? item.alternatives : item.more_alternatives
+  const chosen = source.find((alternative) => alternative.product_id === edit.alternative)
   if (chosen !== undefined) {
     // Switched: the product it had becomes one of its alternatives.
-    const others = item.alternatives.filter((alternative) => alternative !== chosen)
+    const others = source.filter((alternative) =>
+      alternative.product_id !== chosen.product_id && alternative.product_id !== item.product?.product_id,
+    )
+    const alternatives = item.product === null ? others : [...others, item.product]
     changed = {
       ...changed,
       product: chosen,
-      alternatives: item.product === null ? others : [...others, item.product],
+      ...(curated ? { alternatives } : { more_alternatives: alternatives }),
       removed: false,
       // Found, then: the member picked what the store has instead.
       not_found: false,

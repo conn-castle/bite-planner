@@ -10,14 +10,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from castle_chef_agent.instacart import connect
+from castle_chef_agent.instacart import InstacartError, connect
 from castle_chef_agent.jobfiles import write_context
-from castle_chef_agent.products import ShopItem, ShopJob
+from castle_chef_agent.products import ShopItem, ShopJob, prefetch_more_alternatives
 from castle_chef_agent.server import products_server
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult
 
+from castle_chef.products import InvalidProducts, finished_choices
 from tests.conftest import FAKE_CODEX
 
 ITEMS = [
@@ -58,6 +59,65 @@ def call(tools: MCPServer, tool: str, **arguments: Any) -> tuple[bool, str]:
 
 def search_onions(tools: MCPServer, item: int = 1) -> None:
     assert not call(tools, "search", item=item, query="yellow onions")[0]
+
+
+def test_saved_broad_queries_are_fetched_once_with_only_matches(
+    tools: MCPServer,
+    codex_home: Path,
+) -> None:
+    job = ShopJob(
+        items=[
+            ITEMS[0].model_copy(update={"more_alternatives_query": "yellow onions"}),
+            ITEMS[1].model_copy(update={"more_alternatives_query": "curry leaves"}),
+        ]
+    )
+    write_context(tools_dir(tools), job)
+    with connect(codex_home, "Wegmans", command=["python3", str(FAKE_CODEX)]) as store:
+        prefetch_more_alternatives(tools_dir(tools), store)
+        prefetch_more_alternatives(tools_dir(tools), store)
+    requests = [
+        json.loads(line) for line in (codex_home / "requests.jsonl").read_text().splitlines()
+    ]
+    searches = [
+        r["params"]["arguments"]["query"]
+        for r in requests
+        if r.get("method") == "mcpServer/tool/call"
+    ]
+    assert searches == ["yellow onions", "curry leaves"]
+    search_onions(tools)
+    assert not call(tools, "choose", item=1, product_id="17499438", count=2, why_none="Only one.")[
+        0
+    ]
+    assert not call(tools, "search", item=2, query="curry leaves")[0]
+    assert not call(tools, "not_found", item=2, why_skippable="Aroma only.")[0]
+    choices = finished_choices(tools_dir(tools), job)
+    assert len(choices[1].more_alternatives) == 5
+    assert "Bulk Garlic" not in [p.product.name for p in choices[1].more_alternatives]
+    counts = {p.product.product_id: p.count for p in choices[1].more_alternatives}
+    assert counts["17499438"] == 2  # 3 lb needs two 2 lb bags.
+    assert counts["3371870"] == 4  # 3 lb needs four estimated 0.75 lb onions.
+    assert choices[2].more_alternatives == []  # Related products aren't matches.
+
+
+def test_a_failed_broad_search_is_not_saved_as_an_empty_success(
+    tools: MCPServer,
+    codex_home: Path,
+) -> None:
+    job = ShopJob(items=[ITEMS[0].model_copy(update={"more_alternatives_query": "yellow onions"})])
+    write_context(tools_dir(tools), job)
+    (codex_home / "fake.json").write_text('{"drop_search_items": true}')
+    with (
+        connect(codex_home, "Wegmans", command=["python3", str(FAKE_CODEX)]) as store,
+        pytest.raises(InstacartError, match="Couldn't fetch More alternatives for yellow onions"),
+    ):
+        prefetch_more_alternatives(tools_dir(tools), store)
+    # The existing shopping session was started before the failure was configured.
+    search_onions(tools)
+    assert not call(tools, "choose", item=1, product_id="17499438", count=2, why_none="Only one.")[
+        0
+    ]
+    with pytest.raises(InvalidProducts, match="More alternatives weren't fetched"):
+        finished_choices(tools_dir(tools), job)
 
 
 def test_search_lists_each_products_id_size_price_and_whether_it_was_bought_before(

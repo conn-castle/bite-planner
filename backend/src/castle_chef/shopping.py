@@ -48,6 +48,7 @@ class ListEntry(BaseModel):
     """An item or staple of a finished list, with the numbers of the meals it's for."""
 
     name: str
+    more_alternatives_query: str | None = None
     quantity: float | None = None
     unit: str | None = None
     aisle: Aisle
@@ -161,6 +162,7 @@ def finished_list(job_dir: Path, job: ListJob) -> list[ListEntry]:
     return [
         ListEntry(
             name=item.name,
+            more_alternatives_query=item.more_alternatives_query,
             quantity=item.quantity,
             unit=item.unit,
             aisle=item.aisle,
@@ -186,6 +188,7 @@ def add_items(session: Session, job_id: UUID, entries: list[ListEntry], source: 
                 job_id=job_id,
                 position=position,
                 name=entry.name,
+                more_alternatives_query=entry.more_alternatives_query,
                 quantity=None if entry.on_hand else entry.quantity,
                 unit=None if entry.on_hand else entry.unit,
                 aisle=entry.aisle,

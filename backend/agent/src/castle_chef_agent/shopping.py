@@ -7,8 +7,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
 from castle_chef_agent.jobfiles import locked, read_context, replace_file
 from castle_chef_agent.names import key
@@ -52,12 +53,16 @@ STAPLE_NAMES: dict[str, Staple] = {
 }
 
 
+AlternativesQuery = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class ListItemInput(BaseModel):
     """An item to buy, as the agent adds it (`add_item`)."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1)
+    more_alternatives_query: AlternativesQuery
     # The total the lines need, in `unit` (a count when `unit` is null); null
     # when their recipes give no amount.
     quantity: float | None = Field(default=None, gt=0, allow_inf_nan=False)

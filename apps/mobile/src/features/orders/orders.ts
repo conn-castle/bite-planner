@@ -31,6 +31,7 @@ import type {
   SettleIn,
 } from '../../lib/api/types'
 import { logger } from '../../lib/log'
+import { isRecord } from '../../lib/isRecord'
 import { queryKeys } from '../../lib/query/keys'
 import { storeMealRating } from '../meals/ratings'
 import { hasRunningJob } from './batches'
@@ -581,6 +582,25 @@ function releaseLock(queryClient: QueryClient, release: ReleaseLock) {
 
 export function useOpenOrder() {
   return useMutation<GroceryOrder, Error, OpenOrder>({ mutationKey: OPEN })
+}
+
+/** This session is still opening the draft or taking its lock from an earlier opening. */
+export function useAcquiringOrder(orderId: string, session: string): boolean {
+  const opening: number = useIsMutating({
+    mutationKey: OPEN,
+    predicate: (mutation) => {
+      const variables: unknown = mutation.state.variables
+      return isRecord(variables) && variables.session === session
+    },
+  })
+  const taking: number = useIsMutating({
+    mutationKey: TAKE,
+    predicate: (mutation) => {
+      const variables: unknown = mutation.state.variables
+      return isRecord(variables) && variables.session === session && variables.orderId === orderId
+    },
+  })
+  return opening + taking > 0
 }
 
 export function useGenerateMeals() {

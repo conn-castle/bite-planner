@@ -240,6 +240,10 @@ export interface ShoppingItem {
   product: Product | null
   /** What the member can switch to (up to 8), or why there are none. */
   alternatives: Product[]
+  /** The single broader term supplied when the list was generated. Null for older lists. */
+  more_alternatives_query: string | null
+  /** Matching products fetched during shopping, ready to browse without another search. */
+  more_alternatives: Product[]
   no_alternatives_reason: string | null
   /** The store doesn't have it; why the meals work without it, if they do. */
   not_found: boolean
