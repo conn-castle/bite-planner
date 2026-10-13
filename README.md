@@ -41,6 +41,10 @@ A batch usually takes a minute or two, including Fargate startup and model calls
 
 Every push to `main` is a release ([Releases](#releases)). Development happens against the Neon `dev` branch ([Development](#development)).
 
+Report bugs and feature ideas in plain language. The agent files them in
+[GitHub Issues](https://github.com/nicholasjconn/castle-chef/issues) using the
+[reporting process](docs/operations/github-issues.md).
+
 ## Local development
 
 Runs the whole loop on this machine against the Neon `dev` branch: the API with `uvicorn`, jobs as local subprocesses (no AWS), and the app on the local network. `make` is the entry point for every development command; run `make` to list them.
