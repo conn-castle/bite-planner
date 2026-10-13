@@ -2,7 +2,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Button, IconButton } from '../../ui/Button'
 import type { Meal, MealSummary } from '../../lib/api/types'
+import { plural } from '../../lib/format'
 import { Icon } from '../../ui/Icon'
+import { Note } from '../../ui/Note'
 import { Notice } from '../../ui/Notice'
 import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
@@ -24,14 +26,14 @@ interface MealPageProps {
   rateable?: boolean
   /**
    * Where the quantities start: an order's servings for the meal, or null for the
-   * recipe's own (a meal of an order whose servings aren't known).
+   * recipe's own (a meal being picked, or of an order whose servings aren't known).
    */
   servings: number | null
   /**
-   * A suggestion not picked yet: its servings are the recipe's, with no control
-   * to change them (only a pick has servings to choose).
+   * Opened while picking meals: the recipe as written, with no servings shown
+   * (they're chosen in the Servings step).
    */
-  suggestion?: boolean
+  picking?: boolean
 }
 
 /**
@@ -39,17 +41,16 @@ interface MealPageProps {
  * them, and the steps. The meal's name and facts show at once from a list
  * already loaded (Home, History, the suggestions) while the rest loads.
  */
-export function MealPage({ mealId, tab, rateable = false, servings, suggestion = false }: MealPageProps) {
+export function MealPage({ mealId, tab, rateable = false, servings, picking = false }: MealPageProps) {
   const meal = useQuery(mealQuery(mealId))
   const queryClient = useQueryClient()
   const summary = meal.data ?? cachedMealSummary(queryClient, mealId)
   const ratingError = useRatingError([mealId])
-  const startAt = suggestion ? null : servings
   // The servings chosen here; until then, where they start.
   const [chosen, setChosen] = useState<number | null>(null)
   const [cooking, setCooking] = useState(false)
   const recipe = meal.data
-  const shownServings = recipe && (chosen ?? startAt ?? recipe.servings)
+  const shownServings = recipe && (chosen ?? servings ?? recipe.servings)
   // Cooking is for a meal on its way or eaten (from Orders or History), not one being picked.
   const cookable = tab !== undefined && recipe !== undefined && recipe.steps.length > 0
 
@@ -80,9 +81,9 @@ export function MealPage({ mealId, tab, rateable = false, servings, suggestion =
             <RecipeBody
               meal={recipe}
               servings={shownServings}
-              chosenServings={startAt ?? recipe.servings}
+              chosenServings={servings ?? recipe.servings}
               onServings={setChosen}
-              fixed={suggestion}
+              picking={picking}
             />
           ) : (
             !meal.isError && (
@@ -147,21 +148,21 @@ interface RecipeBodyProps {
   /** The servings chosen for it (an order's, else the recipe's own), which Reset goes back to. */
   chosenServings: number
   onServings: (servings: number) => void
-  /** The recipe's own servings, with no control to change them. */
-  fixed: boolean
+  /** Opened while picking meals: no servings control, just a footnote saying the amounts get scaled in the Servings step. */
+  picking: boolean
 }
 
-function RecipeBody({ meal, servings, chosenServings, onServings: setServings, fixed }: RecipeBodyProps) {
+function RecipeBody({ meal, servings, chosenServings, onServings: setServings, picking }: RecipeBodyProps) {
   const ingredients = meal.ingredients
 
   return (
     <>
-      <div className={styles.servings}>
-        <span className={styles.servingsLabel}>
-          <Icon name="users" />
-          <span>{fixed ? `Serves ${meal.servings}` : 'Servings'}</span>
-        </span>
-        {!fixed && (
+      {!picking && (
+        <div className={styles.servings}>
+          <span className={styles.servingsLabel}>
+            <Icon name="users" />
+            <span>Servings</span>
+          </span>
           <span className={styles.servingsControls}>
             {/* Only once they differ from what was chosen: there's nothing to go back to before. */}
             {servings !== chosenServings && (
@@ -175,10 +176,10 @@ function RecipeBody({ meal, servings, chosenServings, onServings: setServings, f
             )}
             <Stepper value={servings} min={1} max={MAX_SERVINGS} onChange={setServings} label="Servings" />
           </span>
-        )}
-      </div>
+        </div>
+      )}
 
-      <h2 className={styles.heading}>Ingredients</h2>
+      <h2 className={styles.heading}>Ingredients{picking && '*'}</h2>
       <ul className={styles.ingredients}>
         {ingredients.map((ingredient, index) => (
           // Ingredients have no id; their order is fixed.
@@ -191,6 +192,12 @@ function RecipeBody({ meal, servings, chosenServings, onServings: setServings, f
           </li>
         ))}
       </ul>
+      {picking && (
+        <Note icon="users">
+          * This recipe is for {plural(meal.servings, 'serving')}. It's scaled to the servings you choose in the
+          next step.
+        </Note>
+      )}
 
       <h2 className={styles.heading}>Steps</h2>
       <ol className={styles.ingredients}>

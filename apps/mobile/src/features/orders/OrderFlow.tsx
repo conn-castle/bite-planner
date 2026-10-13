@@ -99,11 +99,11 @@ export function OrderFlowModal({ isOpen, onDismiss, orderId, startAt }: OrderFlo
   )
 }
 
-/** Pushes a recipe onto the flow's nav: at a pick's servings, when it's one. */
+/** Pushes a recipe onto the flow's nav: at a pick's servings, or as written while picking meals. */
 async function openMeal(nav: HTMLIonNavElement | null, mealId: string, servings: number | undefined) {
   if (!nav) return
-  // A meal not picked yet has no servings of its own to show or change.
-  await nav.push(() => <MealPage mealId={mealId} servings={servings ?? null} suggestion={servings === undefined} />)
+  // While picking, servings aren't shown: they're chosen in the Servings step.
+  await nav.push(() => <MealPage mealId={mealId} servings={servings ?? null} picking={servings === undefined} />)
   // A recipe once opened as a blank card (its page left invisible); report it if that happens again.
   const page = (await nav.getActive())?.element
   if (page && getComputedStyle(page).opacity === '0') {
@@ -131,7 +131,7 @@ async function openProduct(
   ))
 }
 
-/** Opens a meal's recipe: at a pick's servings, when it's one. */
+/** Opens a meal's recipe: at a pick's servings, or with none while picking meals. */
 type OpenMeal = (mealId: string, servings?: number) => void
 
 /** Opens an item of an order's shopped list. */

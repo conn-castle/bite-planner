@@ -32,7 +32,7 @@ from castle_chef_agent.checkout import (
 from castle_chef_agent.checkout import load_state as load_checkout_state
 from castle_chef_agent.instacart import InstacartError
 from castle_chef_agent.jobfiles import replace_file
-from castle_chef_agent.meals import MealInput, MealsJob, load_meals, meal_problems
+from castle_chef_agent.meals import RECIPE_SERVINGS, MealInput, MealsJob, load_meals, meal_problems
 from castle_chef_agent.products import ItemChoice
 from castle_chef_agent.products import load_state as load_products_state
 from castle_chef_agent.server import Tools
@@ -899,4 +899,4 @@ def generate_meals_prompt(session: Session, job: Job, count: int) -> str:
             'The family marked these meals "don\'t show meals like this". '
             f"Don't suggest meals like them:\n\n{listed}\n\n"
         )
-    return prompts.fill("generate_meals", count=count, avoid=avoid)
+    return prompts.fill("generate_meals", count=count, servings=RECIPE_SERVINGS, avoid=avoid)

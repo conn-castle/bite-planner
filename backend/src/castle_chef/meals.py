@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from castle_chef_agent.meals import MealInput
+from castle_chef_agent.meals import RECIPE_SERVINGS, MealInput
 from sqlmodel import Session
 
 from castle_chef.models import Meal, MealIngredient, MealStep
@@ -13,6 +13,7 @@ def add_meals(session: Session, job_id: UUID, meal_inputs: list[MealInput]) -> N
     for meal_input in meal_inputs:
         meal = Meal(
             job_id=job_id,
+            servings=RECIPE_SERVINGS,
             **meal_input.model_dump(exclude={"ingredients", "steps"}),
             steps=[
                 MealStep(

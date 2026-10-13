@@ -21,7 +21,6 @@ from tests.test_products_tools import call
 MEAL: dict[str, Any] = {
     "name": "Creamy Tuscan Chicken",
     "description": "One-pan chicken in a garlicky cream sauce.",
-    "servings": 6,
     "active_time_minutes": 25,
     "total_time_minutes": 40,
     "dish": "skillet",
@@ -66,13 +65,12 @@ def test_each_meal_added_is_saved_for_the_worker(tmp_path: Path) -> None:
     assert saved_names(tmp_path) == ["Creamy Tuscan Chicken", "Tacos"]
 
 
-def test_a_meal_without_servings_is_refused(tmp_path: Path) -> None:
-    meal = {key: value for key, value in MEAL.items() if key != "servings"}
-
-    refused, text = add(batch(tmp_path), meal)
+def test_the_agent_cannot_set_a_recipes_servings(tmp_path: Path) -> None:
+    # Every recipe is written for 2 servings; the agent doesn't choose another.
+    refused, text = add(batch(tmp_path), MEAL | {"servings": 4})
 
     assert refused
-    assert "meal.servings\n  Field required" in text
+    assert "meal.servings\n  Extra inputs are not permitted" in text
     assert not (tmp_path / "meals").exists()
 
 

@@ -30,7 +30,6 @@ from pydantic import TypeAdapter
 
 MEAL: dict[str, object] = {
     "name": "Sausage and Peppers",
-    "servings": 4,
     "dish": "plate",
     "ingredients": [{"name": "sausage", "icon": "ground_meat", "color": "brown"}],
     "steps": [{"text": "Roast the sausage.", "ingredients": ["sausage"]}],
