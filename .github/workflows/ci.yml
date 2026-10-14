@@ -56,7 +56,11 @@ jobs:
           node-version-file: apps/mobile/.nvmrc
           cache: pnpm
           cache-dependency-path: apps/mobile/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --config.ci=false
+      - name: Verify pnpm shared-store layout
+        run: |
+          target=$(readlink -e node_modules/react)
+          case "$target" in "$(pnpm store path)"/links/*) echo "$target" ;; *) echo 'React is outside the pnpm shared store' >&2; exit 1 ;; esac
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
