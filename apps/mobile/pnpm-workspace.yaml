@@ -1,1 +1,8 @@
 enableGlobalVirtualStore: true
+packageExtensions:
+  '@ionic/react@9.0.5':
+    peerDependencies: { '@types/react': '^18 || ^19' }
+  '@ionic/react-router@9.0.5':
+    peerDependencies: { '@types/react': '^18 || ^19' }
+  '@stencil/react-output-target@1.6.2':
+    peerDependencies: { '@types/react': '^18 || ^19' }
