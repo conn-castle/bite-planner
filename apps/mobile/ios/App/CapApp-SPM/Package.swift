@@ -12,18 +12,18 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "8.5.2"),
-        .package(name: "CapacitorCommunityKeepAwake", path: "../../../node_modules/.pnpm/@capacitor-community+keep-awake@8.0.1_@capacitor+core@8.5.2/node_modules/@capacitor-community/keep-awake"),
-        .package(name: "CapacitorApp", path: "../../../node_modules/.pnpm/@capacitor+app@8.1.1_@capacitor+core@8.5.2/node_modules/@capacitor/app"),
-        .package(name: "CapacitorAppLauncher", path: "../../../node_modules/.pnpm/@capacitor+app-launcher@8.0.1_@capacitor+core@8.5.2/node_modules/@capacitor/app-launcher"),
-        .package(name: "CapacitorDevice", path: "../../../node_modules/.pnpm/@capacitor+device@8.0.3_@capacitor+core@8.5.2/node_modules/@capacitor/device"),
-        .package(name: "CapacitorHaptics", path: "../../../node_modules/.pnpm/@capacitor+haptics@8.0.2_@capacitor+core@8.5.2/node_modules/@capacitor/haptics"),
-        .package(name: "CapacitorKeyboard", path: "../../../node_modules/.pnpm/@capacitor+keyboard@8.0.5_@capacitor+core@8.5.2/node_modules/@capacitor/keyboard"),
-        .package(name: "CapacitorLocalNotifications", path: "../../../node_modules/.pnpm/@capacitor+local-notifications@8.3.1_@capacitor+core@8.5.2/node_modules/@capacitor/local-notifications"),
-        .package(name: "CapacitorNetwork", path: "../../../node_modules/.pnpm/@capacitor+network@8.0.1_@capacitor+core@8.5.2/node_modules/@capacitor/network"),
-        .package(name: "CapacitorPreferences", path: "../../../node_modules/.pnpm/@capacitor+preferences@8.0.1_@capacitor+core@8.5.2/node_modules/@capacitor/preferences"),
-        .package(name: "CapacitorPushNotifications", path: "../../../node_modules/.pnpm/@capacitor+push-notifications@8.1.2_@capacitor+core@8.5.2/node_modules/@capacitor/push-notifications"),
-        .package(name: "CapacitorSplashScreen", path: "../../../node_modules/.pnpm/@capacitor+splash-screen@8.0.2_@capacitor+core@8.5.2/node_modules/@capacitor/splash-screen"),
-        .package(name: "CapacitorStatusBar", path: "../../../node_modules/.pnpm/@capacitor+status-bar@8.0.3_@capacitor+core@8.5.2/node_modules/@capacitor/status-bar")
+        .package(name: "CapacitorCommunityKeepAwake", path: "symlinks/CapacitorCommunityKeepAwake"),
+        .package(name: "CapacitorApp", path: "symlinks/CapacitorApp"),
+        .package(name: "CapacitorAppLauncher", path: "symlinks/CapacitorAppLauncher"),
+        .package(name: "CapacitorDevice", path: "symlinks/CapacitorDevice"),
+        .package(name: "CapacitorHaptics", path: "symlinks/CapacitorHaptics"),
+        .package(name: "CapacitorKeyboard", path: "symlinks/CapacitorKeyboard"),
+        .package(name: "CapacitorLocalNotifications", path: "symlinks/CapacitorLocalNotifications"),
+        .package(name: "CapacitorNetwork", path: "symlinks/CapacitorNetwork"),
+        .package(name: "CapacitorPreferences", path: "symlinks/CapacitorPreferences"),
+        .package(name: "CapacitorPushNotifications", path: "symlinks/CapacitorPushNotifications"),
+        .package(name: "CapacitorSplashScreen", path: "symlinks/CapacitorSplashScreen"),
+        .package(name: "CapacitorStatusBar", path: "symlinks/CapacitorStatusBar")
     ],
     targets: [
         .target(
