@@ -9,6 +9,7 @@ import { Notice } from '../../ui/Notice'
 import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { Stepper } from '../../ui/Stepper'
+import { Stats, type Stat } from '../../ui/Stats'
 import { cachedMealSummary } from './cached'
 import { CookView } from './CookView'
 import styles from './MealPage.module.css'
@@ -76,7 +77,7 @@ export function MealPage({ mealId, tab, rateable = false, servings, picking = fa
       )}
       {summary ? (
         <article className={styles.recipe}>
-          <RecipeHeader meal={summary} ingredientCount={meal.data?.ingredients.length} />
+          <RecipeHeader meal={summary} />
           {recipe && shownServings !== undefined ? (
             <RecipeBody
               meal={recipe}
@@ -111,12 +112,12 @@ export function MealPage({ mealId, tab, rateable = false, servings, picking = fa
   )
 }
 
-/** The name, description, and facts: all but the ingredient count come with the meal's summary. */
-function RecipeHeader({ meal, ingredientCount }: { meal: MealSummary; ingredientCount: number | undefined }) {
-  const facts = [
+/** The name, description, and facts from the meal's summary. */
+function RecipeHeader({ meal }: { meal: MealSummary }) {
+  const facts: Stat[] = [
     meal.total_time_minutes != null && { label: 'min total', value: meal.total_time_minutes },
     meal.active_time_minutes != null && { label: 'hands-on', value: meal.active_time_minutes },
-    { label: 'ingredients', value: ingredientCount },
+    { label: 'ingredients', value: meal.ingredient_count },
   ].filter((fact) => fact !== false)
 
   return (
@@ -124,20 +125,7 @@ function RecipeHeader({ meal, ingredientCount }: { meal: MealSummary; ingredient
       <h1 className={styles.title}>{meal.name}</h1>
       {meal.description && <p className={styles.description}>{meal.description}</p>}
 
-      <dl className={styles.facts}>
-        {facts.map((fact) => (
-          <div key={fact.label} className={styles.fact}>
-            <dt>{fact.label}</dt>
-            {fact.value != null ? (
-              <dd>{fact.value}</dd>
-            ) : (
-              <dd className={styles.pending}>
-                <Skeleton height={19} width={20} radius={5} />
-              </dd>
-            )}
-          </div>
-        ))}
-      </dl>
+      <Stats stats={facts} variant="recipe" />
     </>
   )
 }

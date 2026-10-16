@@ -163,10 +163,37 @@ class MealInput(BaseModel):
         "stews, risotto, salads, grain bowls), skillet (seared or pan-cooked mains: chops, "
         "steaks, fajitas), tacos (tacos, burritos, quesadillas), or plate (everything else)."
     )
-    active_time_minutes: int | None = Field(default=None, ge=0)
-    total_time_minutes: int | None = Field(default=None, ge=0)
+    active_time_minutes: int = Field(
+        ge=0,
+        description="Hands-on minutes the cook is busy across the full recipe, including later "
+        "prep and cooking tasks; exclude unattended cooking and waiting. For 5 minutes prep, "
+        "30 cooking, 5 more prep, and 10 more cooking, hands-on time is 10 minutes. "
+        "Must not exceed `total_time_minutes`.",
+    )
+    total_time_minutes: int = Field(
+        ge=0,
+        description="Elapsed minutes from starting the recipe to ready to eat, including every "
+        "prep, cooking, and waiting interval. For 5 minutes prep, 30 cooking, 5 more prep, "
+        "and 10 more cooking in sequence, total time is 50 minutes. Account for overlapping "
+        "tasks and waits; do not sum step timers when they run in parallel.",
+    )
     ingredients: list[IngredientInput] = Field(min_length=1)
     steps: list[StepInput] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _times_fit_total(self) -> Self:
+        if self.active_time_minutes > self.total_time_minutes:
+            raise ValueError(
+                f"`active_time_minutes` ({self.active_time_minutes}) must not exceed "
+                f"`total_time_minutes` ({self.total_time_minutes})."
+            )
+        for position, step in enumerate(self.steps, start=1):
+            if step.timer_minutes is not None and step.timer_minutes > self.total_time_minutes:
+                raise ValueError(
+                    f"Step {position}'s `timer_minutes` ({step.timer_minutes}) must not exceed "
+                    f"`total_time_minutes` ({self.total_time_minutes})."
+                )
+        return self
 
     @model_validator(mode="after")
     def _pictures_an_ingredient(self) -> Self:

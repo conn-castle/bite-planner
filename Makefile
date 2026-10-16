@@ -33,7 +33,7 @@ env: ## Write backend/.env for Neon dev from AWS SSM
 dev: ## Run the API and the app (https://localhost:5173) against Neon dev
 	scripts/dev.sh
 
-review: ## Review the app's UI from a phone on the local network, with comments (Neon dev)
+review: ## Review the app's UI over private Tailscale HTTPS, with comments (Neon dev)
 	scripts/review.sh
 
 dev-reset: ## Replace Neon dev with a copy of production, then migrate it

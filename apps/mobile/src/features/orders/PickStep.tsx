@@ -14,8 +14,8 @@ import { CornerToggle } from '../../ui/CornerToggle'
 import { Icon } from '../../ui/Icon'
 import { Note } from '../../ui/Note'
 import { Notice } from '../../ui/Notice'
+import { Stats } from '../../ui/Stats'
 import { usePrefetchMeal } from '../meals/cached'
-import { formatMinutes, mealMinutes } from '../meals/facts'
 import { householdQuery } from '../settings/settings'
 import { newestBatchState, suggestions } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
@@ -154,7 +154,6 @@ interface MealCardProps {
  * this"), which also takes it out of the order and can be undone.
  */
 function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
-  const minutes = mealMinutes(meal)
   const prefetch = usePrefetchMeal()
   const press = usePressIntent(() => prefetch(meal.id))
   // A meal marked "not for us" is never picked (see edits.ts), so it's never also added.
@@ -169,7 +168,15 @@ function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
         {notForUs && <span className={styles.gone}>No more meals like this</span>}
         <span className={styles.text}>
           <span className={styles.name}>{meal.name}</span>
-          {minutes != null && <span className={styles.time}>{formatMinutes(minutes)}</span>}
+          <Stats
+            variant="meal"
+            className={styles.facts}
+            stats={[
+              { icon: 'ingredients', value: meal.ingredient_count, label: 'Ingredients' },
+              { icon: 'clock', value: meal.total_time_minutes, unit: 'min', label: 'Total', missingLabel: 'Total time not listed' },
+              { icon: 'person', value: meal.active_time_minutes, unit: 'min', label: 'Hands-on', missingLabel: 'Hands-on time not listed' },
+            ]}
+          />
         </span>
       </button>
       <CornerToggle

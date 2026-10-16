@@ -8,13 +8,13 @@ export default defineConfig(({ mode }) => {
   // Release this build belongs to (`YYYY.M.D.N`), set by the release workflow; `dev` for local builds.
   const release = process.env.CASTLE_CHEF_RELEASE ?? 'dev'
   // `make review` (scripts/review.sh): the review server in front of the dev server
-  // provides HTTPS on the LAN at this port, so the dev server itself stays on loopback HTTP.
+  // provides private Tailscale HTTPS at this public port; Vite stays on loopback HTTP.
   const reviewPort = process.env.CASTLE_CHEF_REVIEW_PORT
 
   return {
     define: { __APP_VERSION__: JSON.stringify(version), __APP_RELEASE__: JSON.stringify(release) },
-    // Self-signed HTTPS so phones on the local network get a secure context,
-    // which Neon Auth's Secure session cookie requires.
+    // Direct `make dev` uses self-signed HTTPS for Neon Auth's Secure cookie;
+    // `make review` gets its secure context from Tailscale Serve instead.
     plugins: [react(), ...(reviewPort ? [] : [basicSsl()])],
     // Unit tests (mode `test`) load no Neon branch, so they get no dev server.
     server: mode === 'test' ? undefined : devServer(loadEnv(mode, process.cwd()), reviewPort),

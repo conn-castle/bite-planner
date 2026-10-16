@@ -53,7 +53,7 @@ Runs the whole loop on this machine against the Neon `dev` branch: the API with 
 make setup       # once: install dependencies, write backend/.env for dev from SSM
 make dev-reset   # optional: make dev a fresh copy of production (discards dev's changes)
 make dev         # the API on http://localhost:8000 and the app on https://localhost:5173
-make review      # the same, for a UI review with comments from another device (below)
+make review      # private Tailscale HTTPS UI review with comments from another device (below)
 ```
 
 `make dev` runs the API (each job it starts runs `castle-chef job run` in the worker image, through `scripts/worker-docker.sh run`) and the app's dev server, which proxies `/api` to it, until you press `Ctrl+C` or either one exits. For phones, open port 5173 once: `sudo ufw allow from 192.168.1.0/24 to any port 5173 proto tcp`.
@@ -62,7 +62,7 @@ make review      # the same, for a UI review with comments from another device (
 
 **Stop:** `Ctrl+C`. A job already started keeps running to the end.
 
-**UI review:** `make review` (not together with `make dev`: both use port 8000) applies this checkout's migrations before starting the API and app; if migration fails, the review does not start. It runs the same API and app behind the `request-html-comments` review server on `https://<LAN IP>:5174` (open the port once: `sudo ufw allow from 192.168.1.0/24 to any port 5174 proto tcp`). Open it on a phone or computer, accept the certificate warning, sign in, and comment on any element; **Send** writes the comments to `.agent-layer/tmp/reviews/` and stops everything. The review server has no login: anyone on the network who reaches the port can use the app as the signed-in account while it runs. Its self-signed certificate for this machine's address is kept in `~/.local/state/castle-chef/review-tls/`.
+**UI review:** `make review` (not together with `make dev`: both use port 8000) applies this checkout's migrations before starting the API and app; if migration fails, the review does not start. The API, Vite and review listener stay on loopback; `request-html-comments --tailscale` exposes the review through private Tailscale Serve HTTPS. Tailscale must be connected with tailnet HTTPS enabled, and the reviewing phone or computer must be connected to the tailnet and permitted by its access rules. Open the verified HTTPS URL printed by the tool, sign in, and comment on any element; **Send** writes the comments to `.agent-layer/tmp/reviews/` and stops the review and its app/API. Submit, cancel or termination releases only that review's Serve session. The public HTTPS port defaults to 5174 (`CASTLE_CHEF_REVIEW_PORT`, also used for hot reload); the tool allocates its separate loopback listener. An occupied Serve port or Tailscale startup failure stops the review without replacing existing routes or switching to LAN. The annotation server adds no authentication of its own: tailnet peers with access can reach the proxied app's routes and WebSockets, and normal app sign-in still applies.
 
 To try the app against a deployed API instead of the local one: `cd apps/mobile && CASTLE_CHEF_API_DEV_URL=<its URL> pnpm dev` (the deployed stack must use the same Neon branch as `.env.development`).
 

@@ -180,6 +180,8 @@ export interface MealSummary {
   description: string | null
   active_time_minutes: number | null
   total_time_minutes: number | null
+  /** Distinct recipe ingredients, excluding the app-wide household staples. */
+  ingredient_count: number
   /** Null when not rated. */
   rating: MealRating | null
   /** Null for meals from before pictures. */

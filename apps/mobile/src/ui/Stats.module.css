@@ -5,7 +5,7 @@
   margin-top: 16px;
 }
 
-.stats div {
+.cell {
   flex: 1;
   min-width: 0;
   padding: 9px 10px;
@@ -13,13 +13,107 @@
   background: var(--cc-fill);
 }
 
-.stats b {
+.value {
+  margin: 0;
   display: block;
   font: 700 18px/1.15 var(--cc-font-display);
 }
 
-.stats small {
+.label {
   font-size: 11.5px;
   font-weight: 600;
   color: var(--cc-ink-2);
+}
+
+/* Recipe facts keep the reviewed centered 17px values. */
+.recipe,
+.meal {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+}
+
+.recipe {
+  margin: 18px 0 0;
+}
+
+.recipe .cell {
+  display: flex;
+  flex-direction: column-reverse;
+  padding: 10px 8px;
+  text-align: center;
+}
+
+.recipe .value {
+  font-size: 17px;
+  line-height: 1.1;
+}
+
+.recipe .label {
+  font-size: 11px;
+}
+
+/* Pick cards: three mini boxes, with an icon, a large value, then units/description. */
+.meal {
+  margin-top: 8px;
+  gap: 6px;
+}
+
+.meal .cell {
+  padding: 10px 2px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.meal .value {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.meal .value svg {
+  font-size: 18px;
+  color: var(--cc-ink-2);
+}
+
+.meal .number {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.meal .unit {
+  font: 600 12px/1.1 var(--cc-font-text);
+  color: var(--cc-ink-2);
+}
+
+.meal .label {
+  display: block;
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* Leave room for icon + three-digit minutes + unit on narrow phone cards. */
+@media (max-width: 359px) {
+  .meal .value {
+    font-size: 20px;
+    gap: 2px;
+  }
+
+  .meal .value svg {
+    font-size: 16px;
+  }
+}
+
+.meal .unavailable {
+  color: var(--cc-ink-3);
 }

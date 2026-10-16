@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 import typer
 from castle_chef_agent import cli
 from castle_chef_agent.jobfiles import write_context
@@ -106,6 +107,67 @@ def test_a_step_timer_is_at_least_a_minute(tmp_path: Path) -> None:
     assert refused
     assert "timer_minutes\n  Input should be greater than or equal to 1" in text
     assert not (tmp_path / "meals").exists()
+
+
+@pytest.mark.parametrize("field", ["active_time_minutes", "total_time_minutes"])
+@pytest.mark.parametrize("invalid", ["missing", None, -1])
+def test_both_recipe_times_are_required_nonnegative_minutes(
+    tmp_path: Path, field: str, invalid: str | int | None
+) -> None:
+    meal = MEAL.copy()
+    if invalid == "missing":
+        del meal[field]
+    else:
+        meal[field] = invalid
+
+    refused, text = add(batch(tmp_path), meal)
+
+    assert refused
+    assert f"meal.{field}" in text
+    assert not (tmp_path / "meals").exists()
+
+
+def test_hands_on_time_cannot_exceed_start_to_eat_time(tmp_path: Path) -> None:
+    refused, text = add(batch(tmp_path), MEAL | {"active_time_minutes": 41})
+
+    assert refused
+    assert "`active_time_minutes` (41) must not exceed `total_time_minutes` (40)." in text
+    assert not (tmp_path / "meals").exists()
+
+
+def test_a_step_timer_cannot_exceed_start_to_eat_time(tmp_path: Path) -> None:
+    steps = [{"text": "Rest the chicken.", "timer_minutes": 41}]
+
+    refused, text = add(batch(tmp_path), MEAL | {"steps": steps})
+
+    assert refused
+    assert "Step 1's `timer_minutes` (41) must not exceed `total_time_minutes` (40)." in text
+    assert not (tmp_path / "meals").exists()
+
+
+@pytest.mark.parametrize("parallel", [False, True], ids=["sequential-50-10", "parallel-waits"])
+def test_full_recipe_times_are_saved_without_summing_overlapping_timers(
+    tmp_path: Path, parallel: bool
+) -> None:
+    steps: list[dict[str, object]] = [
+        {"text": "Prepare the chicken for 5 minutes."},
+        {"text": "Roast for 30 minutes.", "timer_minutes": 30},
+        {"text": "Prepare the sauce for 5 minutes."},
+        {"text": "Finish cooking for 10 minutes.", "timer_minutes": 10},
+    ]
+    if parallel:
+        steps.insert(
+            2, {"text": "Meanwhile, simmer the sauce for 30 minutes.", "timer_minutes": 30}
+        )
+
+    refused, text = add(
+        batch(tmp_path),
+        MEAL | {"active_time_minutes": 10, "total_time_minutes": 50, "steps": steps},
+    )
+
+    assert not refused, text
+    saved = json.loads((tmp_path / "meals" / "001.json").read_text())
+    assert (saved["total_time_minutes"], saved["active_time_minutes"]) == (50, 10)
 
 
 def test_a_meal_pictures_at_least_one_ingredient(tmp_path: Path) -> None:
