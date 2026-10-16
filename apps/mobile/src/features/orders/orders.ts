@@ -93,12 +93,39 @@ export const placedQuery = (coveringFrom?: ISODate) =>
 
 const orderKey = queryKeys.order
 
+// How often a query is checked for the data it has (false: not polled). A polled
+// query is also fetched again as soon as the app is back in the foreground,
+// however recent its copy: iOS stops timers while the app is away, and a tick
+// that comes before the app is active again is skipped, so the poll alone could
+// leave a finished batch unseen for a whole interval.
+function placedPollInterval(data: PlacedOrder[] | undefined): number | false {
+  if (data?.some((order) => order.book_state === 'booking')) return BOOKING_POLL_MS
+  const today = localDate(new Date())
+  return data?.some((order) => mayBookSoon(order, today)) ? BOOK_DAY_POLL_MS : false
+}
+
+function orderPollInterval(data: GroceryOrder | undefined, session: string | undefined): number | false {
+  return data && hasRunningJob(data)
+    ? POLL_MS
+    : data?.book_state === 'booking'
+      ? BOOKING_POLL_MS
+      : session !== undefined && data?.lock && data.lock.session !== session
+        ? LOCK_RENEW_MS
+        : data && mayBookSoon(data, localDate(new Date()))
+          ? BOOK_DAY_POLL_MS
+          : false
+}
+
 /**
  * The household's next order, with its draft once someone has started one;
  * checked every `refetchInterval` ms if given (Home, to see who is ordering).
  */
 export function useNextOrder(refetchInterval: number | false = false) {
-  return useQuery({ ...nextQuery, refetchInterval })
+  return useQuery({
+    ...nextQuery,
+    refetchInterval,
+    refetchOnWindowFocus: refetchInterval === false ? true : 'always',
+  })
 }
 
 /**
@@ -109,11 +136,8 @@ export function useNextOrder(refetchInterval: number | false = false) {
 export function usePlacedOrders(coveringFrom?: ISODate) {
   return useQuery({
     ...placedQuery(coveringFrom),
-    refetchInterval: ({ state: { data } }) => {
-      if (data?.some((order) => order.book_state === 'booking')) return BOOKING_POLL_MS
-      const today = localDate(new Date())
-      return data?.some((order) => mayBookSoon(order, today)) ? BOOK_DAY_POLL_MS : false
-    },
+    refetchInterval: ({ state: { data } }) => placedPollInterval(data),
+    refetchOnWindowFocus: ({ state: { data } }) => placedPollInterval(data) === false ? true : 'always',
   })
 }
 
@@ -137,16 +161,8 @@ export function useOrder(orderId: string | undefined, session?: string) {
       return draft && draft.id === orderId ? draft : undefined
     },
     queryFn: orderId ? () => apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${orderId}`) : skipToken,
-    refetchInterval: ({ state: { data } }) =>
-      data && hasRunningJob(data)
-        ? POLL_MS
-        : data?.book_state === 'booking'
-          ? BOOKING_POLL_MS
-          : session !== undefined && data?.lock && data.lock.session !== session
-            ? LOCK_RENEW_MS
-            : data && mayBookSoon(data, localDate(new Date()))
-              ? BOOK_DAY_POLL_MS
-              : false,
+    refetchInterval: ({ state: { data } }) => orderPollInterval(data, session),
+    refetchOnWindowFocus: ({ state: { data } }) => orderPollInterval(data, session) === false ? true : 'always',
     // A 404 (the draft was discarded) won't change on a retry.
     retry: (failureCount, error) => isRetryable(error, failureCount),
   })

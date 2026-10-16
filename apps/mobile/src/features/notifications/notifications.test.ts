@@ -1,7 +1,7 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiRequest } from '../../lib/api/client'
 import type { GroceryOrder, NextOrder } from '../../lib/api/types'
 import { queryKeys } from '../../lib/query/keys'
@@ -53,6 +53,12 @@ beforeEach(async () => {
   push.registerDeviceMutations(queryClient)
   push.listenForPush(queryClient)
   signedIn(true)
+})
+
+afterEach(() => {
+  queryClient.clear()
+  onlineManager.setOnline(true)
+  vi.useRealTimers()
 })
 
 function signedIn(member: boolean) {
@@ -192,6 +198,23 @@ describe('a notification arriving while the app is open', () => {
       delivered: { kind: 'ideas_ready', orderId: 'draft' },
     })
     expect(refreshed).toHaveBeenCalledWith({ queryKey: queryKeys.nextOrder })
+  })
+
+  it('refreshes the order whose ideas arrived, while a reminder leaves single orders fresh', () => {
+    queryClient.setQueryData(queryKeys.order('draft'), { id: 'draft' })
+    queryClient.setQueryData(queryKeys.order('other'), { id: 'other' })
+    const closeFlow = push.orderFlowOpened()
+
+    fire('pushNotificationReceived', ideas)
+
+    expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(queryKeys.order('other'))?.isInvalidated).toBe(false)
+    queryClient.setQueryData(queryKeys.order('draft'), { id: 'draft' })
+    fire('pushNotificationReceived', { data: { kind: 'reminder', order_number: 4 } })
+
+    expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(false)
+    expect(queryClient.getQueryState(queryKeys.order('other'))?.isInvalidated).toBe(false)
+    closeFlow()
   })
 
   it('shows nothing for "ideas ready" while the order flow is open, or for a reminder', () => {
@@ -404,7 +427,7 @@ describe('what a tap leads to', () => {
       throw new ApiError(404, 'Not found.')
     })
 
-    await expect(push.resolveTap({ kind: 'ideas_ready', orderId: 'd' })).resolves.toMatchObject({
+    await expect(push.resolveTap(queryClient, { kind: 'ideas_ready', orderId: 'd' })).resolves.toMatchObject({
       open: false,
       header: 'That draft was discarded',
     })
@@ -415,13 +438,36 @@ describe('what a tap leads to', () => {
 
     request.mockReset()
     request.mockResolvedValue(next(4, draft('d', 4)))
-    await expect(push.resolveTap({ kind: 'reminder', orderNumber: 4 })).resolves.toEqual({ open: true, orderId: 'd' })
+    await expect(push.resolveTap(queryClient, { kind: 'reminder', orderNumber: 4 })).resolves.toEqual({ open: true, orderId: 'd' })
     expect(request.mock.calls).toEqual([['GET', '/v1/grocery-orders/next']])
   })
 
-  it('fails when the server cannot be reached, rather than guessing', async () => {
-    request.mockRejectedValue(new TypeError('Load failed'))
-    await expect(push.resolveTap({ kind: 'reminder', orderNumber: 4 })).rejects.toThrow('Load failed')
+  it('opens the draft after a request fails before reaching the server once', async () => {
+    vi.useFakeTimers()
+    request.mockRejectedValueOnce(new TypeError('Load failed')).mockResolvedValue(next(4, draft('d', 4)))
+    const opened = expect(push.resolveTap(queryClient, { kind: 'ideas_ready', orderId: 'd' })).resolves.toEqual({
+      open: true,
+      orderId: 'd',
+    })
+
+    await Promise.all([opened, vi.advanceTimersByTimeAsync(1_000)])
+
+    expect(request.mock.calls).toEqual([
+      ['GET', '/v1/grocery-orders/next'],
+      ['GET', '/v1/grocery-orders/next'],
+    ])
+  })
+
+  it('still rejects after retries when the server cannot be reached, even offline', async () => {
+    vi.useFakeTimers()
+    onlineManager.setOnline(false)
+    const error = new TypeError('Load failed')
+    request.mockRejectedValue(error)
+    const failed = expect(push.resolveTap(queryClient, { kind: 'reminder', orderNumber: 4 })).rejects.toBe(error)
+
+    await Promise.all([failed, vi.advanceTimersByTimeAsync(7_000)])
+
+    expect(request).toHaveBeenCalledTimes(4)
   })
 
   it('says why not when the ideas were for a draft discarded or placed since', () => {

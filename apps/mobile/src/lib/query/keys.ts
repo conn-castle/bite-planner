@@ -8,6 +8,9 @@ export const queryKeys = {
   /** Who is signed in (features/session); signing in or out keeps it and drops the rest. */
   session: ['session'],
   nextOrder: ['next-order'],
+  /** Tap resolution retries independently of the order fetches that saving cancels. */
+  tapNextOrder: ['notification-tap', 'next-order'],
+  tapOrder: (orderId: string) => ['notification-tap', 'order', orderId],
   /** Every placed-orders list: Home's recent window and History's full list. */
   placedOrders: ['placed-orders'],
   placedOrdersFrom: (coveringFrom?: ISODate) => ['placed-orders', coveringFrom ?? 'all'],
