@@ -445,6 +445,8 @@ def suggest(session: Session, job: Job, *meals: tuple[str, str | None]) -> list[
             MealInput(
                 name=name,
                 description=description,
+                active_time_minutes=5,
+                total_time_minutes=10,
                 dish=Dish.PLATE,
                 ingredients=[IngredientInput(name="onions", icon=Icon.ROUND, color=Color.CREAM)],
                 steps=[StepInput(text="Cook.")],
@@ -547,6 +549,8 @@ def picked(session: Session, job: Job, *servings: int) -> list[Meal]:
         [
             MealInput(
                 name=f"Meal {index}",
+                active_time_minutes=5,
+                total_time_minutes=10,
                 dish=Dish.SKILLET,
                 ingredients=[
                     IngredientInput(

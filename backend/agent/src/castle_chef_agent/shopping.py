@@ -27,7 +27,8 @@ class Aisle(StrEnum):
 
 
 class Staple(StrEnum):
-    """Assumed to be in every kitchen: never on a list (app-wide, not editable).
+    """Assumed to be in every kitchen (app-wide, not editable): excluded from
+    items to buy and recipe ingredient counts.
     The agent records the ones the meals use, shown only on request."""
 
     SALT = "salt"
@@ -37,7 +38,7 @@ class Staple(StrEnum):
     WATER = "water"
 
 
-# Names that are a staple by another name: refused as items to buy.
+# Canonical staple names and aliases: excluded from buying and recipe ingredient counts.
 STAPLE_NAMES: dict[str, Staple] = {
     key(name): staple
     for name, staple in [
@@ -49,6 +50,7 @@ STAPLE_NAMES: dict[str, Staple] = {
         ("ground black pepper", Staple.PEPPER),
         ("ground pepper", Staple.PEPPER),
         ("extra virgin olive oil", Staple.OLIVE_OIL),
+        ("warm water", Staple.WATER),
     ]
 }
 

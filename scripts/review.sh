@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Serves the app for a UI review from a phone or computer on the local network,
+# Serves the app for a private UI review from a phone or computer on Tailscale,
 # with the request-html-comments overlay for element-linked comments. Runs the
 # API (http://localhost:8000) and the app dev server on loopback
 # (http://127.0.0.1:5175) against Neon dev, like `make dev`, behind the review
-# server on this machine's LAN address over HTTPS (https://<LAN IP>:5174), so
-# sign-in works as usual. Stops when the review is sent or cancelled (comments
-# are written to .agent-layer/tmp/reviews/), on Ctrl+C, or if a server exits.
+# server over Tailscale HTTPS, so sign-in works as usual. Stops when the review
+# is sent or cancelled (comments are written to .agent-layer/tmp/reviews/), on
+# Ctrl+C, or if a server exits.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# The public Tailscale HTTPS port, also used by Vite's HMR client.
 readonly REVIEW_PORT=${CASTLE_CHEF_REVIEW_PORT:-5174}
 readonly APP_PORT=${CASTLE_CHEF_APP_PORT:-5175} API_PORT=${CASTLE_CHEF_API_PORT:-8000}
 readonly REVIEW_TOOL=.agent-layer/skills-imported/request-html-comments/scripts/html_review.mjs
@@ -26,21 +27,6 @@ aws sts get-caller-identity --profile conn >/dev/null 2>&1 \
     export DATABASE_URL=$CASTLE_CHEF_REVIEW_DATABASE_URL
   fi
   uv run alembic upgrade head)
-
-# The address other devices reach this machine at (the default route's source).
-lan_ip=$(ip -4 route get 1.1.1.1 | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')
-[[ -n $lan_ip ]] || { echo "Could not find this machine's local network address" >&2; exit 1; }
-
-# A self-signed certificate for that address, reused until it nears expiry.
-tls_dir="$HOME/.local/state/castle-chef/review-tls"
-cert="$tls_dir/$lan_ip.crt" key="$tls_dir/$lan_ip.key"
-if ! openssl x509 -in "$cert" -noout -checkend 86400 >/dev/null 2>&1; then
-  mkdir -p "$tls_dir"
-  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 \
-    -subj "/CN=Castle Chef review" -addext "subjectAltName=IP:$lan_ip" \
-    -keyout "$key" -out "$cert" 2>/dev/null
-  chmod 600 "$key"
-fi
 
 output=".agent-layer/tmp/reviews/review-$(date +%Y%m%d-%H%M%S).json"
 mkdir -p "$(dirname "$output")"
@@ -78,10 +64,10 @@ for _ in $(seq 60); do
 done
 ready || { echo "The API or the app dev server did not start" >&2; exit 1; }
 
-echo "Open https://$lan_ip:$REVIEW_PORT/ on a device on this network and accept the certificate warning."
+echo "Connect the reviewing device to Tailscale; the review tool will print its verified private HTTPS URL."
 echo "Comments will be written to $output"
-node "$REVIEW_TOOL" "http://127.0.0.1:$APP_PORT/" --no-open --host "$lan_ip" --port "$REVIEW_PORT" \
-  --tls-cert "$cert" --tls-key "$key" --output "$output" </dev/null &
+node "$REVIEW_TOOL" "http://127.0.0.1:$APP_PORT/" --no-open --tailscale \
+  --tailscale-port "$REVIEW_PORT" --output "$output" </dev/null &
 review=$!
 trap 'kill -- -"$api" -"$web" -"$review" 2>/dev/null || true; wait "$api" "$web" "$review" 2>/dev/null || true' EXIT
 

@@ -30,6 +30,8 @@ from mcp.types import CallToolResult, TextContent
 MEAL = {
     "name": "Sheet Pan Sausage and Peppers",
     "dish": "plate",
+    "active_time_minutes": 10,
+    "total_time_minutes": 35,
     "ingredients": [
         {
             "name": "Italian sausage",

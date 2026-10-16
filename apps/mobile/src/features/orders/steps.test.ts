@@ -9,7 +9,7 @@ const batch: Job = {
   error: null,
   requested_by: { user_id: 'me', name: 'Nick' },
   created_at: '2026-09-24T09:00:00Z',
-  meals: [{ id: 'tacos', name: 'Tacos', description: null, active_time_minutes: 20, total_time_minutes: 30, rating: null, picture: null }],
+  meals: [{ id: 'tacos', name: 'Tacos', description: null, active_time_minutes: 20, total_time_minutes: 30, ingredient_count: 2, rating: null, picture: null }],
 }
 const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   book_state: null,

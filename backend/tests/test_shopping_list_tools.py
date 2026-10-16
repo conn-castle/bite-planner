@@ -160,6 +160,12 @@ def test_an_amount_in_a_unit_keeps_two_decimals(tools: MCPServer) -> None:
             {},
             '"Sea-salt." is the staple salt: add it as a staple with `add_staple` instead.',
         ),
+        (
+            "Warm water",
+            ["1c"],
+            {},
+            '"Warm water" is the staple water: add it as a staple with `add_staple` instead.',
+        ),
         ("onions", [], {}, "lines\n  List should have at least 1 item"),
     ],
     ids=[
@@ -171,6 +177,7 @@ def test_an_amount_in_a_unit_keeps_two_decimals(tools: MCPServer) -> None:
         "unit alone",
         "rounds to 0",
         "staple spelled",
+        "warm water",
         "no lines",
     ],
 )

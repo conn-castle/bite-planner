@@ -1157,6 +1157,7 @@ def test_suggestions_are_the_batches_meals_oldest_batch_first(client: TestClient
         "description": "Tacos, the quick way.",
         "active_time_minutes": 15,
         "total_time_minutes": 30,
+        "ingredient_count": 2,
         "rating": None,
         # Its pictured ingredients, in recipe order (not the salt).
         "picture": {
@@ -1171,6 +1172,90 @@ def test_suggestions_are_the_batches_meals_oldest_batch_first(client: TestClient
 
 
 # Picking.
+
+
+def test_suggestions_and_recipes_count_distinct_non_staples_without_changing_ingredients(
+    client: TestClient,
+) -> None:
+    order_id = open_draft(client)["id"]
+    job_id = ok(request_batch(client, order_id), 201)["id"]
+    ingredients = [
+        IngredientInput(name="Garlic", preparation="minced", icon=Icon.ROUND, color=Color.CREAM),
+        IngredientInput(name="  GARLIC.  ", preparation="sliced"),
+        IngredientInput(name="red-pepper flakes"),
+        IngredientInput(name="Red pepper flakes."),
+        IngredientInput(name="garlic, for the sauce", preparation="minced"),
+        *[
+            IngredientInput(name=name)
+            for name in (
+                "neutral oil",
+                "oil",
+                "neutral cooking oil",
+                "sesame oil",
+                "avocado oil",
+                "bell pepper",
+                "seasoned salt",
+                "salt",
+                "Kosher Salt.",
+                "Sea-salt.",
+                "table salt",
+                "pepper",
+                "BLACK PEPPER",
+                "ground pepper",
+                "ground black pepper",
+                "olive oil",
+                "Extra-virgin olive oil.",
+                "vegetable oil",
+                "water",
+                " Warm-water. ",
+            )
+        ],
+    ]
+    meal_input = MealInput(
+        name="Garlic chicken",
+        dish=Dish.PLATE,
+        active_time_minutes=10,
+        total_time_minutes=50,
+        ingredients=ingredients,
+        steps=[StepInput(text="Cook, then prepare the sauce and finish.")],
+    )
+    with Session(get_engine()) as worker_session:
+        claim_job(worker_session, UUID(job_id))
+        add_meals(worker_session, UUID(job_id), [meal_input])
+        assert finish_job(worker_session, UUID(job_id))
+
+    [summary] = get_order(client, order_id)["jobs"][0]["meals"]
+    recipe_out = ok(client.get(f"/v1/meals/{summary['id']}", headers=as_user(DAD)))
+
+    # Garlic and red pepper flakes repeat; the named sauce entry is a different identity.
+    assert summary["ingredient_count"] == recipe_out["ingredient_count"] == 10
+    assert (summary["total_time_minutes"], summary["active_time_minutes"]) == (50, 10)
+    assert recipe_out["ingredients"] == [
+        ingredient.model_dump(include={"name", "quantity", "unit", "preparation"})
+        for ingredient in ingredients
+    ]
+
+
+@pytest.mark.parametrize(("total", "active"), [(None, 10), (50, None), (None, None)])
+def test_saved_recipes_with_missing_times_keep_them_missing(
+    client: TestClient, total: int | None, active: int | None
+) -> None:
+    order_id, [meal_id] = with_suggestions(client, names=("Tacos",))
+    # A legacy stored recipe, rather than the required fields of new generation.
+    with Session(get_engine()) as session:
+        meal = session.get(Meal, UUID(meal_id))
+        assert meal is not None
+        meal.total_time_minutes = total
+        meal.active_time_minutes = active
+        session.add(meal)
+        session.commit()
+
+    [summary] = get_order(client, order_id)["jobs"][0]["meals"]
+    recipe_out = ok(client.get(f"/v1/meals/{meal_id}", headers=as_user(MOM)))
+
+    for response in (summary, recipe_out):
+        assert (response["total_time_minutes"], response["active_time_minutes"]) == (total, active)
+        assert response["ingredient_count"] == 2
 
 
 def test_a_member_picks_and_unpicks_the_drafts_suggestions(client: TestClient) -> None:
@@ -1882,6 +1967,7 @@ def test_a_suggestion_opens_as_its_full_recipe(client: TestClient) -> None:
         "description": "Tacos, the quick way.",
         "active_time_minutes": 15,
         "total_time_minutes": 30,
+        "ingredient_count": 2,
         "rating": None,
         # Its pictured ingredients, in recipe order (not the salt).
         "picture": {

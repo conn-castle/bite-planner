@@ -34,6 +34,17 @@ const PATHS = {
     </>
   ),
   bag: <path d="M5 8h14l-1 12H6L5 8zM9 8V6.5a3 3 0 016 0V8" />,
+  // Ingredients (not in the mockup): a bowl and leaves, in the same strokes.
+  ingredients: (
+    <path d="M3 12h18a9 9 0 0 1-18 0ZM7 21h10M9 12C5 9 5 5 6 3c4 0 7 3 7 7M13 12c0-5 3-8 7-8 1 4-1 7-4 8" />
+  ),
+  // Hands-on time (not in the mockup): a person, as requested in phone review.
+  person: (
+    <>
+      <circle cx="12" cy="7" r="4" />
+      <path d="M4 21v-2a8 8 0 0 1 16 0v2" />
+    </>
+  ),
   timer: (
     <>
       <circle cx="12" cy="13.5" r="7.5" />

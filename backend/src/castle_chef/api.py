@@ -17,8 +17,9 @@ from castle_chef_agent import windows
 from castle_chef_agent.address import Address
 from castle_chef_agent.checkout import Checkout
 from castle_chef_agent.meals import Color, Dish, Icon
+from castle_chef_agent.names import key
 from castle_chef_agent.products import ProductCount
-from castle_chef_agent.shopping import Aisle
+from castle_chef_agent.shopping import STAPLE_NAMES, Aisle
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response, status
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -137,6 +138,8 @@ class MealSummaryOut(BaseModel):
     description: str | None
     active_time_minutes: int | None
     total_time_minutes: int | None
+    # Distinct recipe ingredient names, excluding the app-wide household staples.
+    ingredient_count: int
     # The household's rating; null when not rated.
     rating: MealRating | None
     # Null for meals from before pictures.
@@ -713,6 +716,9 @@ def meal_summary(meal: Meal, rated: dict[UUID, MealRating]) -> MealSummaryOut:
         description=meal.description,
         active_time_minutes=meal.active_time_minutes,
         total_time_minutes=meal.total_time_minutes,
+        ingredient_count=len(
+            {key(ingredient.name) for ingredient in meal.ingredients} - STAPLE_NAMES.keys()
+        ),
         rating=rated.get(meal.id),
         picture=meal_picture(meal),
     )
