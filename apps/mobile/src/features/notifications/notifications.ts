@@ -276,15 +276,28 @@ export function tapResult(
 }
 
 /**
- * Works out what a tap leads to from the server's current state: fetched here,
- * not through the next-order query, which another request (e.g. the flow's own
- * saving) may cancel.
+ * Works out what a tap leads to from the server's current state, retrying
+ * network failures through the client under keys that saving an order won't cancel.
  */
-export async function resolveTap(about: AboutDraft): Promise<TapResult> {
-  const next = await apiRequest<NextOrder>('GET', '/v1/grocery-orders/next')
+export async function resolveTap(queryClient: QueryClient, about: AboutDraft): Promise<TapResult> {
+  const options = {
+    staleTime: 0,
+    gcTime: 0,
+    retry: (count: number, error: Error) => isRetryable(error, count),
+    networkMode: 'always',
+  } as const
+  const next = await queryClient.fetchQuery({
+    ...options,
+    queryKey: queryKeys.tapNextOrder,
+    queryFn: () => apiRequest<NextOrder>('GET', '/v1/grocery-orders/next'),
+  })
   const tappedOrder =
     about.kind !== 'reminder' && next.draft?.id !== about.orderId
-      ? await apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${about.orderId}`).catch((error: unknown) => {
+      ? await queryClient.fetchQuery({
+          ...options,
+          queryKey: queryKeys.tapOrder(about.orderId),
+          queryFn: () => apiRequest<GroceryOrder>('GET', `/v1/grocery-orders/${about.orderId}`),
+        }).catch((error: unknown) => {
           if (error instanceof ApiError && error.status === 404) return 'discarded' as const
           throw error
         })
@@ -420,6 +433,9 @@ function received(notification: PushNotificationSchema, queryClient: QueryClient
     delivered?.kind === 'list_ready' ||
     delivered?.kind === 'list_failed' ||
     delivered?.kind === 'booking'
+  if (delivered && aboutAnOrder) {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.order(delivered.orderId) })
+  }
   if (delivered && aboutAnOrder && openFlows === 0) {
     toast.set({
       id: ++toastCount,

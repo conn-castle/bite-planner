@@ -12,7 +12,7 @@ import { MealPage } from '../meals/MealPage'
 import { loadingIdeas, orderFlowOpened, stopAwaitingIdeas, useAwaitedIdeas } from '../notifications/notifications'
 import { useSession } from '../session/session'
 import { useHousehold } from '../settings/settings'
-import { suggestions } from './batches'
+import { isRunning, suggestions } from './batches'
 import { shownDeliveryBy, shownDeliveryDate, shownNextDeliveryDate } from './dates'
 import { DeliveryStep } from './DeliveryStep'
 import { FlowFrame } from './FlowFrame'
@@ -198,6 +198,20 @@ function OrderFlow({ orderId, startAt, session, onShown, onClose, onOpenMeal, on
   useEffect(() => {
     if (awaitedOrder !== undefined && shownOrder?.id === awaitedOrder && !loading) stopAwaitingIdeas('shown')
   }, [awaitedOrder, shownOrder, loading])
+
+  // A batch shown being made here, then with its ideas (both on the pick step):
+  // logged, so the time from the worker's job.succeeded to the meals on screen
+  // shows however the member got here.
+  const runningBatch = useRef<string | null>(null)
+  const newestBatch = shownOrder?.jobs.filter((job) => job.kind === 'generate_meals').at(-1)
+  useEffect(() => {
+    if (!shownOrder || !newestBatch || loading || lockedOut || shownStep !== 'pick') return
+    if (isRunning(newestBatch)) runningBatch.current = newestBatch.id
+    else if (runningBatch.current === newestBatch.id) {
+      runningBatch.current = null
+      if (newestBatch.status === 'succeeded') logger.info('orders.batch_shown', { orderId: shownOrder.id, jobId: newestBatch.id })
+    }
+  }, [shownOrder, newestBatch, loading, lockedOut, shownStep])
 
   // A new day moves the earliest delivery date: fetch the order's limits again.
   const today = useToday()

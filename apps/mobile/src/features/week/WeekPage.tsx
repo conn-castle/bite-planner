@@ -116,7 +116,7 @@ export function WeekPage() {
         openFlow(about.orderId)
         logger.info('push.tap_opened', { kind: about.kind, open: true, early: true, ms: since(tapped.at) })
       }
-      resolveTap(about)
+      resolveTap(queryClient, about)
         .then((result) => {
           if (!current()) return
           clearTapped()
