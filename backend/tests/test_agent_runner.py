@@ -31,6 +31,8 @@ from pydantic import TypeAdapter
 MEAL: dict[str, object] = {
     "name": "Sausage and Peppers",
     "dish": "plate",
+    "active_time_minutes": 10,
+    "total_time_minutes": 35,
     "ingredients": [{"name": "sausage", "icon": "ground_meat", "color": "brown"}],
     "steps": [{"text": "Roast the sausage.", "ingredients": ["sausage"]}],
 }

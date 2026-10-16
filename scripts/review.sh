@@ -4,8 +4,8 @@
 # API (http://localhost:8000) and the app dev server on loopback
 # (http://127.0.0.1:5175) against Neon dev, like `make dev`, behind the review
 # server over Tailscale HTTPS, so sign-in works as usual. Stops when the review
-# is sent or cancelled (comments
-# are written to .agent-layer/tmp/reviews/), on Ctrl+C, or if a server exits.
+# is sent or cancelled (comments are written to .agent-layer/tmp/reviews/), on
+# Ctrl+C, or if a server exits.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

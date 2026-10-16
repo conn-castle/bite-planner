@@ -17,7 +17,7 @@
 /* Four across when every card can still fit its three fact boxes. */
 @media (min-width: 1320px) {
   .grid {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
