@@ -48,7 +48,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
         let config = UISceneConfiguration(name: "Default Configuration",
                                           sessionRole: connectingSceneSession.role)
-        config.delegateClass = SceneDelegate.self
+        // Keep external displays mirroring (Apple TN3187; ionic-team/capacitor#8648).
+        if connectingSceneSession.role == .windowApplication {
+            config.delegateClass = SceneDelegate.self
+        }
         return config
     }
 }

@@ -37,7 +37,7 @@ A batch usually takes a minute or two, including Fargate startup and model calls
 | `docker/Dockerfile` | The `api` (Lambda) and `worker` (Fargate) images |
 | `infra/` | AWS CDK (Python): image repositories, deploy role, and the runtime stack |
 | `Makefile`, `scripts/` | Developer commands: run `make` to list them |
-| `.github/workflows/` | CI, releases (`release.yml`: images, migrations, deploy, GitHub release, TestFlight), `rollback.yml` |
+| `.github/workflows/` | CI, `ios.yml` (compiles the iOS app for PRs that change its native build), releases (`release.yml`: images, migrations, deploy, GitHub release, TestFlight), `rollback.yml` |
 
 Every push to `main` is a release ([Releases](#releases)). Development happens against the Neon `dev` branch ([Development](#development)).
 
