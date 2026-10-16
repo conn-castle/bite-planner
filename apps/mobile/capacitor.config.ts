@@ -6,6 +6,7 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   // The app is light only: white behind the WebView, dark status bar text.
   backgroundColor: '#ffffff',
+  // Every new native plugin needs a symlink: true entry below for portable Swift paths.
   experimental: { ios: { spm: { packageOptions: {
     '@capacitor-community/keep-awake': { symlink: true },
     '@capacitor/app': { symlink: true },
