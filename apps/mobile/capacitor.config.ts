@@ -6,6 +6,21 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   // The app is light only: white behind the WebView, dark status bar text.
   backgroundColor: '#ffffff',
+  // Every new native plugin needs a symlink: true entry below for portable Swift paths.
+  experimental: { ios: { spm: { packageOptions: {
+    '@capacitor-community/keep-awake': { symlink: true },
+    '@capacitor/app': { symlink: true },
+    '@capacitor/app-launcher': { symlink: true },
+    '@capacitor/device': { symlink: true },
+    '@capacitor/haptics': { symlink: true },
+    '@capacitor/keyboard': { symlink: true },
+    '@capacitor/local-notifications': { symlink: true },
+    '@capacitor/network': { symlink: true },
+    '@capacitor/preferences': { symlink: true },
+    '@capacitor/push-notifications': { symlink: true },
+    '@capacitor/splash-screen': { symlink: true },
+    '@capacitor/status-bar': { symlink: true },
+  } } } },
   plugins: {
     // Hidden by the app once its first screen has rendered (src/app/native.ts).
     SplashScreen: { launchAutoHide: false, backgroundColor: '#ffffff' },
