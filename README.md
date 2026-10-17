@@ -244,6 +244,8 @@ Repository secrets: `NEON_API_KEY`, `MIGRATION_DATABASE_URL` (direct owner conne
 
 A code rollback was rehearsed on 2026-09-24 (r8 to r7). The database restore has not been exercised (Neon doesn't allow a test root branch in this project); it also assumes the restored branch keeps `main`'s endpoints, so check sign-in and a request afterwards.
 
+Recipe edit proposals (`c6e4a291b502`) are a pre-release contract boundary: earlier releases cannot decode `edit_meal` jobs. Rollback across it requires `restore_database` even though the migration only adds schema; a code-only rollback is refused by the existing contract migration check.
+
 ## Development
 
 Development uses the Neon branch `dev` (`example-development-branch`), a copy of `main` with its own Neon Auth (users and keys copied when the branch was made, then independent). Test in the browser with [local development](#local-development); iOS-only behavior (native sign-in in `src/lib/auth/neonAuth.ts`, the persisted cache across relaunches) still needs a TestFlight build.

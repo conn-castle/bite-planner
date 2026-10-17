@@ -33,6 +33,9 @@ CHECKS: dict[str, str] = {
 
 
 def upgrade() -> None:
+    # contract: pre-release; after an edit job is written, the previous release's
+    # JobKind cannot decode it. Rolling back past this migration must restore the
+    # database too, even though the schema changes are additive.
     op.execute("ALTER TYPE job_kind ADD VALUE 'edit_meal'")
     op.add_column("meal", sa.Column("revision", sa.Integer(), nullable=False, server_default="0"))
     decision = postgresql.ENUM("accepted", "rejected", name="edit_decision")
