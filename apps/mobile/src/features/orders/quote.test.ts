@@ -4,7 +4,7 @@ import { quoteState, replacementShown, totalParts } from './quote'
 
 const job = (status: Job['status']): Job => ({
   id: 'quote-1',
-  kind: 'quote',
+  meal_id: null, started_at: null, finished_at: null, kind: 'quote',
   status,
   error: null,
   requested_by: { user_id: 'mom', name: 'Mom' },

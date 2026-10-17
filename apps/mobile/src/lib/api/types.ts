@@ -176,6 +176,7 @@ export interface MealPicture {
 /** A suggestion card: a meal without its recipe. */
 export interface MealSummary {
   id: string
+  revision: number
   name: string
   description: string | null
   active_time_minutes: number | null
@@ -194,7 +195,10 @@ export interface MealSummary {
  */
 export interface Job {
   id: string
-  kind: 'generate_meals' | 'build_list' | 'shop' | 'quote' | 'book'
+  kind: 'generate_meals' | 'build_list' | 'shop' | 'quote' | 'book' | 'edit_meal'
+  meal_id: string | null
+  started_at: ISODateTime | null
+  finished_at: ISODateTime | null
   status: JobStatus
   error: string | null
   requested_by: Member
@@ -382,6 +386,8 @@ export interface GroceryOrder extends BookFields {
   reached_step: OrderStep
   /** Its jobs of every kind, oldest first; the suggestions are its batches' meals. */
   jobs: Job[]
+  recipe_changes: RecipeChange[]
+  recipes_editable: boolean
   /** In the order their meals were suggested. */
   picks: MealPick[]
   /** Who is placing it (a draft's live lock), or null when no one is. */
@@ -557,4 +563,41 @@ export interface Meal extends MealSummary {
   servings: number
   steps: MealStep[]
   ingredients: MealIngredient[]
+}
+
+/** Complete agent output. Step references are ingredient names until Accept. */
+export interface ProposedRecipe {
+  ingredient_count: number
+  name: string
+  description: string | null
+  dish: MealDish
+  active_time_minutes: number
+  total_time_minutes: number
+  ingredients: (MealIngredient & { icon: MealIcon | null; color: MealColor | null })[]
+  steps: { text: string; timer_minutes: number | null; ingredients: string[] }[]
+}
+export interface RecipeChange {
+  meal_id: string
+  job_id: string
+  state: 'running' | 'ready' | 'failed'
+  picked: boolean
+  blocks: boolean
+  feedback: string
+  requested_by: Member
+  created_at: ISODateTime
+  started_at: ISODateTime | null
+  error: string | null
+  base_revision: number
+  proposal: ProposedRecipe | null
+}
+export interface EditMealIn {
+  job_id: string
+  feedback: string
+  replaces: string | null
+}
+export interface AcceptEditIn { base_revision: number }
+export interface RecipeChangesPending {
+  code: 'recipe_changes_pending'
+  message: string
+  meals: { meal_id: string; name: string; state: RecipeChange['state'] }[]
 }

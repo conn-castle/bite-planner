@@ -108,47 +108,9 @@
   }
 }
 
-.add {
-  appearance: none;
-  border: 0;
-  margin: 8px 10px 10px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border-radius: var(--cc-radius-pill);
-  background: var(--cc-fill);
-  font: inherit;
-  font-size: 13.5px;
-  font-weight: 650;
-  color: var(--cc-ink);
-  cursor: pointer;
-  transition:
-    background-color 200ms var(--cc-ease),
-    color 200ms var(--cc-ease),
-    transform var(--cc-press) var(--cc-ease);
-}
-
-.add:active {
-  transform: scale(0.96);
-}
-
-.add svg {
-  font-size: 15px;
-  stroke-width: 2.6;
-}
-
-.added .add {
-  background: var(--cc-ink);
-  color: var(--cc-on-ink);
-}
-
-.add:disabled {
-  opacity: 0.4;
-  cursor: default;
-  transform: none;
-}
+.placeholder .add { display: block; height: 34px; border-radius: var(--cc-radius-pill); }
+.add { margin: 8px 10px 10px; }
+.change { margin: 8px 10px 0; font-size: 12px; color: var(--cc-ink-2); }
 
 /* Marked "don't show meals like this" (.pc.off). */
 .notForUs {

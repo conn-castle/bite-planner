@@ -110,7 +110,13 @@ async def use_tools() -> None:
             return match.group(1) or match.group(2)
 
         booking = prompt.startswith("Book the household's")
-        if booking and meal_count == "0":
+        if "meal-edit" in server["args"]:
+            if meal_count == "0":
+                await call("cannot_change", {"reason": "This change cannot make a usable recipe."})
+            else:
+                await call("propose_recipe", {"recipe": MEAL})
+            await call("done", {})
+        elif booking and meal_count == "0":
             page = await page_after("open_page", {"path": "/store/sign-in"})
             await call("signed_out", {"ref": ref(page, 'button "Log in')})
         elif booking:

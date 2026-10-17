@@ -61,7 +61,7 @@ describe('withLock', () => {
     best_window: null,
     fallback_window: null,
     next_delivery_date: null,
-    reached_step: reached,
+    recipe_changes: [], recipes_editable: true, reached_step: reached,
     jobs: [],
     picks: [],
     lock: null,

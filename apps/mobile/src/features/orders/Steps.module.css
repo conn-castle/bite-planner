@@ -4,3 +4,31 @@
 .groups {
   margin: 14px calc(var(--cc-card-x) - var(--cc-page-x)) 0;
 }
+
+/* B: the group is 680px wide; title/lede keep the shared four-pixel text inset. */
+.servingsBody { max-width: calc(680px + 2 * var(--cc-card-x)); margin-inline: auto; }
+.servingsFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 680px;
+  margin-inline: auto;
+}
+.servingsFooter > p { flex-basis: 120px; }
+.footerAction {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  margin-left: auto;
+  max-width: 100%;
+}
+.footerAction > button { max-width: 100%; }
+.reviewCount { color: var(--cc-ink); font-size: 13px; font-weight: 650; text-align: right; }
+@media (min-width: 712px) {
+  .servingsBody { padding-top: 16px; }
+  .servingsBody .groups { margin-top: 22px; }
+  .footerAction { flex-direction: row; align-items: center; gap: 16px; }
+}

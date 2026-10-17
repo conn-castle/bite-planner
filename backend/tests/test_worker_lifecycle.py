@@ -4,18 +4,22 @@ import json
 import re
 import subprocess
 from collections.abc import Callable, Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import pytest
 from sqlalchemy import text
 from sqlmodel import Session, select
 from typer.testing import CliRunner
 
+from castle_chef import booking, worker
 from castle_chef.cli import app
 from castle_chef.db import get_engine
-from castle_chef.models import Job, JobStatus
+from castle_chef.models import BookState, GroceryOrder, Job, JobStatus, utc_now
 from tests.conftest import BACKEND_DIR
+from tests.test_booking import approved
 from tests.test_worker import use_fake_agent
 
 runner = CliRunner()
@@ -126,3 +130,35 @@ def test_worker_in_an_image_logs_the_release_it_was_built_from(
 
     [started] = [e for e in log_events(tmp_path / "logs") if e["event"] == "worker.started"]
     assert (started["release"], started["commit"]) == ("r42", "abc123")
+
+
+def test_overdue_queued_booking_settles_once_without_running_agent(
+    session: Session,
+    household_id: UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order = approved(session, household_id, utc_now().date() + timedelta(days=4))
+    job = booking.start(session, order)
+    session.commit()
+    job_id, order_id = job.id, order.id
+    session.execute(
+        text("UPDATE job SET created_at=created_at - interval '3 hours' WHERE id=:id"),
+        {"id": job_id},
+    )
+    session.commit()
+    notified: list[UUID] = []
+    processed: list[UUID] = []
+    monkeypatch.setattr(worker, "notify_booking", notified.append)
+
+    def process(claimed: Job) -> worker.JobResult:
+        processed.append(claimed.id)
+        raise AssertionError("An overdue job must not run")
+
+    monkeypatch.setattr(worker, "process_job", process)
+    worker.run_job(job_id)
+    worker.run_job(job_id)  # duplicate delivery cannot notify or settle twice
+    session.expire_all()
+    settled = session.get_one(GroceryOrder, order_id)
+    assert settled.book_state == BookState.NOT_BOOKED
+    assert settled.book_job_id is None
+    assert processed == [] and notified == [order_id]

@@ -2,15 +2,27 @@
 
 from datetime import UTC, date, datetime, time
 from enum import StrEnum
-from typing import NamedTuple
+from typing import Annotated, NamedTuple
 from uuid import UUID, uuid4
 
 from castle_chef_agent.address import Address
+from castle_chef_agent.meal_edit import ProposedRecipe
 from castle_chef_agent.meals import Color, Dish, Icon
 from castle_chef_agent.products import ProductCount
 from castle_chef_agent.shopping import Aisle
-from pydantic import BaseModel
-from sqlalchemy import CheckConstraint, DateTime, Dialect, Enum, Index, Uuid, func, text
+from pydantic import BaseModel, StringConstraints
+from pydantic import Field as ModelField
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Dialect,
+    Enum,
+    ForeignKeyConstraint,
+    Index,
+    Uuid,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, Relationship, SQLModel
@@ -162,6 +174,7 @@ class Meal(TimestampMixin, SQLModel, table=True):
     description: str | None = None
 
     servings: int
+    revision: int = Field(default=0, sa_column_kwargs={"server_default": "0"})
     active_time_minutes: int | None = None
     total_time_minutes: int | None = None
 
@@ -186,6 +199,7 @@ class ListPick(BaseModel):
 
     meal_id: UUID
     servings: int
+    revision: int = 0
 
 
 class ListSource(BaseModel):
@@ -201,6 +215,7 @@ class JobKind(StrEnum):
     SHOP = "shop"  # the products to buy for a list, at the Instacart store
     QUOTE = "quote"  # what the list's products cost at checkout, for the final review
     BOOK = "book"  # booking an approved order at the store
+    EDIT_MEAL = "edit_meal"  # a proposed change, awaiting an explicit decision
 
 
 class JobStatus(StrEnum):
@@ -210,12 +225,26 @@ class JobStatus(StrEnum):
     FAILED = "failed"
 
 
+class EditDecision(StrEnum):
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class MealEditRequest(BaseModel):
+    feedback: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+    base_revision: int = ModelField(ge=0)
+    replaces: UUID | None = None
+
+
 class Job(TimestampMixin, SQLModel, table=True):
     """One run of the agent, for an order, processed by the worker. The app picks
     the id, so a retried request can't start a second run."""
 
     __tablename__ = "job"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["meal_id"], ["meal.id"], name="job_meal_id_fkey", ondelete="CASCADE", use_alter=True
+        ),
         CheckConstraint(
             "(kind::text = 'build_list') = (list_source IS NOT NULL)",
             name="job_list_source_for_lists",
@@ -228,6 +257,36 @@ class Job(TimestampMixin, SQLModel, table=True):
             name="job_quote_request_for_quotes",
         ),
         CheckConstraint("kind::text = 'quote' OR quote IS NULL", name="job_quote_only_quotes"),
+        CheckConstraint("(kind::text = 'edit_meal') = (meal_id IS NOT NULL)", name="job_edit_meal"),
+        CheckConstraint(
+            "(kind::text = 'edit_meal') = (meal_edit IS NOT NULL)", name="job_edit_request"
+        ),
+        CheckConstraint("kind::text = 'edit_meal' OR proposal IS NULL", name="job_edit_proposal"),
+        CheckConstraint(
+            ("kind::text <> 'edit_meal' OR (status::text = 'succeeded') = (proposal IS NOT NULL)"),
+            name="job_edit_success",
+        ),
+        CheckConstraint("decision IS NULL OR kind::text = 'edit_meal'", name="job_edit_decision"),
+        CheckConstraint(
+            "decision::text <> 'accepted' OR status::text = 'succeeded'", name="job_edit_accept"
+        ),
+        CheckConstraint(
+            "decision::text <> 'rejected' OR status::text IN ('succeeded', 'failed')",
+            name="job_edit_reject",
+        ),
+        CheckConstraint(
+            (
+                "(decision IS NOT NULL) = (decided_by IS NOT NULL) AND "
+                "(decision IS NOT NULL) = (decided_at IS NOT NULL)"
+            ),
+            name="job_edit_decided",
+        ),
+        Index(
+            "job_one_undecided_edit",
+            "meal_id",
+            unique=True,
+            postgresql_where=text("meal_id IS NOT NULL AND decision IS NULL"),
+        ),
     )
 
     id: UUID = Field(primary_key=True)
@@ -253,6 +312,14 @@ class Job(TimestampMixin, SQLModel, table=True):
     # and, once it succeeds, what checkout showed. Null for other kinds.
     quote_request: QuoteRequest | None = Field(default=None, sa_type=ModelJSONB(QuoteRequest))
     quote: Quote | None = Field(default=None, sa_type=ModelJSONB(Quote))
+    meal_id: UUID | None = Field(default=None, index=True)
+    meal_edit: MealEditRequest | None = Field(default=None, sa_type=ModelJSONB(MealEditRequest))
+    proposal: ProposedRecipe | None = Field(default=None, sa_type=ModelJSONB(ProposedRecipe))
+    decision: EditDecision | None = Field(
+        default=None, sa_type=Enum(EditDecision, name="edit_decision", values_callable=_values)
+    )
+    decided_by: UUID | None = None
+    decided_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     error: str | None = None
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))

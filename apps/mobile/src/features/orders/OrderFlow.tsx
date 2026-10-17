@@ -8,7 +8,7 @@ import { useToday } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
 import { Skeleton } from '../../ui/Skeleton'
-import { MealPage } from '../meals/MealPage'
+import { OrderMealPage } from './OrderMealPage'
 import { loadingIdeas, orderFlowOpened, stopAwaitingIdeas, useAwaitedIdeas } from '../notifications/notifications'
 import { useSession } from '../session/session'
 import { useHousehold } from '../settings/settings'
@@ -30,6 +30,7 @@ import { PlacedStep } from './PlacedStep'
 import { ProductPage } from './ProductPage'
 import { ReviewStep } from './ReviewStep'
 import { ServingsStep } from './ServingsStep'
+import { unselectedChangeKey } from './recipeChangesState'
 import { WaitStep } from './WaitStep'
 
 interface OrderFlowModalProps {
@@ -73,7 +74,7 @@ export function OrderFlowModal({ isOpen, onDismiss, orderId, startAt }: OrderFlo
           session={session}
           onShown={(id) => (shownOrder.current = id)}
           onClose={() => void modal.current?.dismiss()}
-          onOpenMeal={(mealId, servings) => void openMeal(nav.current, mealId, servings)}
+          onOpenMeal={(mealId, servings) => void openMeal(nav.current, session, shownOrder.current, mealId, servings)}
           onOpenProduct={(id, itemId) => void openProduct(nav.current, session, id, itemId)}
         />
       </OrderSession>
@@ -100,10 +101,10 @@ export function OrderFlowModal({ isOpen, onDismiss, orderId, startAt }: OrderFlo
 }
 
 /** Pushes a recipe onto the flow's nav: at a pick's servings, or as written while picking meals. */
-async function openMeal(nav: HTMLIonNavElement | null, mealId: string, servings: number | undefined) {
-  if (!nav) return
+async function openMeal(nav: HTMLIonNavElement | null, session: string, orderId: string | undefined, mealId: string, servings: number | undefined) {
+  if (!nav || !orderId) return
   // While picking, servings aren't shown: they're chosen in the Servings step.
-  await nav.push(() => <MealPage mealId={mealId} servings={servings ?? null} picking={servings === undefined} />)
+  await nav.push(() => <OrderSession value={session}><OrderMealPage orderId={orderId} mealId={mealId} servings={servings} /></OrderSession>)
   // A recipe once opened as a blank card (its page left invisible); report it if that happens again.
   const page = (await nav.getActive())?.element
   if (page && getComputedStyle(page).opacity === '0') {
@@ -337,9 +338,10 @@ interface OrderStepProps {
 }
 
 /** The screen for where the order is, each step going on to the next. */
-function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenProduct }: OrderStepProps) {
+export function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenProduct }: OrderStepProps) {
   const session = useOrderSession()
   const { mutate: startList } = useStartList()
+  const [acknowledgedChanges, setAcknowledgedChanges] = useState<string | null>(null)
   const household = useHousehold().shown
   if (order.status === 'placed') return <PlacedStep order={order} onChanged={setStep} onClose={onClose} />
   if (suggestions(order).length === 0) return <WaitStep order={order} onClose={onClose} />
@@ -356,7 +358,8 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenProduct }:
         onOpenMeal={onOpenMeal}
         onBack={() => setStep('pick')}
         onNext={() => {
-          // The list starts as the member leaves Servings, after the servings are saved.
+          // Start from the saved servings, even when an older build is running or failed.
+          setAcknowledgedChanges(unselectedChangeKey(order))
           startList({ orderId: order.id, jobId: crypto.randomUUID(), session })
           setStep('list')
         }}
@@ -368,7 +371,9 @@ function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenProduct }:
     return (
       <ListStep
         order={order}
+        acknowledgedChanges={acknowledgedChanges}
         onOpenProduct={(itemId) => onOpenProduct(order.id, itemId)}
+        onOpenMeal={onOpenMeal}
         onBack={() => setStep('servings')}
         onNext={() => setStep('delivery')}
         onClose={onClose}

@@ -1,11 +1,17 @@
-import type { InputHTMLAttributes, ReactElement } from 'react'
+import type { InputHTMLAttributes, TextareaHTMLAttributes, ReactElement } from 'react'
 import styles from './TextField.module.css'
 
-interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
-  label: string
-}
+type TextFieldProps = { label: string } & (
+  | ({ multiline?: false } & InputHTMLAttributes<HTMLInputElement>)
+  | ({ multiline: true } & TextareaHTMLAttributes<HTMLTextAreaElement>)
+)
 
 /** A labelled text input, shared by sign-in and settings forms. */
-export function TextField({ label, className, ...props }: TextFieldProps): ReactElement {
-  return <label className={styles.label}>{label}<input className={[styles.field, className].filter(Boolean).join(' ')} {...props} /></label>
+export function TextField(props: TextFieldProps): ReactElement {
+  if (props.multiline) {
+    const { label, className, multiline: _multiline, ...field } = props
+    return <label className={styles.label}>{label}<textarea className={`${styles.field} ${styles.multiline} ${className ?? ''}`} {...field} /></label>
+  }
+  const { label, className, multiline: _multiline, ...field } = props
+  return <label className={styles.label}>{label}<input className={[styles.field, className].filter(Boolean).join(' ')} {...field} /></label>
 }

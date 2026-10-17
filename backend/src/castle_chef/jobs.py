@@ -128,6 +128,9 @@ def submit_build_list(
     other picks still waiting or running, and shopping still under way, are
     failed as superseded in the same transaction, so their results are dropped.
     The caller holds the order's row lock."""
+    from castle_chef.meal_edits import require_resolved
+
+    require_resolved(session, order)
     if (existing := retried(session, job_id, order, member_id, JobKind.BUILD_LIST)) is not None:
         return existing, False
     if not source.picks:
@@ -162,10 +165,10 @@ def submit_build_list(
 
 def claim_job(session: Session, job_id: UUID) -> Job | None:
     """Mark a pending job as running and return it, or None if it was already
-    claimed (a duplicate delivery). Raises LookupError if the job doesn't exist."""
+    claimed (a duplicate delivery) or overdue. Raises LookupError if the job does not exist."""
     job = session.scalars(
         update(Job)
-        .where(col(Job.id) == job_id, col(Job.status) == JobStatus.PENDING)
+        .where(col(Job.id) == job_id, col(Job.status) == JobStatus.PENDING, ~_stale())
         .values(status=JobStatus.RUNNING, started_at=func.now(), updated_at=func.now())
         .returning(Job)
     ).first()
@@ -173,6 +176,8 @@ def claim_job(session: Session, job_id: UUID) -> Job | None:
     if job is not None:
         session.refresh(job)  # loaded, so it stays readable after the session closes
         return job
+    if fail_if_stale(session, job_id):
+        log.error("job.stale_failed", extra={"job_id": str(job_id)})
     if session.get(Job, job_id) is None:
         raise LookupError(f"Job {job_id} does not exist.")
     return None
@@ -328,6 +333,9 @@ def submit_shop(
     returned rather than started again, and a retried request gets the job it
     made. `build` is the order's current list (None: not ready). The caller holds
     the order's row lock."""
+    from castle_chef.meal_edits import require_resolved
+
+    require_resolved(session, order)
     if (existing := retried(session, job_id, order, member_id, JobKind.SHOP)) is not None:
         return existing, False
     if build is None:

@@ -17,7 +17,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util.exc import CommandError
-from castle_chef_agent import windows
+from castle_chef_agent import meal_edit, windows
 from castle_chef_agent.address import Address
 from castle_chef_agent.checkout import (
     CLICK_ANSWER_FILE,
@@ -45,6 +45,7 @@ from castle_chef import (
     cart,
     delivery,
     instacart,
+    meal_edits,
     orders,
     products,
     prompts,
@@ -66,15 +67,25 @@ from castle_chef.checkout import (
 )
 from castle_chef.db import for_update, get_engine, get_session
 from castle_chef.harness import AgentRunError, run_agent
-from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, create_shop, finish_job
+from castle_chef.jobs import (
+    STALE_ERROR,
+    SUPERSEDED_ERROR,
+    claim_job,
+    create_shop,
+    fail_stale_jobs,
+    finish_job,
+)
 from castle_chef.meals import add_meals
 from castle_chef.models import (
     BookState,
     GroceryOrder,
+    GroceryOrderStatus,
     Household,
     Job,
     JobKind,
+    JobStatus,
     ListSource,
+    Meal,
     ProductGone,
     ShoppingListItem,
 )
@@ -135,7 +146,7 @@ class Booked:
     swapped: dict[UUID, str] = field(default_factory=dict)
 
 
-type JobResult = Meals | ListItems | Products | Quote | Booked
+type JobResult = Meals | ListItems | Products | Quote | Booked | meal_edit.ProposedRecipe
 
 
 def run_job(job_id: UUID) -> None:
@@ -164,6 +175,17 @@ def _run_one(job_id: UUID) -> UUID | None:
         return None
     if job is None:
         log.warning("job.already_claimed", extra=fields)
+        # Claiming normalizes overdue jobs. A lost booking must also settle its
+        # order, just as the failure handler does; duplicates settle it only once.
+        with get_session() as session:
+            expired = session.get(Job, job_id)
+        if (
+            expired is not None
+            and expired.kind == JobKind.BOOK
+            and expired.status == JobStatus.FAILED
+            and expired.error == STALE_ERROR
+        ):
+            _notify_failed(expired, STALE_ERROR)
         return None
     log.info("job.claimed", extra=fields | {"kind": job.kind})
     # Whatever happens, what the agent was given and did is kept.
@@ -186,6 +208,8 @@ def _process(job: Job, fields: dict[str, str]) -> JobResult | None:
         return None
     except (
         AgentRunError,
+        meal_edit.EditRefused,
+        meal_edits.EditNotAllowed,
         ValidationError,
         InvalidList,
         InvalidProducts,
@@ -208,6 +232,8 @@ def _process(job: Job, fields: dict[str, str]) -> JobResult | None:
 def _counts(result: JobResult) -> dict[str, object]:
     """What the job's log lines say of its result."""
     match result:
+        case meal_edit.ProposedRecipe():
+            return {"proposal": True}
         case Meals():
             return {"meal_count": len(result.meals)}
         case Quote():
@@ -227,15 +253,55 @@ def _save(job: Job, result: JobResult, fields: dict[str, str]) -> tuple[bool, UU
     shop_id: UUID | None = None
     try:
         with get_session() as session:
-            # Locking the job keeps its draft from being discarded mid-save; a job
-            # already gone was discarded with its draft, which is not an error.
-            if session.exec(for_update(select(Job).where(Job.id == job.id))).first() is None:
+            # Global lock order: order, then jobs, then meals. No network while locked.
+            order = session.exec(
+                for_update(select(GroceryOrder).where(GroceryOrder.id == job.grocery_order_id))
+            ).first()
+            if order is None:
                 log.info("job.discarded", extra=fields | counts)
+                return False, None
+            fail_stale_jobs(session, order.id)
+            locked_job = session.exec(for_update(select(Job).where(Job.id == job.id))).first()
+            if locked_job is None:
+                log.info("job.discarded", extra=fields | counts)
+                return False, None
+            if locked_job.status != JobStatus.RUNNING:
+                session.commit()  # persist stale normalization, never revive a late result
+                if locked_job.error == SUPERSEDED_ERROR:
+                    log.info("job.superseded", extra=fields | counts)
+                else:
+                    log.error("job.no_longer_running", extra=fields | counts)
                 return False, None
             # The result and the job's success are committed together, and only
             # if the job is still running (not failed as stale, or as superseded
             # by a newer list, meanwhile).
             match result:
+                case meal_edit.ProposedRecipe():
+                    meal = session.get_one(Meal, locked_job.meal_id)
+                    request = locked_job.meal_edit
+                    if (
+                        order.status != GroceryOrderStatus.DRAFT
+                        or request is None
+                        or meal.revision != request.base_revision
+                    ):
+                        finish_job(
+                            session,
+                            job.id,
+                            error="The order or recipe changed before this edit finished.",
+                        )
+                        return False, None
+                    if meal_edits.shopping_started(session, order.id):
+                        finish_job(session, job.id, error=meal_edits.SHOPPING_STARTED)
+                        return False, None
+                    result = meal_edit.ProposedRecipe.model_validate(result.model_dump())
+                    if not meal_edit.changed(meal_edits.current_recipe(meal), result):
+                        finish_job(session, job.id, error="The agent didn't change anything.")
+                        return False, None
+                    if not meal_edits.finish_edit(session, job.id, result):
+                        log.error("job.no_longer_running", extra=fields | counts)
+                        return False, None
+                    log.info("job.succeeded", extra=fields | counts)
+                    return True, None
                 case Meals():
                     add_meals(session, job.id, result.meals)
                 case Quote():
@@ -271,8 +337,16 @@ def _save(job: Job, result: JobResult, fields: dict[str, str]) -> tuple[bool, UU
                     products.save_choices(session, result.items, result.choices)
                 case ListItems():
                     shopping.add_items(session, job.id, result.items, result.source)
-                    # The list is shopped next, in this task (one wait for the member).
-                    shop_id = create_shop(session, job, uuid4(), job.requested_by).id
+                    newest = shopping.newest_build(session, order.id)
+                    if (
+                        order.status == GroceryOrderStatus.DRAFT
+                        and newest is not None
+                        and newest.id == job.id
+                        and result.source == shopping.current_source(session, order.id)
+                        and not meal_edits.recipe_blockers(session, order)
+                    ):
+                        # Only the current build may automatically start shopping.
+                        shop_id = create_shop(session, job, uuid4(), job.requested_by).id
                 case _:
                     assert_never(result)
             if not finish_job(session, job.id):
@@ -402,6 +476,44 @@ def process_job(job: Job) -> JobResult:
     settings = get_settings()
     job_dir = settings.jobs_dir / str(job.id)
     match job.kind:
+        case JobKind.EDIT_MEAL:
+            with get_session() as session:
+                order = session.get(GroceryOrder, job.grocery_order_id)
+                if order is None or job.meal_id is None:
+                    raise JobDiscarded
+                meal = session.get_one(Meal, job.meal_id)
+                if (
+                    order.status != GroceryOrderStatus.DRAFT
+                    or job.meal_edit is None
+                    or meal.revision != job.meal_edit.base_revision
+                ):
+                    raise meal_edit.EditRefused(
+                        "The order or recipe changed before this edit started."
+                    )
+                meal_edits.require_editable(session, order)
+                current = meal_edits.current_recipe(meal)
+                feedback = job.meal_edit.feedback
+            edit_context = meal_edit.EditMealJob(current=current)
+            prompt = prompts.fill(
+                "edit_meal",
+                current=current.model_dump_json(indent=2),
+                feedback=json.dumps(feedback),
+            )
+            run_agent(job_dir, prompt, Tools.MEAL_EDIT, edit_context)
+            outcome = meal_edit.load_outcome(job_dir)
+            if outcome is None or not outcome.completed:
+                raise meal_edit.EditRefused(
+                    "The agent didn't finish the recipe change. "
+                    "Try again or keep the current recipe."
+                )
+            if outcome.reason is not None:
+                raise meal_edit.EditRefused(outcome.reason)
+            proposal = outcome.proposal
+            if proposal is None or not meal_edit.changed(current, proposal):
+                raise meal_edit.EditRefused(
+                    "The agent didn't change anything. Try a different request."
+                )
+            return proposal
         case JobKind.QUOTE:
             return process_quote(job, job_dir)
         case JobKind.BOOK:

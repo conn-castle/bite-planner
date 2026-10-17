@@ -1,5 +1,6 @@
 .label {
   display: flex;
+  width: 100%;
   flex-direction: column;
   gap: 8px;
   font-size: 14px;
@@ -33,3 +34,5 @@
   background: var(--cc-bg);
   box-shadow: 0 0 0 2px var(--cc-ink);
 }
+
+.multiline { height: auto; min-height: 140px; padding: 12px; resize: vertical; line-height: 1.45; }

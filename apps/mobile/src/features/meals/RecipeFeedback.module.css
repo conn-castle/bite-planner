@@ -1,0 +1,8 @@
+.feedback { margin: 18px 0; }
+.feedback h2 { font: 700 24px var(--cc-font-display); margin: 18px 0 8px; }
+.feedback p { color: var(--cc-ink-2); font-size: 14px; line-height: 1.45; }
+.feedback blockquote { margin: 14px 0; padding: 12px 14px; background: var(--cc-fill); border-radius: var(--cc-radius-sm); overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; margin-top: 14px; }
+.actions > button { flex: 1; }
+.status { padding: 15px; border-radius: var(--cc-radius-md); background: var(--cc-fill); }
+.status p { margin: 6px 0 0; }

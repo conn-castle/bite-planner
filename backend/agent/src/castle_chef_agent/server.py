@@ -13,7 +13,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field, ValidationError
 
-from castle_chef_agent import checkout, products, shopping
+from castle_chef_agent import checkout, meal_edit, products, shopping
 from castle_chef_agent.instacart import Instacart, InstacartError, connect, describe
 from castle_chef_agent.jobfiles import read_context
 from castle_chef_agent.meals import MealInput, MealRefused, MealsJob, meal_problems, save_meal
@@ -24,6 +24,7 @@ class Tools(StrEnum):
     """Which job's tools a server offers."""
 
     MEALS = "meals"
+    MEAL_EDIT = "meal-edit"
     SHOPPING_LIST = "shopping-list"
     PRODUCTS = "products"
     CHECKOUT = "checkout"
@@ -63,6 +64,39 @@ def meals_server(job_dir: Path) -> MCPServer:
         """Check that every meal is added. Says what's missing, or that it's complete."""
         if problems := meal_problems(job_dir, read_context(job_dir, MealsJob).count):
             raise ToolError(" ".join(problems))
+        return "Complete."
+
+    return server
+
+
+def meal_edit_server(job_dir: Path) -> MCPServer:
+    server = MCPServer("castle-chef")
+
+    @server.tool()
+    def propose_recipe(recipe: meal_edit.ProposedRecipe) -> str:
+        """Propose the complete two-serving recipe. Replaces any earlier outcome."""
+        try:
+            meal_edit.propose(job_dir, recipe)
+        except (meal_edit.EditRefused, ValidationError) as error:
+            raise ToolError(str(error)) from error
+        return "Proposal saved for review. Call done when finished."
+
+    @server.tool()
+    def cannot_change(reason: Annotated[str, Field(min_length=1, max_length=300)]) -> str:
+        """Explain why this request cannot produce a usable recipe. Replaces any proposal."""
+        try:
+            meal_edit.cannot_change(job_dir, reason)
+        except ValidationError as error:
+            raise ToolError(str(error)) from error
+        return "Reason saved. Call done when finished."
+
+    @server.tool()
+    def done() -> str:
+        """Finish the last proposal or refusal; requires an outcome."""
+        try:
+            meal_edit.done(job_dir)
+        except meal_edit.EditRefused as error:
+            raise ToolError(str(error)) from error
         return "Complete."
 
     return server
@@ -441,6 +475,8 @@ def checkout_server(job_dir: Path) -> MCPServer:
 def serve(tools: Tools, job_dir: Path, instacart: InstacartSettings | None = None) -> None:
     """Serve the job's tools over stdio until the harness closes it."""
     match tools:
+        case Tools.MEAL_EDIT:
+            meal_edit_server(job_dir).run("stdio")
         case Tools.MEALS:
             meals_server(job_dir).run("stdio")
         case Tools.SHOPPING_LIST:

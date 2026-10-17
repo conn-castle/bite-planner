@@ -1,6 +1,7 @@
 import { auth } from '../auth/auth'
 import { errorFields, logger } from '../log'
 import { ApiError } from './errors'
+import { isRecord } from '../isRecord'
 
 /** HTTP client for the Castle Chef API (backend/src/castle_chef/api.py). */
 
@@ -71,7 +72,7 @@ export async function apiRequest<T>(
           .json()
           .then((json: { detail?: unknown }) => json.detail)
           .catch(() => undefined)
-        const message = typeof detail === 'string' ? detail : `Request failed (${response.status}).`
+        const message = typeof detail === 'string' ? detail : isRecord(detail) && typeof detail.message === 'string' ? detail.message : `Request failed (${response.status}).`
         throw new ApiError(response.status, message)
       }
       const answer = (response.status === 204 ? undefined : await response.json()) as T

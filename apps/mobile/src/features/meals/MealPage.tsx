@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Button, IconButton } from '../../ui/Button'
-import type { Meal, MealSummary } from '../../lib/api/types'
+import type { Meal, MealSummary, GroceryOrder } from '../../lib/api/types'
 import { plural } from '../../lib/format'
 import { Icon } from '../../ui/Icon'
 import { Note } from '../../ui/Note'
@@ -17,11 +17,15 @@ import { mealQuery } from './meals'
 import { MealRatingButton } from './MealRating'
 import { useRatingError } from './ratings'
 import { ingredientAmount } from './servings'
+import { RecipeFeedback } from './RecipeFeedback'
 
 const MAX_SERVINGS = 24
 
 interface MealPageProps {
   mealId: string
+  order?: GroceryOrder
+  selection?: ReactNode
+  selectionProblem?: string | null
   tab?: { href: string }
   /** Shows the rating in the toolbar: for meals of placed orders, not suggestions being picked. */
   rateable?: boolean
@@ -42,15 +46,24 @@ interface MealPageProps {
  * them, and the steps. The meal's name and facts show at once from a list
  * already loaded (Home, History, the suggestions) while the rest loads.
  */
-export function MealPage({ mealId, tab, rateable = false, servings, picking = false }: MealPageProps) {
+export function MealPage({ mealId, tab, rateable = false, servings, picking = false, order, selection, selectionProblem }: MealPageProps) {
   const meal = useQuery(mealQuery(mealId))
   const queryClient = useQueryClient()
-  const summary = meal.data ?? cachedMealSummary(queryClient, mealId)
+  const orderSummary = order?.jobs.flatMap((job) => job.meals).find((m) => m.id === mealId)
+  const expectedRevision = orderSummary?.revision
+  const outdated = expectedRevision !== undefined && meal.data !== undefined && meal.data.revision < expectedRevision
+  useEffect(() => {
+    if (!outdated) return
+    const key = mealQuery(mealId).queryKey
+    void queryClient.cancelQueries({ queryKey: key, exact: true }).then(() =>
+      queryClient.invalidateQueries({ queryKey: key, exact: true }))
+  }, [expectedRevision, outdated, mealId, queryClient])
+  const summary = !outdated && meal.data ? meal.data : orderSummary ?? cachedMealSummary(queryClient, mealId)
   const ratingError = useRatingError([mealId])
   // The servings chosen here; until then, where they start.
   const [chosen, setChosen] = useState<number | null>(null)
   const [cooking, setCooking] = useState(false)
-  const recipe = meal.data
+  const recipe = outdated ? undefined : meal.data
   const shownServings = recipe && (chosen ?? servings ?? recipe.servings)
   // Cooking is for a meal on its way or eaten (from Orders or History), not one being picked.
   const cookable = tab !== undefined && recipe !== undefined && recipe.steps.length > 0
@@ -59,7 +72,7 @@ export function MealPage({ mealId, tab, rateable = false, servings, picking = fa
     <NavPage
       title={summary?.name ?? 'Recipe'}
       tab={tab}
-      actions={rateable && summary ? <MealRatingButton meal={summary} /> : undefined}
+      actions={selection ?? (rateable && summary ? <MealRatingButton meal={summary} /> : undefined)}
       footer={
         cookable && (
           <Button block onClick={() => setCooking(true)}>
@@ -69,6 +82,7 @@ export function MealPage({ mealId, tab, rateable = false, servings, picking = fa
         )
       }
     >
+      {selectionProblem && <Notice>Couldn't save that change: {selectionProblem}</Notice>}
       {rateable && ratingError && <Notice>Couldn't save the rating: {ratingError.message}</Notice>}
       {meal.isError && (
         <Notice action={<button onClick={() => void meal.refetch()}>Try again</button>}>
@@ -78,7 +92,8 @@ export function MealPage({ mealId, tab, rateable = false, servings, picking = fa
       {summary ? (
         <article className={styles.recipe}>
           <RecipeHeader meal={summary} />
-          {recipe && shownServings !== undefined ? (
+          {order && <RecipeFeedback order={order} meal={recipe} summary={summary} />}
+          {order?.recipe_changes.some((c) => c.meal_id === mealId && c.state === 'ready') ? null : recipe && shownServings !== undefined ? (
             <RecipeBody
               meal={recipe}
               servings={shownServings}

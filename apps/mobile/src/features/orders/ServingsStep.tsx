@@ -12,10 +12,12 @@ import { useOrderSession } from './lock'
 import { useEditsPending, useSetServings } from './orders'
 import styles from './Steps.module.css'
 import { stepIndex } from './steps'
+import { RecipeChanges } from './RecipeChanges'
+import { recipeBlockers, unselectedChanges } from './recipeChangesState'
 
 interface ServingsStepProps {
   order: GroceryOrder
-  onOpenMeal: (mealId: string, servings: number) => void
+  onOpenMeal: (mealId: string, servings?: number) => void
   onBack: () => void
   onNext: () => void
   onClose: () => void
@@ -27,50 +29,61 @@ export function ServingsStep({ order, onOpenMeal, onBack, onNext, onClose }: Ser
   const setServings = useSetServings()
   // Moving on waits until every change is saved.
   const saving = useEditsPending()
+  const changes = new Map(recipeBlockers(order).map((change) => [change.meal_id, change]))
   const meals = pickedMeals(order)
   const servings = meals.reduce((total, pick) => total + pick.servings, 0)
 
   return (
     <FlowFrame
       step={stepIndex('servings')}
+      bodyClassName={styles.servingsBody}
       onBack={onBack}
       onClose={onClose}
       notice={setServings.isError && <Notice>Couldn't save that: {setServings.error.message}</Notice>}
       title="Servings"
       lede={`How much of each meal to make for Order ${order.number}.`}
       footer={
-        <>
+        <div className={styles.servingsFooter}>
           <FooterSummary
             title={`${plural(meals.length, 'meal')} · ${plural(servings, 'serving')}`}
-            detail="The shopping list is made for these"
+            detail={changes.size === 0 ? 'The shopping list is made for these' : undefined}
           />
-          <Button large onClick={onNext} disabled={saving}>
-            Next
-          </Button>
-        </>
+          <div className={styles.footerAction}>
+            {changes.size > 0 && <span className={styles.reviewCount}>{changes.size === 1 ? '1 meal needs review' : `${changes.size} meals need review`}</span>}
+            <Button large onClick={onNext} disabled={saving || changes.size > 0 || meals.length === 0}>
+              {unselectedChanges(order).length ? 'Start shopping anyway' : 'Next'}
+            </Button>
+          </div>
+        </div>
       }
     >
+      <RecipeChanges order={order} onOpenMeal={onOpenMeal} unselected />
       <div className={styles.groups}>
         <Group footerIcon="users" footer="Servings start at the household's default, in Settings.">
-          {meals.map(({ meal, servings: count }) => (
-            <MealRow
-              key={meal.id}
-              meal={meal}
-              onOpen={() => onOpenMeal(meal.id, count)}
-              control={
-                <Stepper
-                  inRow
-                  value={count}
-                  min={SERVINGS.min}
-                  max={SERVINGS.max}
-                  label="Servings"
-                  onChange={(value) =>
-                    setServings.mutate({ kind: 'servings', orderId: order.id, mealId: meal.id, servings: value, session })
-                  }
-                />
-              }
-            />
-          ))}
+          {meals.map(({ meal, servings: count }) => {
+            const change = changes.get(meal.id)
+            return (
+              <MealRow
+                key={meal.id}
+                meal={meal}
+                onOpen={() => onOpenMeal(meal.id, count)}
+                fullName
+                recipeChange={change?.state}
+                control={
+                  <Stepper
+                    inRow
+                    value={count}
+                    min={SERVINGS.min}
+                    max={SERVINGS.max}
+                    label="Servings"
+                    onChange={(value) =>
+                      setServings.mutate({ kind: 'servings', orderId: order.id, mealId: meal.id, servings: value, session })
+                    }
+                  />
+                }
+              />
+            )
+          })}
         </Group>
       </div>
     </FlowFrame>

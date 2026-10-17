@@ -63,7 +63,7 @@ function draft(number: number, jobs: Job[]): GroceryOrder {
     delivery_date: null,
     delivery_by: null,
     next_delivery_date: null,
-    reached_step: 'pick',
+    recipe_changes: [], recipes_editable: true, reached_step: 'pick',
     jobs,
     picks: [],
     lock: null,
@@ -77,7 +77,7 @@ function draft(number: number, jobs: Job[]): GroceryOrder {
 function job(status: Job['status'], meals: number): Job {
   return {
     id: `job-${status}`,
-    kind: 'generate_meals',
+    meal_id: null, started_at: null, finished_at: null, kind: 'generate_meals',
     status,
     error: null,
     requested_by: { user_id: 'sam', name: 'Sam' },
@@ -88,7 +88,7 @@ function job(status: Job['status'], meals: number): Job {
       description: null,
       active_time_minutes: null,
       total_time_minutes: null,
-      ingredient_count: 2,
+      revision: 0, ingredient_count: 2,
       picture: null,
       rating: null,
     })),

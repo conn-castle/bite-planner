@@ -20,7 +20,7 @@ const summary: MealSummary = {
   description: null,
   active_time_minutes: 10,
   total_time_minutes: 50,
-  ingredient_count: 2,
+  revision: 0, ingredient_count: 2,
   rating: null,
   picture: { dish: 'plate', ingredients: [{ icon: 'drumstick', color: 'tan' }] },
 }
@@ -31,11 +31,11 @@ function order(meal: MealSummary, added: boolean): GroceryOrder {
     created_by: { user_id: 'nick', name: 'Nick' }, created_at: '2026-10-13T12:00:00Z',
     target_date: '2026-10-16', decide_by_date: '2026-10-15', reminders_start_date: null,
     earliest_delivery_date: '2026-10-14', delivery_date: null, delivery_by: null,
-    next_delivery_date: null, reached_step: 'pick', picks: added ? [{ meal_id: meal.id, servings: 4 }] : [],
+    next_delivery_date: null, recipe_changes: [], recipes_editable: true, reached_step: 'pick', picks: added ? [{ meal_id: meal.id, servings: 4 }] : [],
     lock: null, shopping_list: null, quote: null, best_window: null, fallback_window: null,
     book_state: null, book_on: null, booking: null, book_issue: null,
     jobs: [{
-      id: 'batch', kind: 'generate_meals', status: 'succeeded', error: null,
+      id: 'batch', meal_id: null, started_at: null, finished_at: null, kind: 'generate_meals', status: 'succeeded', error: null,
       requested_by: { user_id: 'nick', name: 'Nick' }, created_at: '2026-10-13T12:00:00Z', meals: [meal],
     }],
   }
@@ -101,7 +101,7 @@ describe('Pick meal cards', () => {
 
   it('keeps minutes numeric even above an hour and treats recorded zero values as available', () => {
     expect(cardFacts(pickScreen({ ...summary, total_time_minutes: 125, active_time_minutes: 5 })).map((fact) => fact.value)).toEqual(['2', '125 min', '5 min'])
-    expect(cardFacts(pickScreen({ ...summary, ingredient_count: 0, total_time_minutes: 0, active_time_minutes: 0 })).map((fact) => fact.value)).toEqual(['0', '0 min', '0 min'])
+    expect(cardFacts(pickScreen({ ...summary, revision: 0, ingredient_count: 0, total_time_minutes: 0, active_time_minutes: 0 })).map((fact) => fact.value)).toEqual(['0', '0 min', '0 min'])
   })
 
   it('keeps Add and not-for-us actions, with the legacy plate when a meal has no picture', () => {

@@ -10,6 +10,7 @@ from sqlmodel import Session
 from castle_chef import delivery, products, shopping
 from castle_chef.checkout import CartLine, QuoteRequest
 from castle_chef.jobs import ACTIVE, add_job, fail_stale_jobs, newest_job, retried
+from castle_chef.meal_edits import require_resolved
 from castle_chef.models import GroceryOrder, Household, Job, JobKind, JobStatus
 
 
@@ -62,6 +63,7 @@ def submit_quote(
     and tip rule is returned rather than started again, and a retried request
     (the client picks the id) gets the job it made. The caller holds the
     order's row lock."""
+    require_resolved(session, order)
     if (existing := retried(session, job_id, order, member_id, JobKind.QUOTE)) is not None:
         return existing, False
     try:
