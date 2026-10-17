@@ -14,6 +14,8 @@ import { localDate } from '../../lib/dates'
 import { ApiError, isRetryable } from '../../lib/api/errors'
 import type {
   BookFields,
+  EditMealIn,
+  AcceptEditIn,
   ClockTime,
   GroceryOrder,
   ISODate,
@@ -232,6 +234,8 @@ const SETTLE = ['orders', 'settle']
 const START_LIST = ['orders', 'start-list']
 const SHOP_LIST = ['orders', 'shop-list']
 const QUOTE = ['orders', 'quote']
+const EDIT_RECIPE = ['orders', 'edit-recipe']
+const DECIDE_RECIPE = ['orders', 'decide-recipe']
 const SET_ITEM = ['orders', 'set-item']
 const TAKE = ['orders', 'take']
 const RELEASE = ['orders', 'release']
@@ -266,6 +270,17 @@ export interface StartJob extends InSession {
   /** Chosen here, so a resent request (e.g. after going offline) can't start a second. */
   jobId: string
 }
+export interface EditRecipe extends StartJob {
+  mealId: string
+  feedback: string
+  replaces: string | null
+}
+export interface DecideRecipe extends StartJob {
+  mealId: string
+  decision: 'accept' | 'reject'
+  baseRevision: number
+}
+
 export interface OrderAction {
   orderId: string
 }
@@ -334,6 +349,28 @@ export function registerOrderMutations(queryClient: QueryClient) {
     scope: EDITS,
     onSettled: (_job: Job | undefined, _error: Error | null, { orderId }: StartJob) =>
       queryClient.invalidateQueries({ queryKey: orderKey(orderId) }),
+  })
+
+  queryClient.setMutationDefaults(EDIT_RECIPE, {
+    ...edit(({ orderId, mealId, jobId, feedback, replaces, session }: EditRecipe) =>
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/meals/${mealId}/edits`,
+        { job_id: jobId, feedback, replaces } satisfies EditMealIn, session)),
+    // A nonpersistent Send must fail after bounded transport retries, even offline,
+    // rather than pause indefinitely with its dialog locked open.
+    networkMode: 'always',
+    meta: NOT_PERSISTED,
+  })
+  queryClient.setMutationDefaults(DECIDE_RECIPE, {
+    ...edit(({ orderId, mealId, jobId, decision, baseRevision, session }: DecideRecipe) =>
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/meals/${mealId}/edits/${jobId}/${decision}`,
+        decision === 'accept' ? { base_revision: baseRevision } satisfies AcceptEditIn : undefined, session)),
+    meta: NOT_PERSISTED,
+    onSuccess: async (order: GroceryOrder, { mealId }: DecideRecipe) => {
+      // Cancel before publishing the newer summary; a delayed old recipe must never return.
+      await queryClient.cancelQueries({ queryKey: queryKeys.meal(mealId), exact: true })
+      await storeOrder(queryClient, order)
+      await queryClient.invalidateQueries({ queryKey: queryKeys.meal(mealId), exact: true })
+    },
   })
 
   queryClient.setMutationDefaults(OPEN, {
@@ -698,4 +735,11 @@ export function useBookAgain() {
 /** Says whether Instacart has an order booking couldn't confirm. */
 export function useSettleOrder() {
   return useMutation<GroceryOrder, Error, SettleOrder>({ mutationKey: SETTLE })
+}
+
+export function useEditRecipe() {
+  return useMutation<GroceryOrder, Error, EditRecipe>({ mutationKey: EDIT_RECIPE })
+}
+export function useDecideRecipe() {
+  return useMutation<GroceryOrder, Error, DecideRecipe>({ mutationKey: DECIDE_RECIPE })
 }

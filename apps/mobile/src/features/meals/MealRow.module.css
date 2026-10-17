@@ -1,0 +1,7 @@
+.metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  line-height: 1.35;
+}

@@ -74,17 +74,20 @@ interface ListRowProps {
   onClick: () => void
   /** Once a press is held briefly, before the tap ends: e.g. to start loading what it opens. */
   onPressIntent?: () => void
+  /** Wraps the full label, e.g. while choosing servings. Other rows retain their compact name. */
+  wrapLabel?: boolean
   /** A control at the end in place of the chevron, e.g. a stepper; the rest of the row still opens. */
   control?: ReactNode
 }
 
 /** A row that opens something, with a picture: e.g. a meal in a list of meals. */
-export function ListRow({ art, overline, label, mark, onClick, onPressIntent, control }: ListRowProps) {
+export function ListRow({ art, overline, label, mark, onClick, onPressIntent, control, wrapLabel = false }: ListRowProps) {
   const press = usePressIntent(() => onPressIntent?.())
+  const className = `${styles.listRow} ${wrapLabel ? styles.fullLabel : ''}`
   if (control) {
     // A button can't hold another control, so the part that opens is its own button.
     return (
-      <div className={`${styles.listRow} ${styles.withControl}`}>
+      <div className={`${className} ${styles.withControl}`}>
         <button type="button" className={`${styles.opens} ${styles.pressable}`} onClick={onClick} {...press}>
           <span className={styles.art}>{art}</span>
           <span className={styles.label}>
@@ -98,7 +101,7 @@ export function ListRow({ art, overline, label, mark, onClick, onPressIntent, co
     )
   }
   return (
-    <button type="button" className={`${styles.listRow} ${styles.pressable}`} onClick={onClick} {...press}>
+    <button type="button" className={`${className} ${styles.pressable}`} onClick={onClick} {...press}>
       <span className={styles.art}>{art}</span>
       <span className={styles.label}>
         {overline != null && <span className={styles.overline}>{overline}</span>}

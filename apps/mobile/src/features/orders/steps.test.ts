@@ -4,12 +4,12 @@ import { stepShown } from './steps'
 
 const batch: Job = {
   id: 'batch',
-  kind: 'generate_meals',
+  meal_id: null, started_at: null, finished_at: null, kind: 'generate_meals',
   status: 'succeeded',
   error: null,
   requested_by: { user_id: 'me', name: 'Nick' },
   created_at: '2026-09-24T09:00:00Z',
-  meals: [{ id: 'tacos', name: 'Tacos', description: null, active_time_minutes: 20, total_time_minutes: 30, ingredient_count: 2, rating: null, picture: null }],
+  meals: [{ id: 'tacos', name: 'Tacos', description: null, active_time_minutes: 20, total_time_minutes: 30, revision: 0, ingredient_count: 2, rating: null, picture: null }],
 }
 const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   book_state: null,
@@ -28,7 +28,7 @@ const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
-  reached_step: 'pick',
+  recipe_changes: [], recipes_editable: true, reached_step: 'pick',
   jobs: [batch],
   picks: [{ meal_id: 'tacos', servings: 4 }],
   lock: null,

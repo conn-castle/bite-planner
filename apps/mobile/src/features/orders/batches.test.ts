@@ -8,14 +8,14 @@ const meal = (id: string): MealSummary => ({
   description: null,
   active_time_minutes: null,
   total_time_minutes: null,
-  ingredient_count: 2,
+  revision: 0, ingredient_count: 2,
   picture: null,
   rating: null,
 })
 
 const batch = (id: string, status: JobStatus, mealIds: string[] = []): Job => ({
   id,
-  kind: 'generate_meals',
+  meal_id: null, started_at: null, finished_at: null, kind: 'generate_meals',
   status,
   error: status === 'failed' ? 'The agent timed out.' : null,
   requested_by: { user_id: 'u1', name: 'Sam' },

@@ -11,7 +11,7 @@ export const placedMealPath = (tab: string, meal: PlacedMeal) => `${tab}/meals/$
 export const mealQuery = (mealId: string) =>
   queryOptions({
     queryKey: queryKeys.meal(mealId),
-    queryFn: () => apiRequest<Meal>('GET', `/v1/meals/${mealId}`),
+    queryFn: ({ signal }) => apiRequest<Meal>('GET', `/v1/meals/${mealId}`, undefined, undefined, signal),
     // A 404 (not one of the household's meals) won't change on a retry.
     retry: (failureCount, error) => isRetryable(error, failureCount),
   })

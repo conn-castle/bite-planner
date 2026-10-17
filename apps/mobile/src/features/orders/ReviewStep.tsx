@@ -28,6 +28,8 @@ import { useEditsPending, usePlaceOrder, useQuoteOrder } from './orders'
 import { quoteState, replacementShown, totalParts } from './quote'
 import styles from './ReviewStep.module.css'
 import { stepIndex } from './steps'
+import { RecipeChanges } from './RecipeChanges'
+import { recipeBlockers } from './recipeChangesState'
 
 interface ReviewStepProps {
   order: GroceryOrder
@@ -35,7 +37,7 @@ interface ReviewStepProps {
   delivery: ISODate
   by: ClockTime | null
   next: ISODate
-  onOpenMeal: (mealId: string, servings: number) => void
+  onOpenMeal: (mealId: string, servings?: number) => void
   /** Goes back to a step to change what it chose. */
   onChange: (step: 'servings' | 'delivery' | 'next' | 'list') => void
   onBack: () => void
@@ -55,6 +57,7 @@ export function ReviewStep({ order, delivery, by, next, onOpenMeal, onChange, on
   const { mutate: startQuote } = quote
   const state = quoteState(order.quote)
   const store = storeName(order)
+  const blockers = recipeBlockers(order).map((c) => `${c.job_id}:${c.state}`).sort().join(',')
 
   // Read a total, once for each one it replaces: when there's none for the order
   // as it is now (the first time here, or it changed since), and when coming
@@ -68,13 +71,18 @@ export function ReviewStep({ order, delivery, by, next, onOpenMeal, onChange, on
     started.current.add(jobId)
     startQuote({ orderId: order.id, jobId, session })
   }, [startQuote, order.id, session])
+  useEffect(() => { asked.current = undefined }, [blockers])
   useEffect(() => {
+    if (blockers) return
     const again = state === 'failed' && replacing !== null && !started.current.has(replacing)
     if ((state !== 'start' && !again) || asked.current === replacing) return
     asked.current = replacing
     read()
-  }, [state, replacing, read])
+  }, [state, replacing, read, blockers])
 
+  if (blockers) return <FlowFrame step={stepIndex('review')} title="Recipe changes" onBack={onBack} onClose={onClose} footer={<Button large disabled>Place order</Button>}>
+    <RecipeChanges order={order} onOpenMeal={onOpenMeal} />
+  </FlowFrame>
   const checkout = order.quote?.checkout ?? null
   if ((state === 'ready' || state === 'blocked') && order.quote) {
     return (
@@ -261,7 +269,7 @@ function Reviewed({
             variant="accent"
             large
             onClick={placeOrder}
-            disabled={checkout === null || by === null || unbookable || saving || place.isPending}
+            disabled={recipeBlockers(order).length > 0 || checkout === null || by === null || unbookable || saving || place.isPending}
           >
             {place.isPending ? 'Placing…' : 'Place order'}
           </Button>

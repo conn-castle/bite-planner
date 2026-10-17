@@ -1,11 +1,8 @@
-import { useQueryClient } from '@tanstack/react-query'
-import { useContext, useState } from 'react'
+import { useContext } from 'react'
 import { BATCH_SIZE } from '../../lib/api/limits'
 import type { GroceryOrder, Job, MealSummary } from '../../lib/api/types'
-import { errorMessage } from '../../lib/errorMessage'
 import { elapsed, plural } from '../../lib/format'
 import { haptics } from '../../lib/haptics'
-import { errorFields, logger } from '../../lib/log'
 import { usePressIntent } from '../../lib/usePressIntent'
 import { useNow } from '../../lib/useNow'
 import { MealArt } from '../../ui/art'
@@ -16,14 +13,15 @@ import { Note } from '../../ui/Note'
 import { Notice } from '../../ui/Notice'
 import { Stats } from '../../ui/Stats'
 import { usePrefetchMeal } from '../meals/cached'
-import { householdQuery } from '../settings/settings'
 import { newestBatchState, suggestions } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
-import { useEditsPending, useGenerateMeals, useSetMeal, useSetNotForUs } from './orders'
+import { useEditsPending, useGenerateMeals, useSetNotForUs } from './orders'
 import { useOrderSession } from './lock'
 import styles from './PickStep.module.css'
 import { stepIndex } from './steps'
+import { useToggleMeal } from './useToggleMeal'
+import { AddMealButton } from '../../ui/AddMealButton'
 
 // Placeholder cards shown below the grid while more suggestions are made.
 const PLACEHOLDER_CARDS = 4
@@ -39,7 +37,8 @@ interface PickStepProps {
 /** Step 1: the suggestions in a grid, each added to the order or not, and more on request. */
 export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) {
   const session = useOrderSession()
-  const setMeal = useSetMeal()
+  const selection = useToggleMeal(order)
+  const setMeal = selection.mutation
   const setNotForUs = useSetNotForUs()
   // The newest change that failed: a pick, or a ✕.
   const failed = [setMeal, setNotForUs]
@@ -47,34 +46,9 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
     .sort((a, b) => b.submittedAt - a.submittedAt)[0]?.error
   // Moving on waits until every pick is saved, so the next steps see them all.
   const saving = useEditsPending()
-  const queryClient = useQueryClient()
-  // Why a pick couldn't start (the household's default servings aren't known yet).
-  const [pickProblem, setPickProblem] = useState<string | null>(null)
   const picked = new Set(order.picks.map((pick) => pick.meal_id))
   const count = order.picks.length
   const running = newestBatchState(order).status === 'running'
-
-  async function toggle(meal: MealSummary) {
-    haptics.tap()
-    if (picked.has(meal.id)) {
-      setMeal.mutate({ kind: 'meal', orderId: order.id, mealId: meal.id, picked: false, session })
-      return
-    }
-    // A new pick starts at the household's default servings (cached from launch;
-    // fetched only if it isn't), shown until the server's answer.
-    let servings: number
-    try {
-      servings = (await queryClient.ensureQueryData(householdQuery)).default_servings
-    } catch (error) {
-      // Offline on a phone that has never loaded the household: nothing to show yet.
-      logger.warn('orders.pick_needs_household', errorFields(error))
-      haptics.error()
-      setPickProblem(errorMessage(error))
-      return
-    }
-    setPickProblem(null)
-    setMeal.mutate({ kind: 'meal', orderId: order.id, mealId: meal.id, picked: true, servings, session })
-  }
 
   function dismiss(meal: MealSummary) {
     haptics.tap()
@@ -92,8 +66,8 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
       step={stepIndex('pick')}
       onClose={onClose}
       notice={
-        pickProblem ? (
-          <Notice>Couldn't add that meal: {pickProblem}</Notice>
+        selection.problem ? (
+          <Notice>Couldn't save that change: {selection.problem}</Notice>
         ) : failed ? (
           <Notice>Couldn't save that change: {failed.message}</Notice>
         ) : null
@@ -119,7 +93,8 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
             key={meal.id}
             meal={meal}
             added={picked.has(meal.id)}
-            onToggle={() => void toggle(meal)}
+            change={order.recipe_changes.find((change) => change.meal_id === meal.id)?.state}
+            onToggle={() => void selection.toggle(meal)}
             onDismiss={() => dismiss(meal)}
             onOpen={() => onOpenMeal(meal.id)}
           />
@@ -144,6 +119,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
 interface MealCardProps {
   meal: MealSummary
   added: boolean
+  change?: 'running' | 'ready' | 'failed'
   onToggle: () => void
   onDismiss: () => void
   onOpen: () => void
@@ -153,7 +129,7 @@ interface MealCardProps {
  * A suggestion: open its recipe, add it, or ✕ it ("don't show meals like
  * this"), which also takes it out of the order and can be undone.
  */
-function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
+function MealCard({ meal, added, change, onToggle, onDismiss, onOpen }: MealCardProps) {
   const prefetch = usePrefetchMeal()
   const press = usePressIntent(() => prefetch(meal.id))
   // A meal marked "not for us" is never picked (see edits.ts), so it's never also added.
@@ -185,17 +161,8 @@ function MealCard({ meal, added, onToggle, onDismiss, onOpen }: MealCardProps) {
         label={notForUs ? `Show meals like ${meal.name} again` : `Don't show meals like ${meal.name}`}
         onToggle={onDismiss}
       />
-      <button
-        type="button"
-        className={styles.add}
-        onClick={onToggle}
-        disabled={notForUs}
-        aria-pressed={added}
-        aria-label={added ? `Remove ${meal.name}` : `Add ${meal.name}`}
-      >
-        <Icon name={added ? 'check' : 'plus'} />
-        {added ? 'Added' : 'Add'}
-      </button>
+      {change && <span className={styles.change}>{change === 'running' ? 'Changing recipe…' : change === 'ready' ? 'Changes to review' : "Recipe change failed"}</span>}
+      <AddMealButton compact name={meal.name} added={added} disabled={notForUs} onToggle={onToggle} className={styles.add} />
     </div>
   )
 }

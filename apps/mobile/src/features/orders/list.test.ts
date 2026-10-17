@@ -4,14 +4,14 @@ import { itemAmount, listCounts, listState, mealNames, productTotals, readyList,
 
 const job = (status: Job['status']): Job => ({
   id: 'build',
-  kind: 'build_list',
+  meal_id: null, started_at: null, finished_at: null, kind: 'build_list',
   status,
   error: status === 'failed' ? 'The agent gave up.' : null,
   requested_by: { user_id: 'me', name: 'Nick' },
   created_at: '2026-09-24T09:00:00Z',
   meals: [],
 })
-const shop = (status: Job['status']): Job => ({ ...job(status), id: 'shop', kind: 'shop' })
+const shop = (status: Job['status']): Job => ({ ...job(status), id: 'shop', meal_id: null, started_at: null, finished_at: null, kind: 'shop' })
 const list = (status: Job['status'], current: boolean, shopped: Job['status'] | null = 'succeeded'): ShoppingList => ({
   job: job(status),
   current,

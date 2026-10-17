@@ -155,6 +155,10 @@ Personal settings:
 - [x] History's meals can be searched by name and filtered, including by rating.
 - [x] Order view: an order's dates, status, meals, and shopping list (from stage 3, its Instacart order too).
 - [x] Meal view: a meal's recipe (servings, ingredients, facts).
+- [x] A suggestion's recipe has the same Add/Added toggle and household default order servings as its card, with save failures shown separately from recipe servings.
+- [x] Before shopping starts, freeform Feedback proposes edits to this order's recipe through the agent. The user reviews all recipe facts, ingredients, instructions, timers, step ingredient assignments and artwork before Accept; red struck removals and blue additions show changes. Reject keeps the recipe; Revise starts from the last accepted recipe with editable earlier feedback.
+- [x] Selected undecided recipe changes, including failed/stalled attempts, block shopping, totals and order submission. Failures require Keep current recipe or Try again (another blocking attempt). Unselected changes do not block; starting shopping explicitly warns which unselected changes can no longer apply. All recipe edits and acceptance close for the order once any shopping list build is successful or still active, including after reopening the order.
+
 - [x] Instructions view: a meal's cooking steps.
 
 ## Deferred

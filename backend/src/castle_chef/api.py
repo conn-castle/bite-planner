@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from castle_chef_agent import windows
 from castle_chef_agent.address import Address
 from castle_chef_agent.checkout import Checkout
+from castle_chef_agent.meal_edit import ProposedRecipe
 from castle_chef_agent.meals import Color, Dish, Icon
 from castle_chef_agent.names import key
 from castle_chef_agent.products import ProductCount
@@ -43,6 +44,7 @@ from castle_chef import (
     booking,
     delivery,
     failures,
+    meal_edits,
     orders,
     push,
     quotes,
@@ -86,6 +88,7 @@ from castle_chef.models import (
     TIP_PERCENT,
     AppUser,
     BookState,
+    EditDecision,
     GroceryOrder,
     GroceryOrderStatus,
     Household,
@@ -134,6 +137,7 @@ class MealPictureOut(BaseModel):
 
 class MealSummaryOut(BaseModel):
     id: UUID
+    revision: int
     name: str
     description: str | None
     active_time_minutes: int | None
@@ -152,6 +156,9 @@ class JobOut(BaseModel):
 
     id: UUID
     kind: JobKind
+    meal_id: UUID | None
+    started_at: datetime | None
+    finished_at: datetime | None
     status: JobStatus
     error: str | None
     requested_by: MemberOut
@@ -273,6 +280,35 @@ class QuoteOut(BaseModel):
     checkout: Checkout | None
 
 
+class ProposedRecipeOut(ProposedRecipe):
+    ingredient_count: int
+
+
+class RecipeChangeOut(BaseModel):
+    meal_id: UUID
+    job_id: UUID
+    state: meal_edits.ChangeState
+    picked: bool
+    blocks: bool
+    feedback: str
+    requested_by: MemberOut
+    created_at: datetime
+    started_at: datetime | None
+    error: str | None
+    base_revision: int
+    proposal: ProposedRecipeOut | None
+
+
+class EditMealIn(BaseModel):
+    job_id: UUID
+    feedback: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+    replaces: UUID | None = None
+
+
+class AcceptEditIn(BaseModel):
+    base_revision: int = Field(ge=0)
+
+
 class GroceryOrderOut(BaseModel):
     id: UUID
     number: int
@@ -300,6 +336,8 @@ class GroceryOrderOut(BaseModel):
     reached_step: OrderStep
     # Its jobs, oldest first: the suggestions are their meals.
     jobs: list[JobOut]
+    recipe_changes: list[RecipeChangeOut]
+    recipes_editable: bool
     # In the order their meals were suggested.
     picks: list[PickOut]
     # Its live lock (a draft's), or null when no one is placing it.
@@ -712,6 +750,7 @@ def meal_summary(meal: Meal, rated: dict[UUID, MealRating]) -> MealSummaryOut:
     ratings, by meal id)."""
     return MealSummaryOut(
         id=meal.id,
+        revision=meal.revision,
         name=meal.name,
         description=meal.description,
         active_time_minutes=meal.active_time_minutes,
@@ -753,6 +792,9 @@ def job_out(
     return JobOut(
         id=job.id,
         kind=job.kind,
+        meal_id=job.meal_id,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
         status=JobStatus.FAILED if stale else job.status,
         error=STALE_ERROR if stale else job.error,
         requested_by=MemberOut(user_id=job.requested_by, name=people[job.requested_by]),
@@ -916,6 +958,25 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
         next_delivery_date=order.next_delivery_date,
         reached_step=order.reached_step,
         jobs=[job_out(job, meals[job.id], people, rated) for job in jobs],
+        recipe_changes=[
+            RecipeChangeOut(
+                **change.model_dump(exclude={"requested_by", "proposal"}),
+                proposal=ProposedRecipeOut(
+                    **change.proposal.model_dump(),
+                    ingredient_count=len(
+                        {key(i.name) for i in change.proposal.ingredients} - STAPLE_NAMES.keys()
+                    ),
+                )
+                if change.proposal is not None
+                else None,
+                requested_by=MemberOut(
+                    user_id=change.requested_by, name=people[change.requested_by]
+                ),
+            )
+            for change in meal_edits.changes(session, order)
+        ],
+        recipes_editable=order.status == GroceryOrderStatus.DRAFT
+        and not meal_edits.shopping_started(session, order.id),
         picks=[
             PickOut(meal_id=pick.meal.id, servings=pick.servings)
             for pick in orders.picks(session, order.id)
@@ -975,6 +1036,13 @@ def placed_order_out(
 
 # Expected failures of order and meal requests, as the status the app gets.
 ORDER_ERRORS: dict[type[Exception], int] = {
+    meal_edits.RecipeChangesPending: status.HTTP_409_CONFLICT,
+    meal_edits.EditOpen: status.HTTP_409_CONFLICT,
+    meal_edits.EditDecided: status.HTTP_409_CONFLICT,
+    meal_edits.EditNotReady: status.HTTP_409_CONFLICT,
+    meal_edits.EditStale: status.HTTP_409_CONFLICT,
+    meal_edits.EditNotAllowed: status.HTTP_409_CONFLICT,
+    meal_edits.EditNotFound: status.HTTP_404_NOT_FOUND,
     orders.OrderNotFound: status.HTTP_404_NOT_FOUND,
     orders.NotASuggestion: status.HTTP_404_NOT_FOUND,
     orders.MealNotFound: status.HTTP_404_NOT_FOUND,
@@ -1494,7 +1562,14 @@ def create_app() -> FastAPI:
 
     def order_error(request: Request, error: Exception) -> JSONResponse:
         request.state.detail = str(error)
-        return JSONResponse({"detail": str(error)}, status_code=ORDER_ERRORS[type(error)])
+        detail: object = str(error)
+        if isinstance(error, meal_edits.RecipeChangesPending):
+            detail = {
+                "code": "recipe_changes_pending",
+                "message": str(error),
+                "meals": [b.model_dump(mode="json") for b in error.blockers],
+            }
+        return JSONResponse({"detail": detail}, status_code=ORDER_ERRORS[type(error)])
 
     for error_type in ORDER_ERRORS:
         api.add_exception_handler(error_type, order_error)
@@ -1763,6 +1838,7 @@ def create_app() -> FastAPI:
         the cart is filled and checkout read. A quote waiting, running, or done for
         the same products, counts, and tip rule is returned instead (200)."""
         draft = orders.lock_draft(session, caller.household_id, order_id, by)
+        meal_edits.require_resolved(session, draft)
         if (problem := orders.shopped_problem(session, draft.id)) is not None:
             session.rollback()
             raise orders.NotReady(problem)
@@ -1801,6 +1877,71 @@ def create_app() -> FastAPI:
         )
         order = orders.get_order(session, caller.household_id, order_id)
         return order_out(session, order, day, caller.user_id)
+
+    @api.post(
+        "/v1/grocery-orders/{order_id}/meals/{meal_id}/edits", status_code=status.HTTP_201_CREATED
+    )
+    def edit_meal(
+        order_id: UUID,
+        meal_id: UUID,
+        body: EditMealIn,
+        response: Response,
+        caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        session: DbSession,
+        dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        draft = orders.lock_draft(session, caller.household_id, order_id, by)
+        job, created = meal_edits.submit(
+            session, draft, caller.user_id, meal_id, body.job_id, body.feedback, body.replaces
+        )
+        start_job(
+            session,
+            job,
+            created,
+            response,
+            dispatcher,
+            "The recipe change could not be started. Try again or keep the current recipe.",
+        )
+        return order_out(session, draft, day, caller.user_id)
+
+    @api.post("/v1/grocery-orders/{order_id}/meals/{meal_id}/edits/{job_id}/accept")
+    def accept_edit(
+        order_id: UUID,
+        meal_id: UUID,
+        job_id: UUID,
+        body: AcceptEditIn,
+        caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        session: DbSession,
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        draft = orders.lock_draft(session, caller.household_id, order_id, by)
+        meal_edits.decide(
+            session,
+            draft,
+            caller.user_id,
+            meal_id,
+            job_id,
+            EditDecision.ACCEPTED,
+            body.base_revision,
+        )
+        return order_out(session, draft, day, caller.user_id)
+
+    @api.post("/v1/grocery-orders/{order_id}/meals/{meal_id}/edits/{job_id}/reject")
+    def reject_edit(
+        order_id: UUID,
+        meal_id: UUID,
+        job_id: UUID,
+        caller: Annotated[Member, Depends(member)],
+        by: Annotated[orders.Orderer, Depends(orderer)],
+        session: DbSession,
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        draft = orders.lock_draft(session, caller.household_id, order_id, by)
+        meal_edits.decide(session, draft, caller.user_id, meal_id, job_id, EditDecision.REJECTED)
+        return order_out(session, draft, day, caller.user_id)
 
     @api.put("/v1/grocery-orders/{order_id}/meals/{meal_id}")
     def pick_meal(

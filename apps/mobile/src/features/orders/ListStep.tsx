@@ -23,9 +23,14 @@ import { useOrderSession } from './lock'
 import { useEditsPending, useSetItem, useSetItemError, useShopList, useStartList } from './orders'
 import { MAX_COUNT } from './ProductPage'
 import { stepIndex } from './steps'
+import { RecipeChanges } from './RecipeChanges'
+import { recipeBlockers, unselectedChangeKey } from './recipeChangesState'
 
 interface ListStepProps {
+  /** The exact pending request set acknowledged when leaving Servings. */
+  acknowledgedChanges?: string | null
   order: GroceryOrder
+  onOpenMeal: (mealId: string, servings?: number) => void
   /** Opens an item's product (or, for one the store doesn't have, its alternatives) as a page. */
   onOpenProduct: (itemId: string) => void
   onBack: () => void
@@ -39,25 +44,38 @@ interface ListStepProps {
  * product, by aisle, each of which can be changed; the items the store doesn't
  * have come first, to decide on. Items assumed on hand are behind a button.
  */
-export function ListStep({ order, onOpenProduct, onBack, onNext, onClose }: ListStepProps) {
+export function ListStep({ order, onOpenMeal, onOpenProduct, onBack, onNext, onClose, acknowledgedChanges }: ListStepProps) {
   const session = useOrderSession()
   const startList = useStartList()
   const shopList = useShopList()
   const { mutate: start } = startList
   const { mutate: shop } = shopList
   const state = listState(order.shopping_list)
+  const blockers = recipeBlockers(order).map((c) => `${c.job_id}:${c.state}`).sort().join(',')
+  const warning = unselectedChangeKey(order)
+  const [continued, setContinued] = useState<string | null>(null)
+  const needsAcknowledgement = !!warning && continued !== warning && acknowledgedChanges !== warning
 
   // A list not started for these picks (e.g. starting failed offline, or picks
   // changed elsewhere) starts here, once; and one made but never shopped (e.g.
   // made before each list was shopped) is shopped, once.
   const started = useRef<ListState | null>(null)
+  useEffect(() => { started.current = null }, [blockers, warning])
   useEffect(() => {
+    if (blockers || needsAcknowledgement) return
     if ((state !== 'start' && state !== 'shopStart') || started.current === state) return
     started.current = state
     const request = { orderId: order.id, jobId: crypto.randomUUID(), session }
     if (state === 'start') start(request)
     else shop(request)
-  }, [state, start, shop, order.id, session])
+  }, [state, start, shop, order.id, session, blockers, warning, needsAcknowledgement])
+
+  if (blockers || needsAcknowledgement) return <FlowFrame step={stepIndex('list')} title="Recipe changes" onBack={onBack} onClose={onClose}
+    footer={<Button large disabled={!!blockers} onClick={() => setContinued(warning)}>{warning ? 'Start shopping anyway' : 'Start shopping'}</Button>}>
+    <RecipeChanges order={order} onOpenMeal={onOpenMeal} />
+    <RecipeChanges order={order} onOpenMeal={onOpenMeal} unselected />
+    <Button variant="secondary" onClick={onBack}>Back to servings</Button>
+  </FlowFrame>
 
   if (state === 'ready') {
     return <ListReview order={order} onOpenProduct={onOpenProduct} onBack={onBack} onNext={onNext} onClose={onClose} />

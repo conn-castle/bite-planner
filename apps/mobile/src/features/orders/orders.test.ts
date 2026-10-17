@@ -1,12 +1,15 @@
-import { MutationObserver, QueryClient } from '@tanstack/react-query'
+import { MutationObserver, QueryClient, QueryObserver, onlineManager } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiRequest } from '../../lib/api/client'
 import { ApiError } from '../../lib/api/errors'
 import type { GroceryOrder, Job, Meal, NextOrder } from '../../lib/api/types'
 import { queryKeys } from '../../lib/query/keys'
+import { mealQuery } from '../meals/meals'
 import type { SetMeal, SetNotForUs, SetServings } from './edits'
 import {
   closeFlowSession,
+  type EditRecipe,
+  type DecideRecipe,
   FlowClosed,
   nextQuery,
   type OpenOrder,
@@ -39,7 +42,7 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
-  reached_step: 'pick',
+  recipe_changes: [], recipes_editable: true, reached_step: 'pick',
   jobs: [],
   picks: mealIds.map((meal_id) => ({ meal_id, servings: 4 })),
   lock: null,
@@ -104,7 +107,7 @@ describe('marking a suggestion "not for us"', () => {
       description: null,
       active_time_minutes: null,
       total_time_minutes: null,
-      ingredient_count: 2,
+      revision: 0, ingredient_count: 2,
       picture: null,
       rating: null,
       servings: 4,
@@ -152,7 +155,7 @@ describe('opening the draft', () => {
       jobs: [
         {
           id: 'job',
-          kind: 'generate_meals',
+          meal_id: null, started_at: null, finished_at: null, kind: 'generate_meals',
           status: 'succeeded',
           error: null,
           requested_by: { user_id: 'sam', name: 'Sam' },
@@ -216,7 +219,7 @@ describe('placing the order', () => {
 describe('the order lock', () => {
   const job = {
     id: 'job',
-    kind: 'generate_meals' as const,
+    meal_id: null, started_at: null, finished_at: null, kind: 'generate_meals' as const,
     status: 'succeeded' as const,
     error: null,
     requested_by: { user_id: 'sam', name: 'Sam' },
@@ -333,7 +336,7 @@ describe('the shopping list', () => {
     request.mockImplementation(async (method, path) => {
       calls.push(`${method} ${path}`)
       if (method === 'PUT') await new Promise((resolve) => setTimeout(resolve, 20))
-      return method === 'PUT' ? draft(['soup']) : { id: 'build', kind: 'build_list', status: 'pending' }
+      return method === 'PUT' ? draft(['soup']) : { id: 'build', meal_id: null, started_at: null, finished_at: null, kind: 'build_list', status: 'pending' }
     })
     queryClient.setQueryData(queryKeys.order('draft'), draft([]))
     const servings = new MutationObserver<GroceryOrder, Error, SetServings>(queryClient, {
@@ -347,5 +350,53 @@ describe('the shopping list', () => {
     expect(calls).toEqual(['PUT /v1/grocery-orders/draft/meals/soup/servings', 'POST /v1/grocery-orders/draft/list'])
     expect(request.mock.calls[1]).toEqual(['POST', '/v1/grocery-orders/draft/list', { job_id: 'build' }, session])
     expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(true)
+  })
+})
+
+
+describe('recipe proposal mutations', () => {
+  const variables: EditRecipe = { orderId: 'draft', mealId: 'chicken', jobId: 'attempt', session, feedback: 'Use breasts', replaces: null }
+  it('fails a dropped connection after bounded retries without pausing or persisting Send', async () => {
+    onlineManager.setOnline(false)
+    request.mockRejectedValue(new TypeError('connection lost'))
+    const observer = new MutationObserver<GroceryOrder, Error, EditRecipe>(queryClient, { mutationKey: ['orders', 'edit-recipe'], retryDelay: 0 })
+    try {
+      await expect(observer.mutate(variables)).rejects.toThrow('connection lost')
+      expect(observer.getCurrentResult().isPaused).toBe(false)
+      expect(observer.getCurrentResult().isPending).toBe(false)
+      expect(request).toHaveBeenCalledTimes(4)
+      expect(request.mock.calls.every((call) => JSON.stringify(call) === JSON.stringify(request.mock.calls[0]))).toBe(true)
+      expect(queryClient.getMutationCache().getAll().at(-1)?.options.meta?.persist).toBe(false)
+      onlineManager.setOnline(true)
+      await queryClient.resumePausedMutations()
+      expect(request).toHaveBeenCalledTimes(4)
+    } finally { onlineManager.setOnline(true) }
+  })
+  it('retries transport failures with the original payload; an intentional retry names its predecessor', async () => {
+    request.mockRejectedValueOnce(new TypeError('connection lost')).mockResolvedValue(draft(['chicken']))
+    await new MutationObserver<GroceryOrder, Error, EditRecipe>(queryClient, { mutationKey: ['orders', 'edit-recipe'], retryDelay: 0 }).mutate(variables)
+    expect(request.mock.calls[0]).toEqual(request.mock.calls[1])
+    await new MutationObserver<GroceryOrder, Error, EditRecipe>(queryClient, { mutationKey: ['orders', 'edit-recipe'] }).mutate({ ...variables, jobId: 'next-attempt', replaces: 'attempt' })
+    expect(request.mock.calls[2][2]).toEqual({ job_id: 'next-attempt', feedback: 'Use breasts', replaces: 'attempt' })
+  })
+  it('cancels an in-flight old full recipe before publishing Accept and refetches the mounted query', async () => {
+    const old: Meal = { id: 'chicken', revision: 0, name: 'Thighs', description: null, ingredient_count: 1, total_time_minutes: 30, active_time_minutes: 10, picture: null, rating: null, servings: 2, ingredients: [{ name: 'thighs', quantity: 1, unit: 'lb', preparation: null }], steps: [] }
+    const current: Meal = { ...old, revision: 1, name: 'Breasts', ingredients: [{ ...old.ingredients[0], name: 'breasts' }] }
+    let release: ((meal: Meal) => void) | undefined
+    const delayed = new Promise<Meal>((resolve) => { release = resolve })
+    queryClient.setQueryData(queryKeys.meal('chicken'), old)
+    request.mockImplementationOnce(() => delayed).mockImplementation(async (method) => method === 'POST' ? draft(['chicken']) : current)
+    const mounted = new QueryObserver(queryClient, { ...mealQuery('chicken'), staleTime: 0 })
+    const unsubscribe = mounted.subscribe(() => {})
+    try {
+      await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+      await new MutationObserver<GroceryOrder, Error, DecideRecipe>(queryClient, { mutationKey: ['orders', 'decide-recipe'] }).mutate({ orderId: 'draft', mealId: 'chicken', jobId: 'proposal', decision: 'accept', baseRevision: 0, session })
+      expect(queryClient.getQueryData<Meal>(queryKeys.meal('chicken'))).toEqual(current)
+      release?.(old)
+      await delayed
+      expect(queryClient.getQueryData<Meal>(queryKeys.meal('chicken'))?.ingredients[0].name).toBe('breasts')
+      expect(request.mock.calls[0][4]).toBeInstanceOf(AbortSignal)
+      expect(request.mock.calls[0][4]?.aborted).toBe(true)
+    } finally { unsubscribe() }
   })
 })

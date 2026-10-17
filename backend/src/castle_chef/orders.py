@@ -486,6 +486,9 @@ def place(
 def _not_ready(
     session: Session, order: GroceryOrder, delivery: date, next_delivery: date, today: date
 ) -> str | None:
+    from castle_chef.meal_edits import require_resolved
+
+    require_resolved(session, order)
     if not picks(session, order.id):
         return "Pick at least one meal."
     if (problem := shopped_problem(session, order.id)) is not None:

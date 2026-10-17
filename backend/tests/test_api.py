@@ -686,6 +686,8 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "fallback_window": {"start": "17:00:00", "end": "19:00:00"},
         "next_delivery_date": None,
         "reached_step": "pick",
+        "recipe_changes": [],
+        "recipes_editable": True,
         "jobs": [],
         "picks": [],
         "lock": draft["lock"],
@@ -970,6 +972,9 @@ def test_member_requests_a_batch_of_suggestions(
     assert batch | {"created_at": None} == {
         "id": str(job_id),
         "kind": "generate_meals",
+        "meal_id": None,
+        "started_at": None,
+        "finished_at": None,
         "status": "pending",
         "error": None,
         "requested_by": {"user_id": str(MOM), "name": "Mom"},
@@ -1158,6 +1163,7 @@ def test_suggestions_are_the_batches_meals_oldest_batch_first(client: TestClient
         "active_time_minutes": 15,
         "total_time_minutes": 30,
         "ingredient_count": 2,
+        "revision": 0,
         "rating": None,
         # Its pictured ingredients, in recipe order (not the salt).
         "picture": {
@@ -1968,6 +1974,7 @@ def test_a_suggestion_opens_as_its_full_recipe(client: TestClient) -> None:
         "active_time_minutes": 15,
         "total_time_minutes": 30,
         "ingredient_count": 2,
+        "revision": 0,
         "rating": None,
         # Its pictured ingredients, in recipe order (not the salt).
         "picture": {
@@ -2583,16 +2590,33 @@ def test_changing_the_picks_needs_a_new_list_before_placing(
     assert grocer == [UUID(order_id)]
 
 
-def test_a_list_still_being_made_for_older_picks_gives_way(client: TestClient) -> None:
+@pytest.mark.parametrize("status", [JobStatus.PENDING, JobStatus.RUNNING, JobStatus.FAILED])
+def test_a_list_for_older_servings_is_replaced_immediately(
+    client: TestClient, dispatcher: RecordingDispatcher, status: JobStatus
+) -> None:
     order_id, [tacos, _] = with_suggestions(client)
     ok(pick(client, order_id, tacos))
     first = ok(request_list(client, order_id), 201)
+    with Session(get_engine()) as worker_session:
+        if status == JobStatus.RUNNING:
+            claim_job(worker_session, UUID(first["id"]))
+        elif status == JobStatus.FAILED:
+            fail_job(worker_session, UUID(first["id"]), "Old build failed.")
+    dispatched_before = len(dispatcher.dispatched)
 
     ok(set_servings(client, order_id, tacos, 2))
     second = ok(request_list(client, order_id), 201)
+    # Servings and List may both request: only one effective build for this source.
+    assert ok(request_list(client, order_id)) == second
+    assert dispatcher.dispatched[dispatched_before:] == [UUID(second["id"])]
+    with Session(get_engine()) as worker_session:
+        source = worker_session.get_one(Job, UUID(second["id"])).list_source
+        assert source is not None
+        assert [(str(pick.meal_id), pick.servings) for pick in source.picks] == [(tacos, 2)]
 
     jobs = {job["id"]: job for job in get_order(client, order_id)["jobs"]}
-    assert (jobs[first["id"]]["status"], jobs[first["id"]]["error"]) == ("failed", SUPERSEDED_ERROR)
+    expected_error = "Old build failed." if status == JobStatus.FAILED else SUPERSEDED_ERROR
+    assert (jobs[first["id"]]["status"], jobs[first["id"]]["error"]) == ("failed", expected_error)
     assert jobs[second["id"]]["status"] == "pending"
     assert get_order(client, order_id)["shopping_list"]["job"]["id"] == second["id"]
 

@@ -1,0 +1,12 @@
+.group {
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid var(--cc-accent);
+  border-left-width: 4px;
+  border-radius: var(--cc-radius-md);
+  background: var(--cc-accent-soft);
+  color: var(--cc-ink);
+}
+.group h3 { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.35; }
+.group p { margin: 6px 0 12px; font-size: 13px; line-height: 1.45; }
+.group ul { display: grid; gap: 6px; list-style: none; padding: 0; margin: 0; }

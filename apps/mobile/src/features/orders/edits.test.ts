@@ -32,7 +32,7 @@ const order: GroceryOrder = {
   delivery_date: '2026-09-29',
   delivery_by: null,
   next_delivery_date: '2026-10-02',
-  reached_step: 'pick',
+  recipe_changes: [], recipes_editable: true, reached_step: 'pick',
   jobs: [],
   picks: [{ meal_id: 'tacos', servings: 4 }],
   lock: null,
@@ -110,7 +110,7 @@ describe('applyEdits', () => {
       jobs: [
         {
           id: 'job',
-          kind: 'generate_meals',
+          meal_id: null, started_at: null, finished_at: null, kind: 'generate_meals',
           status: 'succeeded',
           error: null,
           requested_by: { user_id: 'sam', name: 'Sam' },
@@ -121,7 +121,7 @@ describe('applyEdits', () => {
             description: null,
             active_time_minutes: null,
             total_time_minutes: null,
-            ingredient_count: 2,
+            revision: 0, ingredient_count: 2,
             picture: null,
             rating: null,
           })),
@@ -152,7 +152,7 @@ describe('changes to the shopping list', () => {
     shopping_list: {
       job: {
         id: 'build',
-        kind: 'build_list',
+        meal_id: null, started_at: null, finished_at: null, kind: 'build_list',
         status: 'succeeded',
         error: null,
         requested_by: { user_id: 'sam', name: 'Sam' },

@@ -13,7 +13,7 @@ const meal = (id: string): MealSummary => ({
   description: null,
   active_time_minutes: null,
   total_time_minutes: null,
-  ingredient_count: 2,
+  revision: 0, ingredient_count: 2,
   picture: null,
   rating: null,
 })
@@ -35,11 +35,11 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
-  reached_step: 'pick',
+  recipe_changes: [], recipes_editable: true, reached_step: 'pick',
   jobs: [
     {
       id: 'job',
-      kind: 'generate_meals',
+      meal_id: null, started_at: null, finished_at: null, kind: 'generate_meals',
       status: 'succeeded',
       error: null,
       requested_by: { user_id: 'sam', name: 'Sam' },

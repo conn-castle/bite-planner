@@ -81,7 +81,14 @@ def current_source(session: Session, order_id: UUID) -> ListSource:
         .order_by(col(GroceryOrderMeal.meal_id))
     ).all()
     return ListSource(
-        picks=[ListPick(meal_id=pick.meal_id, servings=pick.servings) for pick in picks]
+        picks=[
+            ListPick(
+                meal_id=pick.meal_id,
+                servings=pick.servings,
+                revision=session.get_one(Meal, pick.meal_id).revision,
+            )
+            for pick in picks
+        ]
     )
 
 
@@ -105,6 +112,8 @@ def scaled_meals(session: Session, source: ListSource) -> list[ScaledMeal]:
     scaled = []
     for number, pick in enumerate(source.picks, start=1):
         meal = session.get_one(Meal, pick.meal_id)
+        if pick.revision != meal.revision:
+            raise InvalidList("The recipe changed; build a new shopping list.")
         factor = pick.servings / meal.servings
         lines = []
         for index, ingredient in enumerate(meal.ingredients):

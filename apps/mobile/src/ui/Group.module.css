@@ -195,3 +195,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Servings keeps its complete name and its picture badge inside one opening target. */
+.fullLabel .name {
+  display: block;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow-wrap: anywhere;
+}
+.fullLabel .opens { min-height: var(--cc-hit-min); }
+.fullLabel .art { overflow: visible; }
+.fullLabel .art > :first-child { border-radius: inherit; overflow: hidden; }
