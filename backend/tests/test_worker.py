@@ -20,7 +20,7 @@ from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ProductCount
 from castle_chef_agent.server import Tools
-from castle_chef_agent.shopping import Aisle
+from castle_chef_agent.shopping import Aisle, RecipeIngredient
 from castle_chef_agent.windows import Window
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
@@ -54,6 +54,7 @@ from castle_chef.models import (
     JobStatus,
     Meal,
     MealRating,
+    MealStep,
     ProductGone,
     PushDevice,
     ShoppingListItem,
@@ -62,6 +63,7 @@ from castle_chef.models import (
 from castle_chef.push import Notification, NotificationKind, Outcome, Sent
 from castle_chef.settings import get_settings
 from tests.conftest import BACKEND_DIR, OTHER_ADDRESS, TEST_ADDRESS
+from tests.test_prepared_recipes import proportional_snapshot
 
 runner = CliRunner()
 FAKE_AGENT = Path(__file__).parent / "fake_agent.py"
@@ -619,19 +621,33 @@ def test_a_list_is_built_from_the_picks_scaled_to_their_servings(
     run_job(build)
 
     prompt = (tmp_path / "jobs" / str(build.id) / "fake-agent-prompt.md").read_text()
-    # Stage 1: each recipe (for 2) scaled to its servings, meals numbered in the
-    # list's order, each line with its id.
+    # Original amounts and yields stay visible; estimates are explicitly advisory.
     source = shopping.current_source(session, draft.id)
     numbered = {pick.meal_id: number for number, pick in enumerate(source.picks, start=1)}
     one, two = numbered[first.id], numbered[second.id]
-    assert (
-        f"Meal {one}: Meal 0 (for 2)\n"
-        f"- {one}a: 0.75 lb Italian sausage\n- {one}b: 1.5 bell peppers, sliced\n- {one}c: salt"
-    ) in prompt
-    assert (
-        f"Meal {two}: Meal 1 (for 6)\n"
-        f"- {two}a: 2.25 lb Italian sausage\n- {two}b: 4.5 bell peppers, sliced\n- {two}c: salt"
-    ) in prompt
+    assert f"Meal {one}: Meal 0 (id {first.id}" in prompt
+    assert f"Meal {two}: Meal 1 (id {second.id}" in prompt
+    assert "original yield 2; chosen servings 6" in prompt
+    sausage: str = next(line for line in prompt.splitlines() if line.startswith(f"- {two}a: "))
+    peppers: str = next(line for line in prompt.splitlines() if line.startswith(f"- {two}b: "))
+    sausage_data: RecipeIngredient = RecipeIngredient.model_validate_json(
+        sausage.partition(": ")[2].partition(" [estimate ")[0]
+    )
+    peppers_data: RecipeIngredient = RecipeIngredient.model_validate_json(
+        peppers.partition(": ")[2].partition(" [estimate ")[0]
+    )
+    assert (sausage_data.name, sausage_data.quantity, sausage_data.unit) == (
+        "Italian sausage",
+        0.75,
+        "lb",
+    )
+    assert sausage.endswith("[estimate 2.25]")
+    assert (peppers_data.name, peppers_data.quantity, peppers_data.preparation) == (
+        "bell peppers",
+        1.5,
+        "sliced",
+    )
+    assert peppers.endswith("[estimate 4.50]")
     assert "salt, pepper, olive oil, vegetable oil, water" in prompt
     assert "- other: anything none of the others fits" in prompt
     assert reload(session, build).status == JobStatus.SUCCEEDED
@@ -667,6 +683,30 @@ def test_whoever_started_the_list_hears_when_it_is_shopped(
     )
 
 
+@pytest.mark.parametrize("step_text", [" Cook.", "Cook. ", "\nCook.\t"])
+def test_list_preserves_original_step_text_at_unchanged_servings(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    step_text: str,
+) -> None:
+    [meal] = picked(session, job, 2)
+    meal.steps = [MealStep(text=step_text, timer_minutes=5, ingredients=[0, 1])]
+    session.add(meal)
+    session.commit()
+    build: Job = start_list(session, draft)
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(build)
+
+    saved: Job = reload(session, build)
+    assert saved.status == JobStatus.SUCCEEDED, saved.error
+    assert saved.prepared_recipes is not None
+    assert saved.prepared_recipes.recipes[0].steps == [step_text]
+    assert session.get_one(Meal, meal.id).steps[0].text == step_text
+
+
 def test_a_list_for_picks_that_changed_meanwhile_sends_nothing(
     session: Session,
     draft: GroceryOrder,
@@ -685,7 +725,9 @@ def test_a_list_for_picks_that_changed_meanwhile_sends_nothing(
 
     run_job(build)
 
-    assert reload(session, build).status == JobStatus.SUCCEEDED
+    assert reload(session, build).status == JobStatus.FAILED
+    assert reload(session, build).prepared_recipes is None
+    assert list_items(session, build) == []
     assert sender.sent == []
 
 
@@ -1192,6 +1234,9 @@ def approved(
         requested_by=draft.created_by,
         status=JobStatus.SUCCEEDED,
         list_source=shopping.current_source(session, draft.id),
+        prepared_recipes=proportional_snapshot(
+            shopping.recipe_meals(session, shopping.current_source(session, draft.id))
+        ),
     )
     session.add(build)
     session.flush()

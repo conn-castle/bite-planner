@@ -9,7 +9,7 @@ from castle_chef_agent.address import Address
 from castle_chef_agent.meal_edit import ProposedRecipe
 from castle_chef_agent.meals import Color, Dish, Icon
 from castle_chef_agent.products import ProductCount
-from castle_chef_agent.shopping import Aisle
+from castle_chef_agent.shopping import Aisle, PreparedRecipes
 from pydantic import BaseModel, StringConstraints
 from pydantic import Field as ModelField
 from sqlalchemy import (
@@ -250,6 +250,11 @@ class Job(TimestampMixin, SQLModel, table=True):
             name="job_list_source_for_lists",
         ),
         CheckConstraint(
+            "(kind::text = 'build_list' AND status::text = 'succeeded') = "
+            "(prepared_recipes IS NOT NULL)",
+            name="job_prepared_success",
+        ),
+        CheckConstraint(
             "(kind::text = 'shop') = (build_id IS NOT NULL)", name="job_build_for_shops"
         ),
         CheckConstraint(
@@ -304,6 +309,9 @@ class Job(TimestampMixin, SQLModel, table=True):
     requested_by: UUID
     # A build_list job's picks, as they were when it started; null for other kinds.
     list_source: ListSource | None = Field(default=None, sa_type=ModelJSONB(ListSource))
+    prepared_recipes: PreparedRecipes | None = Field(
+        default=None, sa_type=ModelJSONB(PreparedRecipes)
+    )
     # A shop job's list: the build_list job whose items it chooses products for.
     build_id: UUID | None = Field(
         default=None, foreign_key="job.id", ondelete="CASCADE", index=True

@@ -12,7 +12,7 @@ import pytest
 import typer
 from castle_chef_agent import cli
 from castle_chef_agent.jobfiles import write_context
-from castle_chef_agent.meals import MealsJob
+from castle_chef_agent.meals import MealsJob, load_meals
 from castle_chef_agent.server import meals_server
 from mcp.server.mcpserver import MCPServer
 from typer.testing import CliRunner
@@ -73,6 +73,21 @@ def test_the_agent_cannot_set_a_recipes_servings(tmp_path: Path) -> None:
     assert refused
     assert "meal.servings\n  Extra inputs are not permitted" in text
     assert not (tmp_path / "meals").exists()
+
+
+@pytest.mark.parametrize("step_text", ["", " ", "\n\t"])
+def test_blank_steps_are_refused_and_valid_step_text_is_preserved(
+    tmp_path: Path, step_text: str
+) -> None:
+    tools: MCPServer = batch(tmp_path, count=1)
+    refused, _ = add(tools, MEAL | {"steps": [{"text": step_text}]})
+    assert refused
+    assert not (tmp_path / "meals").exists()
+
+    valid_text: str = " \nSeason the chicken.\t"
+    assert not add(tools, MEAL | {"steps": [{"text": valid_text, "ingredients": ["chicken"]}]})[0]
+    [saved] = load_meals(tmp_path)
+    assert saved.steps[0].text == valid_text
 
 
 def test_a_step_may_only_use_ingredients_the_meal_lists(tmp_path: Path) -> None:

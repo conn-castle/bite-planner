@@ -36,6 +36,7 @@ from castle_chef_agent.meals import RECIPE_SERVINGS, MealInput, MealsJob, load_m
 from castle_chef_agent.products import ItemChoice
 from castle_chef_agent.products import load_state as load_products_state
 from castle_chef_agent.server import Tools
+from castle_chef_agent.shopping import PreparedRecipes
 from pydantic import ValidationError
 from sqlalchemy import update
 from sqlmodel import Session, col, select
@@ -123,6 +124,7 @@ class ListItems:
 
     items: list[ListEntry]
     source: ListSource
+    prepared: PreparedRecipes
 
 
 @dataclass(frozen=True)
@@ -336,20 +338,44 @@ def _save(job: Job, result: JobResult, fields: dict[str, str]) -> tuple[bool, UU
                         return False, None
                     products.save_choices(session, result.items, result.choices)
                 case ListItems():
-                    shopping.add_items(session, job.id, result.items, result.source)
+                    if result.prepared.legacy_scaled:
+                        raise shopping.InvalidList(
+                            "A new list build cannot contain legacy-scaled recipes."
+                        )
                     newest = shopping.newest_build(session, order.id)
+                    session.exec(
+                        for_update(
+                            select(Meal)
+                            .where(col(Meal.id).in_([p.meal_id for p in result.source.picks]))
+                            .order_by(col(Meal.id))
+                        )
+                    ).all()
                     if (
-                        order.status == GroceryOrderStatus.DRAFT
-                        and newest is not None
-                        and newest.id == job.id
-                        and result.source == shopping.current_source(session, order.id)
-                        and not meal_edits.recipe_blockers(session, order)
+                        order.status != GroceryOrderStatus.DRAFT
+                        or newest is None
+                        or newest.id != job.id
+                        or result.source != locked_job.list_source
+                        or result.source != shopping.current_source(session, order.id)
+                        or meal_edits.recipe_blockers(session, order)
                     ):
-                        # Only the current build may automatically start shopping.
-                        shop_id = create_shop(session, job, uuid4(), job.requested_by).id
+                        finish_job(
+                            session, job.id, error="The order or recipes changed; build a new list."
+                        )
+                        log.info("job.superseded", extra=fields | counts)
+                        return False, None
+                    shopping.validate_prepared(
+                        shopping.recipe_meals(session, result.source),
+                        result.prepared,
+                    )
+                    shopping.add_items(session, job.id, result.items, result.source)
+                    shop_id = create_shop(session, job, uuid4(), job.requested_by).id
                 case _:
                     assert_never(result)
-            if not finish_job(session, job.id):
+            if not finish_job(
+                session,
+                job.id,
+                prepared_recipes=result.prepared if isinstance(result, ListItems) else None,
+            ):
                 stopped = session.get(Job, job.id)
                 if stopped is not None and stopped.error == SUPERSEDED_ERROR:
                     # A newer list for other picks replaced it: expected.
@@ -559,11 +585,16 @@ def process_job(job: Job) -> JobResult:
             if job.list_source is None:
                 raise AgentRunError(f"List job {job.id} has no picks to build from.")
             with get_session() as session:
-                scaled = shopping.scaled_meals(session, job.list_source)
-            lines = shopping.list_job(scaled)
-            run_agent(job_dir, shopping.build_list_prompt(scaled), Tools.SHOPPING_LIST, lines)
+                recipes = shopping.recipe_meals(session, job.list_source)
+            lines = shopping.list_job(recipes)
+            run_agent(job_dir, shopping.build_list_prompt(recipes), Tools.SHOPPING_LIST, lines)
             # Checked against the lines as the worker made them: the agent can write job.json.
-            return ListItems(items=shopping.finished_list(job_dir, lines), source=job.list_source)
+            finished = shopping.finished_list(job_dir, lines)
+            return ListItems(
+                items=finished.items,
+                source=job.list_source,
+                prepared=finished.prepared,
+            )
         case JobKind.GENERATE_MEALS:
             count = settings.meals_per_batch
             with get_session() as session:

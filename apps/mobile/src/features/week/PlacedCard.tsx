@@ -9,6 +9,7 @@ import { MealStack } from '../../ui/MealStack'
 import { OrderCard, OrderCardBody, OrderCardDivider, OrderCardNote } from '../../ui/OrderCard'
 import { OrderTrack, type TrackDates } from '../../ui/OrderTrack'
 import { MealRow } from '../meals/MealRow'
+import { recipeCacheContext } from '../meals/servings'
 import { BOOK_STATE_ICON, BOOK_STATE_LABEL, bookingLine, needsAttention } from '../orders/booking'
 import { byWhom, coverage, followingOrder, phase, placedOn, placedTitle } from './home'
 import styles from './PlacedCard.module.css'
@@ -162,7 +163,7 @@ export function PlacedCard({
       {mealsOpen && (
         <div className={styles.rows}>
           {order.meals.map((meal) => (
-            <MealRow key={meal.id} meal={meal} servings={meal.servings} onOpen={() => onOpenMeal(meal)} rated />
+            <MealRow key={meal.id} meal={meal} prefetchContext={recipeCacheContext(undefined, meal.id, true, meal.prepared_build_id ?? undefined)} servings={meal.servings} onOpen={() => onOpenMeal(meal)} rated />
           ))}
         </div>
       )}

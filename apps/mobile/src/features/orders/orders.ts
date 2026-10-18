@@ -367,9 +367,9 @@ export function registerOrderMutations(queryClient: QueryClient) {
     meta: NOT_PERSISTED,
     onSuccess: async (order: GroceryOrder, { mealId }: DecideRecipe) => {
       // Cancel before publishing the newer summary; a delayed old recipe must never return.
-      await queryClient.cancelQueries({ queryKey: queryKeys.meal(mealId), exact: true })
+      await queryClient.cancelQueries({ queryKey: queryKeys.meal(mealId) })
       await storeOrder(queryClient, order)
-      await queryClient.invalidateQueries({ queryKey: queryKeys.meal(mealId), exact: true })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.meal(mealId) })
     },
   })
 

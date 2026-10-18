@@ -246,6 +246,8 @@ A code rollback was rehearsed on 2026-09-24 (r8 to r7). The database restore has
 
 Recipe edit proposals (`c6e4a291b502`) are a pre-release contract boundary: earlier releases cannot decode `edit_meal` jobs. Rollback across it requires `restore_database` even though the migration only adds schema; a code-only rollback is refused by the existing contract migration check.
 
+Prepared list recipes (`d9a71b0e962f`) are also a pre-release contract boundary: the database requires a recipe snapshot for every successful `build_list` job. Earlier workers cannot finish new builds under that constraint. Rollback across this migration requires `restore_database` under the existing rollback policy.
+
 ## Development
 
 Development uses the Neon branch `dev` (`example-development-branch`), a copy of `main` with its own Neon Auth (users and keys copied when the branch was made, then independent). Test in the browser with [local development](#local-development); iOS-only behavior (native sign-in in `src/lib/auth/neonAuth.ts`, the persisted cache across relaunches) still needs a TestFlight build.

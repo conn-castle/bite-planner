@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from castle_chef_agent.shopping import PreparedRecipes
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -158,6 +159,7 @@ def test_a_crashed_worker_fails_the_shopping_it_was_doing_for_its_list(
         requested_by=job.requested_by,
         status=JobStatus.SUCCEEDED,
         list_source=ListSource(picks=[]),
+        prepared_recipes=PreparedRecipes(recipes=[]),
     )
     session.add(build)
     session.commit()

@@ -47,7 +47,7 @@ export async function storeMealRating(queryClient: QueryClient, { mealId, rating
     queryClient.cancelQueries({ queryKey: mealKey }),
     queryClient.cancelQueries({ queryKey: queryKeys.placedOrders }),
   ])
-  queryClient.setQueryData<Meal>(mealKey, (meal) => meal && { ...meal, rating })
+  queryClient.setQueriesData<Meal>({ queryKey: mealKey }, (meal) => meal && { ...meal, rating })
   queryClient.setQueriesData<PlacedOrder[]>({ queryKey: queryKeys.placedOrders }, (orders) =>
     orders?.map((order) => ({
       ...order,

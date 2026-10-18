@@ -1,8 +1,6 @@
-"""A draft's shopping list (spec/requirements.md "Shopping list"): stage 1 scales
-each picked meal's ingredients to its servings (here, deterministic); stage 2 is
-the agent combining them into one list (a `build_list` job) through the
-shopping-list tools, which check each change, and the worker checks and saves.
-The order's list is its newest build's items."""
+"""One list-building agent confirms each recipe's cooking amounts and steps,
+then combines confirmed lines into a shopping list. The build owns the immutable
+prepared recipes and list items, saved atomically on success."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,9 +10,16 @@ from castle_chef_agent.shopping import (
     Aisle,
     IngredientLine,
     ListJob,
+    PreparedRecipe,
+    PreparedRecipes,
+    RecipeContext,
+    RecipeIngredient,
+    RecipeStep,
     Staple,
+    confirmed_recipes,
     list_problems,
     load_draft,
+    recipe_lines,
 )
 from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
@@ -64,13 +69,17 @@ class InvalidList(Exception):
 
 
 @dataclass(frozen=True)
-class ScaledMeal:
-    """A picked meal's ingredients, scaled to the servings picked."""
+class RecipeMeal:
+    """A picked original recipe and its requested yield."""
 
     number: int  # how the prompt and the agent refer to it
     meal: Meal
     servings: int
-    lines: list[IngredientLine]
+    context: RecipeContext
+
+    @property
+    def lines(self) -> list[IngredientLine]:
+        return recipe_lines(self.context, [i.quantity for i in self.context.ingredients])
 
 
 def current_source(session: Session, order_id: UUID) -> ListSource:
@@ -92,71 +101,119 @@ def current_source(session: Session, order_id: UUID) -> ListSource:
     )
 
 
-def _amount(quantity: float) -> str:
-    return f"{round(quantity, 2):g}"
-
-
-def _letters(index: int) -> str:
-    """a, b, ..., z, aa, ab, ...: a line's letter within its meal."""
-    letters = ""
-    index += 1
-    while index:
-        index, remainder = divmod(index - 1, 26)
-        letters = chr(ord("a") + remainder) + letters
-    return letters
-
-
-def scaled_meals(session: Session, source: ListSource) -> list[ScaledMeal]:
-    """Stage 1: each meal of the source (numbered from 1, in its order) with its
-    ingredients scaled by servings picked / servings the recipe makes."""
-    scaled = []
+def recipe_meals(session: Session, source: ListSource) -> list[RecipeMeal]:
+    meals: list[RecipeMeal] = []
     for number, pick in enumerate(source.picks, start=1):
         meal = session.get_one(Meal, pick.meal_id)
         if pick.revision != meal.revision:
             raise InvalidList("The recipe changed; build a new shopping list.")
-        factor = pick.servings / meal.servings
-        lines = []
-        for index, ingredient in enumerate(meal.ingredients):
-            amount = (
-                []
-                if ingredient.quantity is None
-                else [_amount(ingredient.quantity * factor), *filter(None, [ingredient.unit])]
-            )
-            text = " ".join([*amount, ingredient.name])
-            lines.append(
-                IngredientLine(
-                    id=f"{number}{_letters(index)}",
-                    meal=number,
-                    text=f"{text}, {ingredient.preparation}" if ingredient.preparation else text,
-                    has_amount=ingredient.quantity is not None,
-                )
-            )
-        scaled.append(ScaledMeal(number=number, meal=meal, servings=pick.servings, lines=lines))
-    return scaled
+        context = RecipeContext(
+            number=number,
+            meal_id=meal.id,
+            base_revision=meal.revision,
+            base_servings=meal.servings,
+            servings=pick.servings,
+            ingredients=[
+                RecipeIngredient.model_validate(i, from_attributes=True) for i in meal.ingredients
+            ],
+            steps=[RecipeStep.model_validate(s.model_dump()) for s in meal.steps],
+        )
+        meals.append(RecipeMeal(number=number, meal=meal, servings=pick.servings, context=context))
+    return meals
 
 
-def build_list_prompt(scaled: list[ScaledMeal]) -> str:
-    """The agent's instructions for a build_list job: stage 1's lines to combine."""
-    meals = "\n\n".join(
-        f"Meal {meal.number}: {meal.meal.name} (for {meal.servings})\n"
-        + "\n".join(f"- {line.id}: {line.text}" for line in meal.lines)
-        for meal in scaled
-    )
+def build_list_prompt(recipes: list[RecipeMeal]) -> str:
+    def render(recipe: RecipeMeal) -> str:
+        context = recipe.context
+        ingredients = "\n".join(
+            f"- {line.id}: {ingredient.model_dump_json()}"
+            + (
+                ""
+                if context.ready or ingredient.quantity is None
+                else " [estimate "
+                f"{ingredient.quantity * context.servings / context.base_servings:.2f}]"
+            )
+            for line, ingredient in zip(recipe.lines, context.ingredients, strict=True)
+        )
+        steps = "\n".join(
+            f"{n}. {step.text} [ingredients {step.ingredients}; timer {step.timer_minutes}]"
+            for n, step in enumerate(context.steps, start=1)
+        )
+        return (
+            f"Meal {recipe.number}: {recipe.meal.name} (id {recipe.meal.id}, "
+            f"revision {context.base_revision}; original yield {context.base_servings}; "
+            f"chosen servings {context.servings})\n"
+            f"Times: {recipe.meal.active_time_minutes} min active; "
+            f"{recipe.meal.total_time_minutes} min total\n{ingredients}\nSteps:\n{steps}"
+        )
+
     return prompts.fill(
         "build_list",
-        meals=meals,
+        meals="\n\n".join(render(recipe) for recipe in recipes),
         staples=", ".join(Staple),
-        aisles="\n".join(
-            f"- {aisle.value}: {meaning}" for aisle, meaning in AISLE_MEANINGS.items()
-        ),
+        aisles="\n".join(f"- {a.value}: {meaning}" for a, meaning in AISLE_MEANINGS.items()),
     )
 
 
-def list_job(scaled: list[ScaledMeal]) -> ListJob:
-    return ListJob(lines=[line for meal in scaled for line in meal.lines])
+def list_job(recipes: list[RecipeMeal]) -> ListJob:
+    return ListJob(
+        lines=[line for r in recipes for line in r.lines], recipes=[r.context for r in recipes]
+    )
 
 
-def finished_list(job_dir: Path, job: ListJob) -> list[ListEntry]:
+def validate_prepared(
+    recipes: list[RecipeMeal],
+    prepared: PreparedRecipes,
+) -> None:
+    """Check pinned source and fixed positions again at the persistence/read boundary."""
+    checked = PreparedRecipes.model_validate(prepared.model_dump())
+    if len(checked.recipes) != len(recipes):
+        raise InvalidList("Prepared recipes do not cover the build's picks.")
+    for base, result in zip(recipes, checked.recipes, strict=True):
+        context = base.context
+        if (result.meal_id, result.base_revision, result.servings) != (
+            context.meal_id,
+            context.base_revision,
+            context.servings,
+        ):
+            raise InvalidList("Prepared recipes do not match the build's pinned source.")
+        if (
+            len(result.quantities) != len(context.ingredients)
+            or len(result.steps) != len(context.steps)
+            or any(
+                (q is None) != (i.quantity is None)
+                for q, i in zip(result.quantities, context.ingredients, strict=True)
+            )
+        ):
+            raise InvalidList("Prepared recipe positions or amount masks changed.")
+        if not checked.legacy_scaled and any(q is not None and q <= 0 for q in result.quantities):
+            raise InvalidList("Confirmed recipe quantities must be positive.")
+        if (
+            context.ready
+            and not checked.legacy_scaled
+            and (
+                result.quantities != [i.quantity for i in context.ingredients]
+                or result.steps != [s.text for s in context.steps]
+            )
+        ):
+            raise InvalidList("An identity recipe changed.")
+
+
+def prepared_meals(session: Session, build: Job) -> list[tuple[RecipeMeal, PreparedRecipe]]:
+    if build.list_source is None or build.prepared_recipes is None:
+        raise InvalidList(f"Build {build.id} has no confirmed recipe snapshot.")
+    recipes = recipe_meals(session, build.list_source)
+    validate_prepared(recipes, build.prepared_recipes)
+    return list(zip(recipes, build.prepared_recipes.recipes, strict=True))
+
+
+@dataclass(frozen=True)
+class FinishedList:
+    items: list[ListEntry]
+    prepared: PreparedRecipes
+
+
+def finished_list(job_dir: Path, job: ListJob) -> FinishedList:
     """The agent's finished list for the job's lines (the worker's, not the
     agent-writable job.json), its lines turned into meal numbers; raises
     InvalidList if it isn't done."""
@@ -168,7 +225,7 @@ def finished_list(job_dir: Path, job: ListJob) -> list[ListEntry]:
     def meals(lines: list[str]) -> list[int]:
         return sorted({meal_of[line] for line in lines})
 
-    return [
+    items = [
         ListEntry(
             name=item.name,
             more_alternatives_query=item.more_alternatives_query,
@@ -187,6 +244,8 @@ def finished_list(job_dir: Path, job: ListJob) -> list[ListEntry]:
         )
         for staple in draft.staples
     ]
+
+    return FinishedList(items=items, prepared=confirmed_recipes(job, draft))
 
 
 def add_items(session: Session, job_id: UUID, entries: list[ListEntry], source: ListSource) -> None:

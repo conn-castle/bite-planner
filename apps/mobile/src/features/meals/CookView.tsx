@@ -8,9 +8,10 @@ import { useNow } from '../../lib/useNow'
 import { Button, IconButton } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
+import { Note } from '../../ui/Note'
 import { StepDots } from '../../ui/StepDots'
 import styles from './CookView.module.css'
-import { ingredientAmount } from './servings'
+import { recipeIngredientAmount } from './servings'
 import { loadTimer, startTimer, stopTimer, type StepTimer, useStepTimer } from './timer'
 
 // The step each meal's cooking is at, kept while the app is open until Done.
@@ -25,8 +26,7 @@ function keepScreenOn(on: boolean) {
 
 interface CookViewProps {
   meal: Meal
-  /** The servings its amounts are for. */
-  servings: number
+  status: 'prepared' | 'legacy' | 'preview' | 'original'
   isOpen: boolean
   onClose: () => void
 }
@@ -36,7 +36,7 @@ interface CookViewProps {
  * timer when it has the cook wait, and the ingredients it uses. Full screen
  * over the app, like the order flow.
  */
-export function CookView({ meal, servings, isOpen, onClose }: CookViewProps) {
+export function CookView({ meal, status, isOpen, onClose }: CookViewProps) {
   const [at, setAt] = useState(0)
   const [problem, setProblem] = useState<string | null>(null)
   // Counts the cook's moves: a timer read from iOS on opening only moves to its
@@ -118,6 +118,8 @@ export function CookView({ meal, servings, isOpen, onClose }: CookViewProps) {
       </IonHeader>
       <IonContent>
         <div key={at} className={styles.body}>
+          {status === 'preview' && <Note icon="users">Provisional preview. Steps retain the original amounts.</Note>}
+          {status === 'legacy' && <Note icon="users">Earlier order: scaled ingredients; original step amounts.</Note>}
           {problem && <Notice>{problem}</Notice>}
           <div className={styles.number}>
             Step {at + 1} of {meal.steps.length}
@@ -140,7 +142,7 @@ export function CookView({ meal, servings, isOpen, onClose }: CookViewProps) {
                   if (ingredient === undefined) return null
                   return (
                     <li key={position}>
-                      {[ingredientAmount(ingredient, meal.servings, servings), ingredient.name]
+                      {[recipeIngredientAmount(ingredient, status), ingredient.name]
                         .filter(Boolean)
                         .join(' ')}
                     </li>

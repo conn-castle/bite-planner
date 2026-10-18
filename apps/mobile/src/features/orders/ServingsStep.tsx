@@ -6,6 +6,7 @@ import { Group } from '../../ui/Group'
 import { Notice } from '../../ui/Notice'
 import { Stepper } from '../../ui/Stepper'
 import { MealRow } from '../meals/MealRow'
+import { recipeCacheContext } from '../meals/servings'
 import { pickedMeals } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { useOrderSession } from './lock'
@@ -66,6 +67,7 @@ export function ServingsStep({ order, onOpenMeal, onBack, onNext, onClose }: Ser
               <MealRow
                 key={meal.id}
                 meal={meal}
+                prefetchContext={recipeCacheContext(order, meal.id, false)}
                 onOpen={() => onOpenMeal(meal.id, count)}
                 fullName
                 recipeChange={change?.state}

@@ -17,6 +17,7 @@ import { OrderCard, OrderCardBody } from '../../ui/OrderCard'
 import { RetryNotice } from '../../ui/RetryNotice'
 import { Stats } from '../../ui/Stats'
 import { MealRow } from '../meals/MealRow'
+import { recipeCacheContext } from '../meals/servings'
 import { useHousehold } from '../settings/settings'
 import { pickedMeals } from './batches'
 import { coveredDays, dayRange } from './dates'
@@ -328,7 +329,7 @@ function Reviewed({
 
         <Group title="Meals">
           {meals.map(({ meal, servings: count }) => (
-            <MealRow key={meal.id} meal={meal} servings={count} onOpen={() => onOpenMeal(meal.id, count)} />
+            <MealRow key={meal.id} meal={meal} prefetchContext={recipeCacheContext(order, meal.id, false)} servings={count} onOpen={() => onOpenMeal(meal.id, count)} />
           ))}
           <Row label="Change servings" chevron onClick={() => onChange('servings')} />
         </Group>

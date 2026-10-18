@@ -1,7 +1,7 @@
 import { placedMealPath } from '../meals/meals'
 import { useIonRouter } from '@ionic/react'
 import { useState } from 'react'
-import type { MealSummary, PlacedMeal, PlacedOrder } from '../../lib/api/types'
+import type { PlacedMeal, PlacedOrder } from '../../lib/api/types'
 import { addDays, formatDate } from '../../lib/dates'
 import { plural } from '../../lib/format'
 import { usePressIntent } from '../../lib/usePressIntent'
@@ -20,6 +20,7 @@ import { usePrefetchMeal } from '../meals/cached'
 import { formatMinutes, mealMinutes } from '../meals/facts'
 import { MealRatingMark } from '../meals/MealRating'
 import { MealRow } from '../meals/MealRow'
+import { recipeCacheContext } from '../meals/servings'
 import { shownRating, usePendingRatings } from '../meals/ratings'
 import { usePlacedOrders } from '../orders/orders'
 import { coverage } from '../week/home'
@@ -116,7 +117,7 @@ function ByOrder({ shown, onOpenOrder, onOpenMeal }: ByOrderProps) {
           onOpen={() => onOpenOrder(order)}
         >
           {meals.map((meal) => (
-            <MealRow key={meal.id} meal={meal} onOpen={() => onOpenMeal(meal)} rated />
+            <MealRow key={meal.id} meal={meal} prefetchContext={recipeCacheContext(undefined, meal.id, true, meal.prepared_build_id ?? undefined)} onOpen={() => onOpenMeal(meal)} rated />
           ))}
         </OrderListCard>
       ))}
@@ -153,8 +154,8 @@ function AllMeals({ shown, onOpenMeal }: AllMealsProps) {
   )
 }
 
-function MealTile({ meal, onOpen }: { meal: MealSummary; onOpen: () => void }) {
-  const prefetch = usePrefetchMeal()
+function MealTile({ meal, onOpen }: { meal: PlacedMeal; onOpen: () => void }) {
+  const prefetch = usePrefetchMeal(recipeCacheContext(undefined, meal.id, true, meal.prepared_build_id ?? undefined))
   const press = usePressIntent(() => prefetch(meal.id))
   const minutes = mealMinutes(meal)
   return (

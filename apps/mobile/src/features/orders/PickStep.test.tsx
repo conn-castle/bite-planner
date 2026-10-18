@@ -7,6 +7,10 @@ import { MealPage } from '../meals/MealPage'
 import { OrderSession } from './lock'
 import { PickStep } from './PickStep'
 
+// Feedback subscribes to a browser-only online store; the real component is exercised
+// in the local browser fixture. These server renders test the public recipe page's amounts.
+vi.mock('../meals/RecipeFeedback', () => ({ RecipeFeedback: () => null }))
+
 vi.mock('../../lib/api/client', () => ({ apiRequest: vi.fn() }))
 vi.mock('../../lib/auth/auth', () => ({ auth: { getUser: vi.fn() } }))
 vi.mock('../../lib/log', () => ({
@@ -136,4 +140,61 @@ it('shows the same ingredient count on the full recipe while keeping all ingredi
   expect(html).toMatch(/<dt[^>]*>ingredients<\/dt><dd[^>]*><span[^>]*>2<\/span><\/dd>/)
   expect(html).toContain('salt')
   expect(html).toContain('This recipe is for 2 servings')
+})
+
+it('shows the original two-serving recipe while picked in an order for four', async () => {
+  const { mealQuery } = await import('../meals/meals')
+  const { recipeCacheContext } = await import('../meals/servings')
+  const recipe: Meal = { ...summary, servings: 2, prepared: null,
+    ingredients: [{ name: 'rice', quantity: .33, unit: 'cup', preparation: null }],
+    steps: [{ text: 'Cook the rice.', ingredients: [0], timer_minutes: 10 }] }
+  const pickedOrder: GroceryOrder = order(recipe, true)
+  const client: QueryClient = new QueryClient()
+  client.setQueryData(mealQuery(recipe.id, recipeCacheContext(pickedOrder, recipe.id, false)).queryKey, recipe)
+  const html: string = renderToStaticMarkup(<QueryClientProvider client={client}>
+    <OrderSession.Provider value="phone">
+      <MealPage mealId={recipe.id} order={pickedOrder} servings={null} picking
+        selection={<button>Added to order</button>} />
+    </OrderSession.Provider>
+  </QueryClientProvider>)
+  expect(html).toContain('This recipe is for 2 servings')
+  expect(html).not.toContain('This recipe is for 4 servings')
+  expect(html).toContain('⅓ cup')
+  expect(html).toContain('Added to order')
+  expect(html).not.toContain('aria-label="Servings"')
+  expect(pickedOrder.picks).toEqual([{ meal_id: recipe.id, servings: 4 }])
+})
+
+it('renders kitchen fractions for previews without rescaling their effective quantities', () => {
+  const recipe: Meal = { ...summary, servings: 2, prepared: null,
+    ingredients: [{ name: 'rice', quantity: .2, unit: 'cup', preparation: null },
+      { name: 'broth', quantity: .33, unit: 'cup', preparation: null }],
+    steps: [{ text: 'Cook together.', ingredients: [0, 1], timer_minutes: 10 }] }
+  const client: QueryClient = new QueryClient()
+  client.setQueryData(queryKeys.meal(recipe.id), recipe)
+  const html: string = renderToStaticMarkup(<QueryClientProvider client={client}>
+    <MealPage mealId={recipe.id} servings={3} />
+  </QueryClientProvider>)
+  expect(html).toContain('⅓ cup')
+  expect(html).toContain('½ cup')
+  expect(html).not.toContain('0.30000000000000004')
+  expect(html).not.toContain('0.495')
+  expect(html).toContain('Provisional preview')
+})
+
+it.each([false, true])('keeps confirmed consumption exact, including quarters (legacy=%s)', (legacy_scaled) => {
+  const quantities: number[] = [.25, 1.88, 3.01, .0625, .004, .33]
+  const recipe: Meal = { ...summary, servings: 2,
+    ingredients: quantities.map((quantity, n) => ({ name: `ingredient ${n}`, quantity, unit: null, preparation: null })),
+    steps: [{ text: 'Combine.', ingredients: [0, 1, 2, 3, 4, 5], timer_minutes: null }],
+    prepared: { build_id: 'confirmed', base_revision: summary.revision, servings: 5, legacy_scaled,
+      ingredients: quantities.map((quantity, n) => ({ name: `ingredient ${n}`, quantity, unit: null, preparation: null })),
+      steps: [{ text: 'Combine confirmed amounts.', ingredients: [0, 1, 2, 3, 4, 5], timer_minutes: null }] } }
+  const client: QueryClient = new QueryClient()
+  client.setQueryData(queryKeys.meal(recipe.id), recipe)
+  const html: string = renderToStaticMarkup(<QueryClientProvider client={client}>
+    <MealPage mealId={recipe.id} servings={5} />
+  </QueryClientProvider>)
+  for (const value of ['¼', '1.88', '3.01', '0.0625', '0.004', '0.33']) expect(html).toContain(`>${value}</span>`)
+  expect(html).toContain('Combine confirmed amounts.')
 })

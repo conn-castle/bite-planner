@@ -67,7 +67,7 @@ Each step does one thing.
 
 The list is made in three stages:
 
-1. Python scales each picked meal's ingredients to its servings (deterministic).
+1. Python supplies original recipes, actual base yields, chosen servings, and compact proportional estimates. In the existing list-building run, the agent confirms practical cooking amounts and matching step texts. Matching base yields are identity-confirmed by the worker.
 2. An AI agent combines those ingredients into one list of things to buy (e.g. "1 onion" and "1 cup diced onion" become onions), grouped by aisle.
 3. An agent shops that list at Instacart: it chooses the exact product for each item, with alternatives; the user reviews them in the app, picks the delivery day and latest time, and approves, and the order is booked without anything more to do.
 
@@ -81,11 +81,11 @@ Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-2
 - [x] Changing the picked meals or their servings after the list was built rebuilds it from scratch; the user's changes to the old list are dropped. (Generation isn't deterministic and can change the list a lot, so there is no merging.)
 - [x] The user can remove items from the shopping list and change their quantities.
 - [x] Items assumed to be on hand are never on the list. The list is the same for every household and isn't editable: salt, pepper, olive oil, vegetable oil, water. When the meals need any of them, an icon on the shopping list shows it; tapping it lists the assumed items these recipes need. They aren't shown otherwise (they'd be noise).
-- [x] Every scaled ingredient line ends up in exactly one item to buy or one staple; the agent says which lines each covers, and the list isn't saved until every line is covered.
+- [x] Every confirmed ingredient line ends up in exactly one item to buy or one staple; the agent says which lines each covers, and the list isn't saved until every line is covered.
 - [x] Things counted (lemons, onions) are rounded up to whole ones; amounts in a unit keep up to two decimals (the product is chosen in stage 3).
 - [x] Items are grouped by aisle: produce, meat & seafood, dairy & eggs, frozen, pantry, and other (for what fits none of them).
 - [x] The list is made and then shopped in one wait after servings; the shopping list step shows the chosen Wegmans products by aisle, as tiles (picture, the item and the product under it, an icon for what the household has bought before, price, how many, and a × to not buy it). The list of things to buy is no longer a step of its own (stage 3).
-- [x] The agent gets the list (what to buy) and the meals with their scaled ingredients (for reference). For each item it chooses the product that best fits what the meals need, enough to cover the item's amount on the list, breaking ties by what the household has bought before, plus up to eight alternatives, or why there are none.
+- [x] The agent gets the list (what to buy) and the meals with the build's saved prepared ingredients and steps (for reference). For each item it chooses the product that best fits what the meals need, enough to cover the item's amount on the list, breaking ties by what the household has bought before, plus up to eight alternatives, or why there are none.
 - [x] An item Wegmans doesn't have comes with alternatives to buy and/or why the meal works without it. Such items come first, in a red card; the user skips each or picks an alternative before going on.
 - [x] Tapping a product opens its page: whether it was bought before and what it's for; the user can change how many, switch to an alternative (up to eight), or not buy it.
 - [x] During list generation, before any Instacart interaction, the agent supplies one broader search term per item (for example, chicken sausage → sausage). Shopping code automatically runs that single search and saves its matching products. More alternatives on the product page shows those saved matches immediately, with pictures, prices, sizes, bought-before badges, and suggested quantities. It makes no live search, expands no queries, and keeps the curated alternatives separate. The single search's result count applies (10 in the live integration tests); old lists without a term need to be generated again to gain this feature.
@@ -174,3 +174,6 @@ Personal settings:
 - Having suggestions available immediately, such as generating them ahead of time (to discuss; the ready notification may change with it).
 - Meal preferences the household can check in settings (well after launch), which fill the suggestion agent's instructions; "low effort to cook" becomes one of them.
 - Capturing each job's full cost robustly (the agent's tokens and dollars, the Fargate task, and anything else it uses), stored with the job, so we can estimate what the service would cost to run as a product.
+
+- [x] A successful list build stores one prepared recipe snapshot, atomically with its items. Recipe and cooking views at the order's servings use those exact amounts and step texts, retaining base units, preparation, artwork, ingredient assignments, and timers. Recipe consumption can be fractional even when the shopping list buys whole pieces.
+- [x] Recipe servings controls remain a local, provisional what-if calculated from the original recipe, without changing the order or running an agent. Reset to the ordered servings restores the saved prepared recipe. Unbuilt/stale views are provisional; older backfilled orders honestly label scaled ingredients and unchanged original steps.

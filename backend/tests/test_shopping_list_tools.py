@@ -253,7 +253,7 @@ def test_done_says_what_is_not_covered_until_every_line_is(tools: MCPServer, job
     assert almost[0] and almost[1].endswith(": Not covered yet: 2c (8 oz ground beef).")
     assert complete == (False, "Complete: 3 items and 1 staples cover all 6 lines.")
     # What the worker saves: each item and staple with the meals its lines are from.
-    assert shopping.finished_list(job_dir, ListJob(lines=LINES)) == [
+    assert shopping.finished_list(job_dir, ListJob(lines=LINES)).items == [
         ListEntry(
             name="yellow onions",
             more_alternatives_query="yellow onions",
@@ -291,7 +291,13 @@ def test_no_tool_sends_the_agent_looking_for_the_job_directory(tools: MCPServer)
     # The server is given the job directory; what the agent reads of its tools mustn't ask for it.
     listed = asyncio.run(tools.list_tools())
 
-    assert {tool.name for tool in listed} == {"add_item", "add_staple", "remove", "done"}
+    assert {tool.name for tool in listed} == {
+        "adapt_recipe",
+        "add_item",
+        "add_staple",
+        "remove",
+        "done",
+    }
     for tool in listed:
         assert "job" not in json.dumps(tool.model_dump(mode="json")).lower(), tool.name
 
