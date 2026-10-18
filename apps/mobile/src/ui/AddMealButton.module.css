@@ -18,6 +18,12 @@
   cursor: pointer;
 }
 .compact { height: 34px; }
+/* Match the recipe toolbar's round Back control; .cc-hit keeps a 44px tap area. */
+.iconOnly {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
 .button:active:not(:disabled) { transform: scale(.96); }
 .button:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
 .button[aria-pressed='true'] { background: var(--cc-ink); color: var(--cc-on-ink); }
