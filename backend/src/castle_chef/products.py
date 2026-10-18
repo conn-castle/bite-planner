@@ -16,6 +16,7 @@ from castle_chef_agent.products import (
     more_choices,
     problems,
 )
+from castle_chef_agent.shopping import recipe_lines
 from sqlmodel import Session, col, select
 
 from castle_chef import prompts, shopping
@@ -49,8 +50,8 @@ def shop_context(session: Session, build: Job, store: str) -> ShopContext:
     """The agent's items, context, and instructions for shopping a build's list."""
     if build.list_source is None:
         raise InvalidProducts(f"Build {build.id} has no picks.")
-    scaled = shopping.scaled_meals(session, build.list_source)
-    names = {meal.meal.id: meal.meal.name for meal in scaled}
+    prepared = shopping.prepared_meals(session, build)
+    names = {meal.meal.id: meal.meal.name for meal, _ in prepared}
     items = items_to_buy(session, build.id)
     shop_items = [
         ShopItem(
@@ -78,8 +79,10 @@ def shop_context(session: Session, build: Job, store: str) -> ShopContext:
         ),
         meals="\n".join(
             f"{meal.meal.name}, {meal.servings} servings: "
-            + "; ".join(line.text for line in meal.lines)
-            for meal in scaled
+            + "; ".join(line.text for line in recipe_lines(meal.context, recipe.quantities))
+            + " Steps: "
+            + " ".join(recipe.steps)
+            for meal, recipe in prepared
         ),
     )
     return ShopContext(

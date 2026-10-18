@@ -10,6 +10,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
+from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_OID, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
@@ -20,16 +21,17 @@ from castle_chef_agent.checkout import Checkout, QuoteLine
 from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ItemChoice, ProductCount
-from castle_chef_agent.shopping import Aisle
+from castle_chef_agent.shopping import Aisle, PreparedRecipes
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlmodel import Session, col, select
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive, Scope, Send
 
 from castle_chef import api as api_module
-from castle_chef import booking, delivery, household, orders, products
+from castle_chef import booking, delivery, household, orders, products, shopping
 from castle_chef.api import app, create_app
 from castle_chef.auth import AuthError, AuthUnavailable, Principal, WebhookRejected
 from castle_chef.checkout import SIGNED_OUT_ERROR, Quote
@@ -361,7 +363,15 @@ def finish_list(job_id: str, items: list[ListEntry] | None = None, shop: bool = 
             ],
             job.list_source,
         )
-        assert finish_job(worker_session, UUID(job_id))
+        from tests.test_prepared_recipes import proportional_snapshot
+
+        assert finish_job(
+            worker_session,
+            UUID(job_id),
+            prepared_recipes=proportional_snapshot(
+                shopping.recipe_meals(worker_session, job.list_source)
+            ),
+        )
     if shop:
         shop_list(job_id)
 
@@ -1927,7 +1937,9 @@ def test_placed_orders_are_listed_from_the_day_they_cover(
         "delivery_date": second["delivery_date"],
         "delivery_by": "18:00:00",
         "next_delivery_date": second["next_delivery_date"],
-        "meals": [meal | {"servings": 4}],
+        "meals": [
+            meal | {"servings": 4, "prepared_build_id": second["shopping_list"]["job"]["id"]}
+        ],
         "shopping_list": second["shopping_list"]["items"],
         # Delivery is within four days: it's booking.
         "book_state": "booking",
@@ -1984,6 +1996,7 @@ def test_a_suggestion_opens_as_its_full_recipe(client: TestClient) -> None:
                 {"icon": "ground_meat", "color": "brown"},
             ],
         },
+        "prepared": None,
         "servings": 2,
         # Each step with its timer and the ingredients it uses (by position).
         "steps": [
@@ -3861,3 +3874,326 @@ def test_a_caller_that_hangs_up_is_not_logged_as_a_defect(
     events = [(r.getMessage(), r.levelname) for r in caplog.records if r.name == "castle_chef.api"]
     assert ("http.client_gone", "WARNING") in events
     assert not [event for event in events if event[1] == "ERROR"]
+
+
+def test_prepared_recipe_is_one_snapshot_for_recipe_list_and_shop_reference(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from castle_chef_agent.jobfiles import write_context
+    from castle_chef_agent.server import Tools, shopping_list_server
+    from castle_chef_agent.shopping import ListJob
+
+    from castle_chef import worker
+    from castle_chef.api import MealOut
+    from castle_chef.models import MealIngredient, MealStep
+    from tests.test_prepared_recipes import adaptation, context
+    from tests.test_products_tools import call
+
+    order_id, [meal_id, other_id] = with_suggestions(client, names=("Beans", "Other"))
+    with Session(get_engine()) as session:
+        base = session.get_one(Meal, UUID(meal_id))
+        base.ingredients.clear()
+        base.ingredients = [
+            MealIngredient(
+                meal_id=base.id,
+                position=n,
+                name=i.name,
+                quantity=i.quantity,
+                unit=i.unit,
+                preparation=i.preparation,
+                icon=Icon.BEANS if n == 0 else None,
+                color=Color.BROWN if n == 0 else None,
+            )
+            for n, i in enumerate(context().ingredients)
+        ]
+        base.steps = [MealStep.model_validate(s.model_dump()) for s in context().steps]
+        session.add(base)
+        session.commit()
+    ok(pick(client, order_id, meal_id))
+    ok(set_servings(client, order_id, meal_id, 5))
+    pending = ok(request_list(client, order_id), 201)
+    assert get_meal(client, meal_id)["prepared"] is None
+
+    def fake_agent(
+        job_dir: Path, prompt: str, tools: Tools, ctx: BaseModel, tool_args: list[str] | None = None
+    ) -> None:
+        assert tools == Tools.SHOPPING_LIST
+        assert isinstance(ctx, ListJob)
+        assert ctx.recipes[0].base_servings == 2 and ctx.recipes[0].servings == 5
+        assert ctx.recipes[0].ingredients[0].quantity == 0.75
+        assert "[estimate 1.88]" in prompt
+        job_dir.mkdir(parents=True, exist_ok=True)
+        write_context(job_dir, ctx)
+        server = shopping_list_server(job_dir)
+        assert not call(server, "adapt_recipe", **adaptation())[0]
+        for name, line, quantity, unit in [("beans", "1a", 2, "can"), ("lemon", "1b", 0.25, None)]:
+            assert not call(
+                server,
+                "add_item",
+                name=name,
+                more_alternatives_query=name,
+                lines=[line],
+                quantity=quantity,
+                unit=unit,
+                aisle="pantry",
+            )[0]
+        assert not call(server, "add_staple", staple="salt", lines=["1c"])[0]
+        assert not call(server, "done")[0]
+
+    monkeypatch.setattr(worker, "run_agent", fake_agent)
+    with Session(get_engine()) as session:
+        claimed = claim_job(session, UUID(pending["id"]))
+    assert claimed is not None
+    result = worker.process_job(claimed)
+    assert isinstance(result, worker.ListItems)
+    # process_job returns data; it does not persist the snapshot.
+    with Session(get_engine()) as session:
+        assert session.get_one(Job, claimed.id).prepared_recipes is None
+        assert shopping.items_of(session, claimed.id) == []
+    saved, shop_id = worker._save(claimed, result, {})
+    assert saved and shop_id is not None  # never execute that shopping job
+    actual = MealOut.model_validate(get_meal(client, meal_id))
+    prepared = actual.prepared
+    assert prepared is not None and not prepared.legacy_scaled
+    assert actual.servings == 2 and actual.ingredients[0].quantity == 0.75
+    assert prepared.servings == 5 and prepared.ingredients[0].quantity == 2
+    assert prepared.ingredients[1].quantity == 0.25
+    assert prepared.steps[0].text == "Heat 1½ cans beans; reserve ½ can. Add ¼ lemon and salt."
+    assert prepared.steps[0].ingredients == [0, 1, 2] and prepared.steps[0].timer_minutes == 7
+    assert (
+        prepared.ingredients[0].preparation == "drained" and prepared.ingredients[0].unit == "can"
+    )
+    assert actual.picture is not None and actual.picture.ingredients[0].icon == Icon.BEANS
+    assert get_meal(client, other_id)["prepared"] is None
+    assert client.get(f"/v1/meals/{meal_id}", headers=as_user(NEIGHBOR)).status_code == 404
+    with Session(get_engine()) as session:
+        build = session.get_one(Job, claimed.id)
+        entries = shopping.items_of(session, build.id)
+        assert {i.name: i.quantity for i in entries} == {"beans": 2, "lemon": 1, "salt": None}
+        shop_prompt = products.shop_context(session, build, "Wegmans").prompt
+        assert "2 can beans, drained" in shop_prompt and "0.25 lemon" in shop_prompt
+        assert prepared.steps[0].text in shop_prompt and prepared.steps[1].text in shop_prompt
+    assert ok(request_list(client, order_id))["id"] == str(claimed.id)
+    # A source change masks the previous recipe immediately, without changing base revision.
+    ok(set_servings(client, order_id, meal_id, 6))
+    assert get_meal(client, meal_id)["prepared"] is None
+    with Session(get_engine()) as session:
+        [fresh] = shopping.recipe_meals(session, shopping.current_source(session, UUID(order_id)))
+        assert fresh.context.ingredients[0].quantity == 0.75 and fresh.context.base_servings == 2
+        assert fresh.context.servings == 6
+    ok(set_servings(client, order_id, meal_id, 5))
+    assert get_meal(client, meal_id)["prepared"]["build_id"] == str(claimed.id)
+    shop_list(str(claimed.id))  # deterministic local products fixture, no provider
+    ok(
+        place(
+            client,
+            order_id,
+            dates=(tomorrow() + timedelta(days=7), tomorrow() + timedelta(days=10)),
+        )
+    )
+    with Session(get_engine()) as session:
+        from castle_chef.models import JobKind
+
+        # Placed recipes follow the newest succeeded build owning their list,
+        # regardless of a newer failed build record.
+        build = session.get_one(Job, claimed.id)
+        session.add(
+            Job(
+                id=uuid4(),
+                grocery_order_id=build.grocery_order_id,
+                kind=JobKind.BUILD_LIST,
+                requested_by=build.requested_by,
+                status=JobStatus.FAILED,
+                list_source=build.list_source,
+                error="Old retry failed.",
+            )
+        )
+        session.commit()
+    assert get_meal(client, meal_id)["prepared"]["build_id"] == str(claimed.id)
+    [placed] = placed_orders(client, tomorrow())
+    assert placed["meals"][0]["prepared_build_id"] == str(claimed.id)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "servings",
+        "revision",
+        "failed",
+        "stale",
+        "superseded",
+        "discard",
+        "finish_race",
+        "bad_snapshot",
+        "zero_snapshot",
+        "legacy_snapshot",
+    ],
+)
+def test_prepared_save_never_leaks_items_or_snapshot(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    change: str,
+) -> None:
+    from castle_chef import worker
+    from castle_chef.models import GroceryOrderMeal, JobKind
+    from tests.test_prepared_recipes import proportional_snapshot
+
+    order_id, [meal_id] = with_suggestions(client, names=("Beans",))
+    ok(pick(client, order_id, meal_id))
+    pending = ok(request_list(client, order_id), 201)
+    with Session(get_engine()) as session:
+        claimed = claim_job(session, UUID(pending["id"]))
+        assert claimed is not None and claimed.list_source is not None
+        prepared = proportional_snapshot(shopping.recipe_meals(session, claimed.list_source))
+    result = worker.ListItems(
+        items=[ListEntry(name="beans", quantity=2, unit="can", aisle=Aisle.PANTRY, meals=[1])],
+        source=claimed.list_source,
+        prepared=prepared,
+    )
+    with Session(get_engine()) as session:
+        if change == "servings":
+            session.get_one(GroceryOrderMeal, (UUID(order_id), UUID(meal_id))).servings = 6
+        elif change == "revision":
+            session.get_one(Meal, UUID(meal_id)).revision += 1
+        elif change == "failed":
+            fail_job(session, claimed.id, "Failed during agent run.")
+        elif change == "stale":
+            session.execute(
+                text("UPDATE job SET started_at = now() - interval '3 hours' WHERE id=:id"),
+                {"id": claimed.id},
+            )
+        elif change == "superseded":
+            fail_job(session, claimed.id, SUPERSEDED_ERROR)
+        elif change == "discard":
+            session.delete(session.get_one(GroceryOrder, UUID(order_id)))
+        elif change == "finish_race":
+            # Simulate the final guarded UPDATE losing its running predicate.
+            def lose_finish(
+                s: Session,
+                job_id: UUID,
+                error: str | None = None,
+                *,
+                prepared_recipes: PreparedRecipes | None = None,
+            ) -> bool:
+                s.rollback()
+                return False
+
+            monkeypatch.setattr(worker, "finish_job", lose_finish)
+        elif change == "zero_snapshot":
+            result.prepared.recipes[0].quantities[0] = 0
+        elif change == "legacy_snapshot":
+            result.prepared.legacy_scaled = True
+        elif change == "bad_snapshot":
+            result.prepared.recipes[0].servings = 12
+        session.commit()
+    monkeypatch.setattr(worker, "_notify_failed", lambda *_args: None)
+    with caplog.at_level(logging.INFO, logger="castle_chef.worker"):
+        assert worker._save(claimed, result, {}) == (False, None)
+    if change in {"servings", "revision"}:
+        [event] = [r for r in caplog.records if r.getMessage() == "job.superseded"]
+        assert event.levelno == logging.INFO
+    elif change == "legacy_snapshot":
+        [event] = [r for r in caplog.records if r.getMessage() == "job.save_failed"]
+        assert event.levelno == logging.ERROR
+    with Session(get_engine()) as session:
+        build = session.get(Job, claimed.id)
+        assert build is None or build.prepared_recipes is None
+        if change == "legacy_snapshot":
+            assert build is not None and build.error is not None
+            assert "legacy-scaled recipes" in build.error
+            assert "order or recipes changed" not in build.error
+        assert shopping.items_of(session, claimed.id) == []
+        assert session.exec(select(Job).where(Job.kind == JobKind.SHOP)).all() == []
+
+
+def test_worker_merges_identity_and_adapted_recipes_and_api_keeps_actual_base_yields(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from castle_chef_agent.jobfiles import write_context
+    from castle_chef_agent.server import Tools, shopping_list_server
+    from castle_chef_agent.shopping import ListJob
+
+    from castle_chef import worker
+    from castle_chef.api import MealOut
+    from tests.test_products_tools import call
+
+    order_id, ids = with_suggestions(client, names=("Legacy four", "Base two"))
+    with Session(get_engine()) as session:
+        legacy = session.get_one(Meal, UUID(ids[0]))
+        legacy.servings = 4
+        legacy.ingredients[0].quantity = 0.25
+        session.add(legacy)
+        session.commit()
+    for meal_id in ids:
+        ok(pick(client, order_id, meal_id))
+    ok(set_servings(client, order_id, ids[1], 5))
+    pending = ok(request_list(client, order_id), 201)
+    adaptations: list[int] = []
+
+    def fake(
+        job_dir: Path, prompt: str, tools: Tools, ctx: BaseModel, tool_args: list[str] | None = None
+    ) -> None:
+        assert isinstance(ctx, ListJob)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        write_context(job_dir, ctx)
+        server = shopping_list_server(job_dir)
+        for recipe in ctx.recipes:
+            if not recipe.ready:
+                adaptations.append(recipe.number)
+                assert not call(
+                    server,
+                    "adapt_recipe",
+                    meal=recipe.number,
+                    ingredients=[
+                        {
+                            "name": i.name,
+                            "quantity": None
+                            if i.quantity is None
+                            else i.quantity * recipe.servings / recipe.base_servings,
+                        }
+                        for i in recipe.ingredients
+                    ],
+                    steps=[s.text for s in recipe.steps],
+                )[0]
+            for index, ingredient in enumerate(recipe.ingredients):
+                from castle_chef_agent.shopping import letters
+
+                line = f"{recipe.number}{letters(index)}"
+                if ingredient.name == "salt":
+                    continue
+                assert not call(
+                    server,
+                    "add_item",
+                    name=f"{ingredient.name} {recipe.number}",
+                    more_alternatives_query=ingredient.name,
+                    quantity=1,
+                    aisle="pantry",
+                    lines=[line],
+                )[0]
+        assert not call(
+            server,
+            "add_staple",
+            staple="salt",
+            lines=[line.id for line in ctx.lines if line.text == "salt"],
+        )[0]
+        assert not call(server, "done")[0]
+
+    monkeypatch.setattr(worker, "run_agent", fake)
+    with Session(get_engine()) as session:
+        claimed = claim_job(session, UUID(pending["id"]))
+    assert claimed is not None
+    result = worker.process_job(claimed)
+    assert len(adaptations) == 1
+    assert worker._save(claimed, result, {})[0]
+    legacy_out = MealOut.model_validate(get_meal(client, ids[0]))
+    new_out = MealOut.model_validate(get_meal(client, ids[1]))
+    assert legacy_out.servings == 4 and new_out.servings == 2
+    assert legacy_out.prepared is not None and new_out.prepared is not None
+    assert legacy_out.prepared.servings == 4 and legacy_out.prepared.ingredients[0].quantity == 0.25
+    assert new_out.prepared.servings == 5
+    assert not legacy_out.prepared.legacy_scaled  # identity is new, even on an older base yield
+    assert legacy_out.prepared.build_id == new_out.prepared.build_id == claimed.id

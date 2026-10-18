@@ -102,8 +102,9 @@ function RoutedMeal({ href }: { href: string }) {
   return mealId ? (
     // Keyed: another meal, or other servings, starts its page afresh.
     <MealPage
-      key={`${mealId}:${params.get('servings')}`}
+      key={`${mealId}:${params.get('servings')}:${params.get('build')}`}
       mealId={mealId}
+      preparedBuildId={params.get('build') ?? undefined}
       tab={{ href }}
       rateable
       servings={orderedServings(params.get('servings'))}

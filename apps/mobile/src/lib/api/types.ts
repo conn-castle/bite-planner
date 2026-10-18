@@ -443,6 +443,7 @@ export interface PlacedOrder extends BookFields {
 
 /** A meal of a placed order, and how many were ordered of it. */
 export interface PlacedMeal extends MealSummary {
+  prepared_build_id?: string | null
   servings: number
 }
 
@@ -558,8 +559,18 @@ export interface MealStep {
   ingredients: number[]
 }
 
-/** The full recipe. */
+export interface PreparedRecipe {
+  build_id: string
+  base_revision: number
+  servings: number
+  legacy_scaled: boolean
+  ingredients: MealIngredient[]
+  steps: MealStep[]
+}
+
+/** The full original recipe, with a confirmed order recipe when its build is current. */
 export interface Meal extends MealSummary {
+  prepared?: PreparedRecipe | null
   servings: number
   steps: MealStep[]
   ingredients: MealIngredient[]

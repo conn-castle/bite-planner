@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from castle_chef_agent.shopping import PreparedRecipes
 from sqlalchemy import ColumnElement, case
 from sqlmodel import Session, col, func, select, update
 
@@ -183,7 +184,13 @@ def claim_job(session: Session, job_id: UUID) -> Job | None:
     return None
 
 
-def finish_job(session: Session, job_id: UUID, error: str | None = None) -> bool:
+def finish_job(
+    session: Session,
+    job_id: UUID,
+    error: str | None = None,
+    *,
+    prepared_recipes: PreparedRecipes | None = None,
+) -> bool:
     """Mark a running job succeeded (no error) or failed, in the caller's
     transaction, and commit. Returns False, rolling back everything the caller
     staged (e.g. its meals), if the job is no longer running (it was failed as
@@ -194,6 +201,7 @@ def finish_job(session: Session, job_id: UUID, error: str | None = None) -> bool
         .values(
             status=JobStatus.FAILED if error else JobStatus.SUCCEEDED,
             error=error,
+            prepared_recipes=prepared_recipes,
             finished_at=func.now(),
             updated_at=func.now(),
         )

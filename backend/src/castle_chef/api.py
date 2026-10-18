@@ -177,6 +177,7 @@ class PickOut(BaseModel):
 class PlacedMealOut(MealSummaryOut):
     """A meal of a placed order, and how many were ordered of it."""
 
+    prepared_build_id: UUID | None = None
     servings: int
 
 
@@ -406,7 +407,52 @@ class StepOut(BaseModel):
     ingredients: list[int]
 
 
+class PreparedRecipeOut(BaseModel):
+    build_id: UUID
+    base_revision: int
+    servings: int
+    legacy_scaled: bool
+    ingredients: list[IngredientOut]
+    steps: list[StepOut]
+
+
+def prepared_recipe_out(session: Session, meal: Meal) -> PreparedRecipeOut | None:
+    batch = session.get(Job, meal.job_id) if meal.job_id is not None else None
+    if batch is None:
+        return None
+    order = session.get_one(GroceryOrder, batch.grocery_order_id)
+    build = (
+        shopping.current_build(session, order.id)
+        if order.status == GroceryOrderStatus.DRAFT
+        else shopping.newest_built(session, order.id)
+    )
+    if build is None:
+        return None
+    for original, prepared in shopping.prepared_meals(session, build):
+        if original.meal.id != meal.id:
+            continue
+        assert build.prepared_recipes is not None
+        return PreparedRecipeOut(
+            build_id=build.id,
+            base_revision=prepared.base_revision,
+            servings=prepared.servings,
+            legacy_scaled=build.prepared_recipes.legacy_scaled,
+            ingredients=[
+                IngredientOut.model_validate(i, from_attributes=True).model_copy(
+                    update={"quantity": quantity}
+                )
+                for i, quantity in zip(meal.ingredients, prepared.quantities, strict=True)
+            ],
+            steps=[
+                StepOut.model_validate(step.model_dump()).model_copy(update={"text": text})
+                for step, text in zip(meal.steps, prepared.steps, strict=True)
+            ],
+        )
+    return None
+
+
 class MealOut(MealSummaryOut):
+    prepared: PreparedRecipeOut | None = None
     servings: int
     steps: list[StepOut]
     ingredients: list[IngredientOut]
@@ -1023,7 +1069,11 @@ def placed_order_out(
         delivery_by=order.delivery_by,
         next_delivery_date=next_delivery,
         meals=[
-            PlacedMealOut(**meal_summary(pick.meal, rated).model_dump(), servings=pick.servings)
+            PlacedMealOut(
+                **meal_summary(pick.meal, rated).model_dump(),
+                servings=pick.servings,
+                prepared_build_id=items[0].job_id if items else None,
+            )
             for pick in picks
         ],
         shopping_list=[item_out(item) for item in items],
@@ -2048,6 +2098,7 @@ def create_app() -> FastAPI:
         rated = ratings.of_meals(session, caller.household_id, [meal.id])
         return MealOut(
             **meal_summary(meal, rated).model_dump(),
+            prepared=prepared_recipe_out(session, meal),
             servings=meal.servings,
             steps=[StepOut.model_validate(step.model_dump()) for step in meal.steps],
             ingredients=[

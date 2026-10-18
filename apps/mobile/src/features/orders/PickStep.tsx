@@ -13,6 +13,7 @@ import { Note } from '../../ui/Note'
 import { Notice } from '../../ui/Notice'
 import { Stats } from '../../ui/Stats'
 import { usePrefetchMeal } from '../meals/cached'
+import { recipeCacheContext } from '../meals/servings'
 import { newestBatchState, suggestions } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
@@ -92,6 +93,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
           <MealCard
             key={meal.id}
             meal={meal}
+            prefetchContext={recipeCacheContext(order, meal.id, false)}
             added={picked.has(meal.id)}
             change={order.recipe_changes.find((change) => change.meal_id === meal.id)?.state}
             onToggle={() => void selection.toggle(meal)}
@@ -117,6 +119,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
 }
 
 interface MealCardProps {
+  prefetchContext?: string
   meal: MealSummary
   added: boolean
   change?: 'running' | 'ready' | 'failed'
@@ -129,8 +132,8 @@ interface MealCardProps {
  * A suggestion: open its recipe, add it, or ✕ it ("don't show meals like
  * this"), which also takes it out of the order and can be undone.
  */
-function MealCard({ meal, added, change, onToggle, onDismiss, onOpen }: MealCardProps) {
-  const prefetch = usePrefetchMeal()
+function MealCard({ meal, prefetchContext, added, change, onToggle, onDismiss, onOpen }: MealCardProps) {
+  const prefetch = usePrefetchMeal(prefetchContext)
   const press = usePressIntent(() => prefetch(meal.id))
   // A meal marked "not for us" is never picked (see edits.ts), so it's never also added.
   const notForUs = meal.rating === 'not_for_us'

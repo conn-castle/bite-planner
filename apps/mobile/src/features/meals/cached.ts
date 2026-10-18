@@ -22,7 +22,7 @@ export function cachedMealSummary(queryClient: QueryClient, mealId: string): Mea
 }
 
 /** Starts loading a recipe before it's opened (e.g. as its row is pressed); a fresh cached one isn't fetched again. */
-export function usePrefetchMeal(): (mealId: string) => void {
+export function usePrefetchMeal(context?: string): (mealId: string) => void {
   const queryClient = useQueryClient()
-  return (mealId) => void queryClient.prefetchQuery(mealQuery(mealId))
+  return (mealId) => void queryClient.prefetchQuery(mealQuery(mealId, context))
 }

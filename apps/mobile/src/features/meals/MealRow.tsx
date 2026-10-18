@@ -12,6 +12,7 @@ import { MealRatingMark } from './MealRating'
 interface MealRowProps {
   meal: MealSummary
   onOpen: () => void
+  prefetchContext?: string
   /** Shows the meal's rating: for meals of placed orders. */
   rated?: boolean
   /** How many were ordered of it, shown with its time: for meals of placed orders. */
@@ -25,8 +26,8 @@ interface MealRowProps {
 }
 
 /** A meal in a list of meals: its picture, time, and name, and the rating once it's been ordered. */
-export function MealRow({ meal, onOpen, rated = false, servings, control, fullName = false, recipeChange }: MealRowProps) {
-  const prefetch = usePrefetchMeal()
+export function MealRow({ meal, onOpen, rated = false, servings, control, fullName = false, recipeChange, prefetchContext }: MealRowProps) {
+  const prefetch = usePrefetchMeal(prefetchContext)
   const minutes = mealMinutes(meal)
   const facts: string | undefined = [minutes != null && formatMinutes(minutes), servings != null && plural(servings, 'serving')]
     .filter((part) => part !== false).join(' · ') || undefined

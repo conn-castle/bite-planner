@@ -139,7 +139,7 @@ class IngredientInput(BaseModel):
 class StepInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text: str = Field(min_length=1, description="The step, as the cook reads it.")
+    text: str = Field(min_length=1, pattern=r"\S", description="The step, as the cook reads it.")
     timer_minutes: int | None = Field(
         default=None,
         ge=1,

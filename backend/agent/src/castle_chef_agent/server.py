@@ -106,6 +106,28 @@ def shopping_list_server(job_dir: Path) -> MCPServer:
     server = MCPServer("castle-chef")
 
     @server.tool()
+    def adapt_recipe(
+        meal: Annotated[int, Field(description="The meal number.")],
+        ingredients: list[shopping.RecipeAmounts],
+        steps: list[str],
+    ) -> str:
+        """Confirm complete ordered ingredient amounts and matching step texts.
+        Keep original names, units, preparation, step order, methods, and divided uses.
+        """
+        try:
+            lines = shopping.adapt_recipe(
+                job_dir,
+                shopping.RecipeAdaptation(
+                    meal=meal,
+                    ingredients=ingredients,
+                    steps=steps,
+                ),
+            )
+        except (ValidationError, shopping.ListRefused) as error:
+            raise ToolError(str(error)) from error
+        return "Confirmed:\n" + "\n".join(f"- {line.id}: {line.text}" for line in lines)
+
+    @server.tool()
     def add_item(
         name: Annotated[
             str,

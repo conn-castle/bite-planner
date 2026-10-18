@@ -1,5 +1,5 @@
 """The shopping list the agent makes (the shopping-list tools): items to buy
-and the staples the meals use, each covering scaled ingredient lines, kept in the
+and the staples the meals use, each covering confirmed ingredient lines, kept in the
 job directory for the worker. Every change is checked as it's made."""
 
 import math
@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
@@ -82,15 +83,114 @@ class StapleInput(BaseModel):
     lines: list[str] = Field(min_length=1)
 
 
+class RecipeIngredient(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    quantity: float | None = Field(gt=0, allow_inf_nan=False)
+    unit: str | None = None
+    preparation: str | None = None
+
+
+class RecipeStep(BaseModel):
+    text: str
+    timer_minutes: int | None = None
+    ingredients: list[int] = []
+
+
+class RecipeAmounts(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    quantity: float | None = Field(gt=0, allow_inf_nan=False, strict=True)
+
+
+class RecipeAdaptation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    meal: int = Field(ge=1)
+    ingredients: list[RecipeAmounts]
+    steps: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]]
+
+
+class PreparedRecipe(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    meal_id: UUID
+    base_revision: int = Field(ge=0)
+    servings: int = Field(gt=0)
+    quantities: list[Annotated[float, Field(ge=0, allow_inf_nan=False)] | None]
+    steps: list[Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]]
+
+
+class PreparedRecipes(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recipes: list[PreparedRecipe]
+    legacy_scaled: bool = False
+
+
+class RecipeContext(BaseModel):
+    number: int
+    meal_id: UUID
+    base_revision: int
+    base_servings: int
+    servings: int
+    ingredients: list[RecipeIngredient]
+    steps: list[RecipeStep]
+
+    @property
+    def ready(self) -> bool:
+        return self.base_servings == self.servings
+
+
+def letters(index: int) -> str:
+    """a through z, aa, ab, ...: stable ingredient positions."""
+    result = ""
+    index += 1
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        result = chr(ord("a") + remainder) + result
+    return result
+
+
+def recipe_lines(recipe: RecipeContext, quantities: list[float | None]) -> list[IngredientLine]:
+    lines: list[IngredientLine] = []
+    for index, (ingredient, quantity) in enumerate(
+        zip(recipe.ingredients, quantities, strict=True)
+    ):
+        amount = (
+            []
+            if quantity is None
+            else [
+                str(int(quantity)) if quantity.is_integer() else str(quantity),
+                *filter(None, [ingredient.unit]),
+            ]
+        )
+        text = " ".join([*amount, ingredient.name])
+        lines.append(
+            IngredientLine(
+                id=f"{recipe.number}{letters(index)}",
+                meal=recipe.number,
+                text=f"{text}, {ingredient.preparation}" if ingredient.preparation else text,
+                has_amount=quantity is not None,
+            )
+        )
+    return lines
+
+
 class ListDraft(BaseModel):
     """The list the agent has made so far (its tools keep it in the job directory)."""
 
+    model_config = ConfigDict(extra="forbid")
+
+    recipes: list[RecipeAdaptation] = []
     items: list[ListItemInput] = []
     staples: list[StapleInput] = []
 
 
 class IngredientLine(BaseModel):
-    """One scaled ingredient line of a picked meal, as the prompt shows it."""
+    """One stable ingredient position of a picked meal."""
 
     id: str  # e.g. "2c": the meal's number and the line's letter
     meal: int  # the meal's number, from 1
@@ -102,6 +202,7 @@ class ListJob(BaseModel):
     """What a build_list job's tools check against (the worker writes it)."""
 
     lines: list[IngredientLine]
+    recipes: list[RecipeContext] = []
 
 
 class ListRefused(Exception):
@@ -135,11 +236,84 @@ def _covered(draft: ListDraft) -> Iterator[tuple[str, str]]:
         yield from ((line, f"the staple {staple.staple.value}") for line in staple.lines)
 
 
+def confirmed_recipes(job: ListJob, draft: ListDraft) -> PreparedRecipes:
+    """Validate against the caller's context; identities always come from the base."""
+    known = {recipe.number: recipe for recipe in job.recipes}
+    adapted: dict[int, RecipeAdaptation] = {}
+    for raw in draft.recipes:
+        adaptation = RecipeAdaptation.model_validate(raw.model_dump())
+        recipe = known.get(adaptation.meal)
+        if recipe is None:
+            raise ListRefused(f"There is no meal {adaptation.meal}.")
+        if recipe.ready:
+            raise ListRefused(f"Meal {recipe.number} is already ready from its original recipe.")
+        if adaptation.meal in adapted:
+            raise ListRefused(f"Meal {recipe.number} was confirmed twice.")
+        if [i.name for i in adaptation.ingredients] != [i.name for i in recipe.ingredients]:
+            raise ListRefused(f"Meal {recipe.number}: keep every ingredient's name and order.")
+        if any(
+            (a.quantity is None) != (b.quantity is None)
+            for a, b in zip(adaptation.ingredients, recipe.ingredients, strict=True)
+        ):
+            raise ListRefused(f"Meal {recipe.number}: keep which ingredients have amounts.")
+        if len(adaptation.steps) != len(recipe.steps):
+            raise ListRefused(f"Meal {recipe.number}: supply every step in its original order.")
+        adapted[recipe.number] = adaptation
+    return PreparedRecipes(
+        recipes=[
+            PreparedRecipe(
+                meal_id=recipe.meal_id,
+                base_revision=recipe.base_revision,
+                servings=recipe.servings,
+                quantities=[i.quantity for i in recipe.ingredients]
+                if recipe.ready
+                else [i.quantity for i in adapted[recipe.number].ingredients],
+                steps=[step.text for step in recipe.steps]
+                if recipe.ready
+                else adapted[recipe.number].steps,
+            )
+            for recipe in job.recipes
+            if recipe.ready or recipe.number in adapted
+        ]
+    )
+
+
+def confirmed_lines(job: ListJob, draft: ListDraft) -> list[IngredientLine]:
+    prepared = {r.meal_id: r for r in confirmed_recipes(job, draft).recipes}
+    # Lines are the structural coverage inventory; recipe context determines readiness.
+    if not job.recipes:
+        return job.lines
+    return [
+        line
+        for recipe in job.recipes
+        if recipe.meal_id in prepared
+        for line in recipe_lines(recipe, prepared[recipe.meal_id].quantities)
+    ]
+
+
+def adapt_recipe(job_dir: Path, adaptation: RecipeAdaptation) -> list[IngredientLine]:
+    job = read_context(job_dir, ListJob)
+    with _changing(job_dir) as draft:
+        covered = dict(_covered(draft))
+        if any(line.meal == adaptation.meal and line.id in covered for line in job.lines):
+            raise ListRefused(
+                "Remove the meal's covered items and staples before adapting it again."
+            )
+        draft.recipes = [r for r in draft.recipes if r.meal != adaptation.meal] + [adaptation]
+        return [line for line in confirmed_lines(job, draft) if line.meal == adaptation.meal]
+
+
 def _line_problems(job: ListJob, draft: ListDraft, lines: list[str]) -> list[str]:
     known = {line.id for line in job.lines}
+    ready = {line.id for line in confirmed_lines(job, draft)}
     covered = dict(_covered(draft))
     problems = [f"There is no line {line}." for line in lines if line not in known]
     problems += [f"Line {line} is already in {covered[line]}." for line in lines if line in covered]
+    problems += [
+        f"Confirm the recipe before covering line {line}."
+        for line in lines
+        if line in known and line not in ready
+    ]
     if len(set(lines)) < len(lines):
         problems.append("A line is given twice.")
     return problems
@@ -230,17 +404,36 @@ def list_problems(job: ListJob, draft: ListDraft) -> list[str]:
     """What keeps the list from being done: every line covered exactly once, by
     known lines; a quantity wherever the lines give an amount; and something to
     buy. Empty when it's done."""
-    problems = []
+    try:
+        ready = confirmed_lines(job, draft)
+    except (ListRefused, ValidationError) as error:
+        return [str(error)]
+    ready_ids = {line.id for line in ready}
+    problems = [
+        f"Meal {recipe.number} needs adapt_recipe confirmation."
+        for recipe in job.recipes
+        if not any(line.meal == recipe.number for line in ready)
+    ]
     seen: dict[str, str] = {}
     for line, by in _covered(draft):
         if line in seen:
             problems.append(f"Line {line} is in both {seen[line]} and {by}.")
         seen.setdefault(line, by)
     known = {line.id for line in job.lines}
+    problems += [
+        f"Confirm the recipe before covering line {line}."
+        for line in seen
+        if line in known and line not in ready_ids
+    ]
     problems += [f"There is no line {line}." for line in seen if line not in known]
     if missing := [line for line in job.lines if line.id not in seen]:
         problems.append(
-            "Not covered yet: " + "; ".join(f"{line.id} ({line.text})" for line in missing) + "."
+            "Not covered yet: "
+            + "; ".join(
+                f"{line.id} ({next((r.text for r in ready if r.id == line.id), line.text)})"
+                for line in missing
+            )
+            + "."
         )
     problems += [
         problem for item in draft.items if (problem := _amount_problem(job, item)) is not None

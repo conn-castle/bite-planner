@@ -16,13 +16,14 @@ import styles from './MealPage.module.css'
 import { mealQuery } from './meals'
 import { MealRatingButton } from './MealRating'
 import { useRatingError } from './ratings'
-import { ingredientAmount } from './servings'
+import { recipeIngredientAmount, effectiveRecipe, recipeCacheContext } from './servings'
 import { RecipeFeedback } from './RecipeFeedback'
 
 const MAX_SERVINGS = 24
 
 interface MealPageProps {
   mealId: string
+  preparedBuildId?: string
   order?: GroceryOrder
   selection?: ReactNode
   selectionProblem?: string | null
@@ -46,25 +47,28 @@ interface MealPageProps {
  * them, and the steps. The meal's name and facts show at once from a list
  * already loaded (Home, History, the suggestions) while the rest loads.
  */
-export function MealPage({ mealId, tab, rateable = false, servings, picking = false, order, selection, selectionProblem }: MealPageProps) {
-  const meal = useQuery(mealQuery(mealId))
+export function MealPage({ mealId, tab, rateable = false, servings, picking = false, order, selection, selectionProblem, preparedBuildId }: MealPageProps) {
+  const context = recipeCacheContext(order, mealId, tab !== undefined, preparedBuildId)
+  const meal = useQuery(mealQuery(mealId, context))
   const queryClient = useQueryClient()
   const orderSummary = order?.jobs.flatMap((job) => job.meals).find((m) => m.id === mealId)
   const expectedRevision = orderSummary?.revision
   const outdated = expectedRevision !== undefined && meal.data !== undefined && meal.data.revision < expectedRevision
   useEffect(() => {
     if (!outdated) return
-    const key = mealQuery(mealId).queryKey
+    const key = mealQuery(mealId, context).queryKey
     void queryClient.cancelQueries({ queryKey: key, exact: true }).then(() =>
       queryClient.invalidateQueries({ queryKey: key, exact: true }))
-  }, [expectedRevision, outdated, mealId, queryClient])
+  }, [expectedRevision, outdated, mealId, context, queryClient])
   const summary = !outdated && meal.data ? meal.data : orderSummary ?? cachedMealSummary(queryClient, mealId)
   const ratingError = useRatingError([mealId])
   // The servings chosen here; until then, where they start.
   const [chosen, setChosen] = useState<number | null>(null)
   const [cooking, setCooking] = useState(false)
   const recipe = outdated ? undefined : meal.data
-  const shownServings = recipe && (chosen ?? servings ?? recipe.servings)
+  const orderServings = order?.picks.find((p) => p.meal_id === mealId)?.servings ?? servings
+  const effective = recipe ? effectiveRecipe(recipe, chosen ?? orderServings ?? recipe.servings, picking) : undefined
+  const shownServings = effective?.meal.servings
   // Cooking is for a meal on its way or eaten (from Orders or History), not one being picked.
   const cookable = tab !== undefined && recipe !== undefined && recipe.steps.length > 0
 
@@ -93,11 +97,12 @@ export function MealPage({ mealId, tab, rateable = false, servings, picking = fa
         <article className={styles.recipe}>
           <RecipeHeader meal={summary} />
           {order && <RecipeFeedback order={order} meal={recipe} summary={summary} />}
-          {order?.recipe_changes.some((c) => c.meal_id === mealId && c.state === 'ready') ? null : recipe && shownServings !== undefined ? (
+          {order?.recipe_changes.some((c) => c.meal_id === mealId && c.state === 'ready') ? null : recipe && effective && shownServings !== undefined ? (
             <RecipeBody
-              meal={recipe}
+              meal={effective.meal}
+              status={effective.status}
               servings={shownServings}
-              chosenServings={servings ?? recipe.servings}
+              chosenServings={orderServings ?? recipe.servings}
               onServings={setChosen}
               picking={picking}
             />
@@ -120,8 +125,8 @@ export function MealPage({ mealId, tab, rateable = false, servings, picking = fa
           </div>
         )
       )}
-      {cookable && shownServings !== undefined && (
-        <CookView meal={recipe} servings={shownServings} isOpen={cooking} onClose={() => setCooking(false)} />
+      {cookable && effective && (
+        <CookView meal={effective.meal} status={effective.status} isOpen={cooking} onClose={() => setCooking(false)} />
       )}
     </NavPage>
   )
@@ -146,6 +151,7 @@ function RecipeHeader({ meal }: { meal: MealSummary }) {
 }
 
 interface RecipeBodyProps {
+  status: 'prepared' | 'legacy' | 'preview' | 'original'
   meal: Meal
   servings: number
   /** The servings chosen for it (an order's, else the recipe's own), which Reset goes back to. */
@@ -155,7 +161,7 @@ interface RecipeBodyProps {
   picking: boolean
 }
 
-function RecipeBody({ meal, servings, chosenServings, onServings: setServings, picking }: RecipeBodyProps) {
+function RecipeBody({ meal, status, servings, chosenServings, onServings: setServings, picking }: RecipeBodyProps) {
   const ingredients = meal.ingredients
 
   return (
@@ -182,12 +188,17 @@ function RecipeBody({ meal, servings, chosenServings, onServings: setServings, p
         </div>
       )}
 
+      {!picking && <Note icon="users">
+        {status === 'prepared' ? 'Recipe prepared for your order.' : status === 'legacy'
+          ? 'Earlier order: ingredient amounts were scaled; steps retain the original amounts.'
+          : 'Provisional preview from the original recipe. Steps retain the original amounts. Your order is unchanged.'}
+      </Note>}
       <h2 className={styles.heading}>Ingredients{picking && '*'}</h2>
       <ul className={styles.ingredients}>
         {ingredients.map((ingredient, index) => (
           // Ingredients have no id; their order is fixed.
           <li key={index} className={styles.ingredient}>
-            <span className={styles.amount}>{ingredientAmount(ingredient, meal.servings, servings)}</span>
+            <span className={styles.amount}>{recipeIngredientAmount(ingredient, status)}</span>
             <span>
               {ingredient.name}
               {ingredient.preparation && `, ${ingredient.preparation}`}
@@ -197,8 +208,7 @@ function RecipeBody({ meal, servings, chosenServings, onServings: setServings, p
       </ul>
       {picking && (
         <Note icon="users">
-          * This recipe is for {plural(meal.servings, 'serving')}. It's scaled to the servings you choose in the
-          next step.
+          * This recipe is for {plural(meal.servings, 'serving')}. The shopping list prepares it for the servings you choose.
         </Note>
       )}
 

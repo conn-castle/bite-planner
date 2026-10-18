@@ -13,6 +13,7 @@ import { OrderCard } from '../../ui/OrderCard'
 import { NavPage } from '../../ui/Page'
 import { Skeleton } from '../../ui/Skeleton'
 import { MealRow } from '../meals/MealRow'
+import { recipeCacheContext } from '../meals/servings'
 import { BOOK_STATE_ICON, BOOK_STATE_LABEL, changeable, needsAttention } from '../orders/booking'
 import { BookingGroup } from '../orders/BookingGroup'
 import { listCounts } from '../orders/list'
@@ -139,6 +140,7 @@ function PlacedOrderView({ order, placed, next, today, base, onOpenFlow }: Place
           <MealRow
             key={meal.id}
             meal={meal}
+            prefetchContext={recipeCacheContext(undefined, meal.id, true, meal.prepared_build_id ?? undefined)}
             servings={meal.servings}
             onOpen={() => router.push(placedMealPath(base, meal))}
             rated

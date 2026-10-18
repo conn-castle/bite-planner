@@ -315,6 +315,13 @@ def test_before_shopping_rule_counts_any_build_even_old_source(
     build = api.JobOut.model_validate(ok(list_start(client, order_id), 201))
     with Session(get_engine()) as session:
         job = session.get_one(Job, build.id)
+        if build_status == JobStatus.SUCCEEDED:
+            from tests.test_prepared_recipes import proportional_snapshot
+
+            assert job.list_source is not None
+            job.prepared_recipes = proportional_snapshot(
+                shopping.recipe_meals(session, job.list_source)
+            )
         job.status = build_status
         job.started_at = utc_now() if build_status != JobStatus.PENDING else None
         session.add(job)
@@ -592,7 +599,7 @@ def test_recipe_revision_is_part_of_list_source_and_scaling_refuses_old_revision
         after = shopping.current_source(session, UUID(order_id))
         assert before.picks[0].revision == 0 and after.picks[0].revision == 1 and before != after
         with pytest.raises(shopping.InvalidList, match="recipe changed"):
-            shopping.scaled_meals(session, before)
+            shopping.recipe_meals(session, before)
 
 
 @pytest.mark.parametrize("failure", ["no_op", "missing", "no_done"])
@@ -758,10 +765,10 @@ def test_legacy_yield_reaches_worker_and_accept_scales_shopping_once(
     assert stored.servings == 2
     assert [i.quantity for i in stored.ingredients] == [4, 0.3, None]
     with Session(get_engine()) as session:
-        [scaled] = shopping.scaled_meals(session, shopping.current_source(session, UUID(order_id)))
+        [scaled] = shopping.recipe_meals(session, shopping.current_source(session, UUID(order_id)))
         assert scaled.servings == 4
         assert [line.text for line in scaled.lines] == [
-            "8 tortillas",
-            "0.6 lb ground beef, browned",
+            "4 tortillas",
+            "0.3 lb ground beef, browned",
             "salt",
         ]

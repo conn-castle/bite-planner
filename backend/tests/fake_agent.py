@@ -20,9 +20,12 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
+from castle_chef_agent.jobfiles import read_context
 from castle_chef_agent.runner import AgentSummary, tool_environment
+from castle_chef_agent.shopping import ListJob
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import CallToolResult, TextContent
@@ -221,8 +224,27 @@ async def use_tools() -> None:
                         "alternatives": [{"product_id": ids[1], "count": 1}],
                     },
                 )
-        elif "`add_item`" in prompt:
-            lines = re.findall(r"^- (\d+[a-z]+): (.*)$", prompt, re.MULTILINE)
+        elif "shopping-list" in server["args"]:
+            context = read_context(Path(cwd), ListJob)
+            for recipe in context.recipes:
+                if not recipe.ready:
+                    await call(
+                        "adapt_recipe",
+                        {
+                            "meal": recipe.number,
+                            "ingredients": [
+                                {
+                                    "name": i.name,
+                                    "quantity": None
+                                    if i.quantity is None
+                                    else i.quantity * recipe.servings / recipe.base_servings,
+                                }
+                                for i in recipe.ingredients
+                            ],
+                            "steps": [step.text for step in recipe.steps],
+                        },
+                    )
+            lines = [(line.id, line.text) for line in context.lines]
             salt = [line for line, text in lines if text.split(",")[0].endswith("salt")]
             rest = [line for line, text in lines if line not in salt]
             for index in range(int(meal_count)):
