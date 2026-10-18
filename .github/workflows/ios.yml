@@ -10,12 +10,18 @@ on:
       - 'apps/mobile/capacitor.config.ts'
       - '.github/workflows/ios.yml'
 
+# A new push to the pull request cancels its previous build (macOS minutes count 10x).
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   ios:
     runs-on: macos-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/mobile

@@ -38,6 +38,8 @@ env:
 jobs:
   rollback:
     runs-on: ubuntu-latest
+    # The drain alone may take 47 minutes (below), then the restore and the deploy.
+    timeout-minutes: 120
     permissions:
       contents: read
       id-token: write
