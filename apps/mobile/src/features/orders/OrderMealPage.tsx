@@ -11,7 +11,7 @@ export function OrderMealPage({ orderId, mealId, servings }: { orderId: string; 
   const selection = useToggleMeal(order.shown)
   const saving = useEditsPending()
   const summary = order.shown?.jobs.flatMap((j) => j.meals).find((m) => m.id === mealId)
-  const action = summary && servings === undefined ? <AddMealButton name={summary.name}
+  const action = summary && servings === undefined ? <AddMealButton iconOnly name={summary.name}
     added={order.shown?.picks.some((p) => p.meal_id === mealId) ?? false}
     disabled={summary.rating === 'not_for_us' || saving || order.shown?.lock?.session !== session}
     onToggle={() => void selection.toggle(summary)} /> : undefined

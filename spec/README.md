@@ -114,7 +114,7 @@ Cooking (decided 2026-10-04):
 
 Recipe feedback and detail selection (owner decisions 2026-10-16; implementation awaits final app/device review):
 
-- The recipe opened from Pick has Add/Added in its toolbar, toggling the same pick as the grid, at the household's checkout default; the recipe's base yield stays two. Feedback is available on unselected suggestions too.
+- The recipe opened from Pick has an icon-only +/✓ toggle in its toolbar, matching the round Back control (issue #17, 2026-10-18). Its accessible label names the Add/Remove action and recipe; it toggles the same pick as the grid, at the household's checkout default. The recipe's base yield stays two. Feedback is available on unselected suggestions too.
 - Feedback sends a freeform request, then shows “Changing your recipe · 0:42” using server timestamps and says the member can keep choosing or close the app. Durable job state resumes on return; no new ready push.
 - Accept / Reject / Revise. Only Accept of the exact proposal applies the full replacement. Revise uses the accepted recipe and prefills the earlier request for editing; no Restore original, chaining field, or reusable saved library.
 - Failed or stalled selected edits require an explicit choice: Keep current recipe, or Try again with a new attempt that blocks until decided (Nick: “Option 1: Require an explicit choice”). Named links to every selected blocker appear at Servings, List and Review.
