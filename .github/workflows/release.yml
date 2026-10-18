@@ -1,4 +1,4 @@
-# Every push to main is a release: CI, the images, a Neon snapshot of `main`,
+# Every push to main is a release (unless it only touches paths-ignore): CI, the images, a Neon snapshot of `main`,
 # migrations, a deploy to AWS (smoke-tested), a GitHub release recording what
 # was deployed (release.json, for rollback.yml), and a TestFlight build when the
 # app changed. Nothing is deployed unless the database is ready for it.
@@ -8,6 +8,15 @@ name: Release
 on:
   push:
     branches: [main]
+    # Nothing CI checks or a release ships: agent setup, docs, and local dev tooling.
+    paths-ignore:
+      - '.agent-layer/**'
+      - 'docs/**'
+      - 'spec/**'
+      - 'scripts/**'
+      - 'Makefile'
+      - 'README.md'
+      - '.gitignore'
   workflow_dispatch:
     inputs:
       force_ios:
@@ -41,6 +50,7 @@ jobs:
     # Every other job depends on this one, so nothing releases from another branch.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       release: ${{ steps.release.outputs.release }}
       already_released: ${{ steps.release.outputs.already_released }}
@@ -111,6 +121,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.already_released == 'false'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -186,6 +197,7 @@ jobs:
   migrate:
     needs: [ci, changes, images]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       from: ${{ steps.before.outputs.revision }}
       to: ${{ steps.after.outputs.revision }}
@@ -240,6 +252,7 @@ jobs:
     # After the migrations: expand/contract keeps the running code working in between.
     needs: [changes, images, migrate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -258,6 +271,7 @@ jobs:
   publish:
     needs: [changes, images, migrate, deploy]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
     env:
@@ -298,6 +312,8 @@ jobs:
     # Also runs when publish was skipped because this commit is already released (force_ios).
     if: ${{ !cancelled() && !failure() && needs.changes.outputs.ios == 'true' }}
     runs-on: macos-latest
+    # macOS minutes count 10x; a stuck build would otherwise run for the 6-hour default.
+    timeout-minutes: 30
     outputs:
       version: ${{ steps.upload.outputs.version }}
       build_number: ${{ steps.upload.outputs.build_number }}

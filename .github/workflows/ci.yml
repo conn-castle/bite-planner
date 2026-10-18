@@ -3,7 +3,21 @@ name: CI
 # Runs on pull requests, and inside every release (release.yml) for pushes to main.
 on:
   pull_request:
+    # Not checked here or shipped: agent setup, docs, local dev tooling (as in release.yml).
+    paths-ignore:
+      - '.agent-layer/**'
+      - 'docs/**'
+      - 'spec/**'
+      - 'scripts/**'
+      - 'Makefile'
+      - 'README.md'
+      - '.gitignore'
   workflow_call:
+
+# A new push to a pull request cancels its previous run; releases (run_id) never share a group.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -11,6 +25,7 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
@@ -43,6 +58,7 @@ jobs:
 
   mobile:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: apps/mobile
@@ -67,6 +83,7 @@ jobs:
 
   infra:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: infra
@@ -79,5 +96,16 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      # A cold mypy spends most of this job on the CDK library's types; main saves its cache.
+      - uses: actions/cache/restore@v6
+        with:
+          path: infra/.mypy_cache
+          key: mypy-infra-${{ hashFiles('infra/uv.lock') }}-${{ github.sha }}
+          restore-keys: mypy-infra-${{ hashFiles('infra/uv.lock') }}-
       - run: uv run mypy
+      - if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: infra/.mypy_cache
+          key: mypy-infra-${{ hashFiles('infra/uv.lock') }}-${{ github.sha }}
       - run: uv run pytest

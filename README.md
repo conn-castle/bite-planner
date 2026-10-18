@@ -214,9 +214,9 @@ Set up (team `EXAMP12345`):
 
 ## Releases
 
-Every push to `main` is a release, versioned by date: `YYYY.M.D.N`, the Nth release that day (US Eastern), e.g. `2026.9.24.1`. The iOS app built from it has the same numbers: version `2026.9.24`, build `1`, which is what TestFlight shows. Releases before 2026-09-24 were numbered `r<N>`.
+A push to `main` is a release (except as below), versioned by date: `YYYY.M.D.N`, the Nth release that day (US Eastern), e.g. `2026.9.24.1`. The iOS app built from it has the same numbers: version `2026.9.24`, build `1`, which is what TestFlight shows. Releases before 2026-09-24 were numbered `r<N>`.
 
-Every push to `main` runs `.github/workflows/release.yml`:
+Every push to `main` runs `.github/workflows/release.yml`, except a push that changes only what is neither checked nor shipped (`.agent-layer/`, `docs/`, `spec/`, `scripts/`, `Makefile`, `README.md`, `.gitignore`; pull requests skip CI for the same paths). Such a change goes out with the next release.
 
 1. **CI** (`ci.yml`): lint and tests for the backend (including migration up/down and the migration guard), the app (and its build), and `infra/`.
 2. **Images**, alongside CI: `api` and `worker` built from `docker/Dockerfile` and pushed to ECR as `commit-<sha>` (the worker with zstd layers, which Fargate starts faster). A re-run reuses images already pushed for its commit.
