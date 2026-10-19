@@ -17,8 +17,8 @@ from sqlmodel import Session, select
 
 from castle_chef import api, meal_edits, orders, push, shopping, worker
 from castle_chef.db import get_engine
-from castle_chef.jobs import STALE_ERROR, claim_job, fail_job
-from castle_chef.models import EditDecision, Job, JobKind, JobStatus, Meal, utc_now
+from castle_chef.jobs import STALE_ERROR, SUPERSEDED_ERROR, claim_job, fail_job
+from castle_chef.models import EditDecision, Job, JobKind, JobStatus, Meal
 from tests.test_api import (
     CASTLE,
     DAD,
@@ -26,22 +26,26 @@ from tests.test_api import (
     NEIGHBOR,
     RecordingDispatcher,
     as_user,
+    change_item,
     close_flow,
     detail,
+    finish_list,
     get_order,
     no_content,
     ok,
     phone,
     pick,
+    ready_list,
     recipe,
     run_at_once,
+    set_servings,
     with_suggestions,
 )
 from tests.test_api import client as client
 from tests.test_api import dispatcher as dispatcher
 from tests.test_api import households as households
+from tests.test_failures import TASK, task_stopped
 from tests.test_failures import events as events
-from tests.test_failures import task_stopped
 from tests.test_products_tools import call
 from tests.test_worker import use_fake_agent
 
@@ -303,62 +307,168 @@ def test_selected_vs_unselected_remove_readd_and_not_for_us(client: TestClient) 
     ok(list_start(client, order_id), 201)
 
 
-@pytest.mark.parametrize(
-    "build_status", [JobStatus.PENDING, JobStatus.RUNNING, JobStatus.SUCCEEDED]
-)
-def test_before_shopping_rule_counts_any_build_even_old_source(
-    client: TestClient, build_status: JobStatus
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("stale_source", [False, True])
+def test_recipe_changes_after_shopping_preserve_work_until_selected_accept(
+    client: TestClient, selected: bool, stale_source: bool
 ) -> None:
     order_id, [meal_id, other] = with_suggestions(client)
-    job_id = proposed(client, order_id, other)  # unselected proposal doesn't block
     ok(pick(client, order_id, meal_id))
-    build = api.JobOut.model_validate(ok(list_start(client, order_id), 201))
+    ready_list(client, order_id)
+    before = read(client, order_id).shopping_list
+    assert before is not None
+    item = next(i for i in before.items if not i.on_hand)
+    ok(change_item(client, order_id, str(item.id), {"count": 3}))
+    if stale_source:
+        ok(set_servings(client, order_id, meal_id, 6))
+    before = read(client, order_id).shopping_list
+    target = meal_id if selected else other
+    job_id = proposed(client, order_id, target)
+    assert read(client, order_id).recipes_editable
+    assert read(client, order_id).shopping_list == before
+    ok(decision(client, order_id, target, job_id, "reject"))
+    assert read(client, order_id).shopping_list == before
+    # Failed and intentionally retried proposals also preserve accepted work.
+    failed_id = uuid4()
+    ok(send(client, order_id, target, failed_id), 201)
     with Session(get_engine()) as session:
-        job = session.get_one(Job, build.id)
-        if build_status == JobStatus.SUCCEEDED:
-            from tests.test_prepared_recipes import proportional_snapshot
-
-            assert job.list_source is not None
-            job.prepared_recipes = proportional_snapshot(
-                shopping.recipe_meals(session, job.list_source)
-            )
-        job.status = build_status
-        job.started_at = utc_now() if build_status != JobStatus.PENDING else None
-        session.add(job)
-        session.commit()
-    # A different source does not unlock edits; an old shop could already exist.
-    ok(
-        client.put(
-            f"/v1/grocery-orders/{order_id}/meals/{meal_id}/servings",
-            headers=as_user(MOM),
-            json={"servings": 6},
-        )
-    )
-    assert not read(client, order_id).recipes_editable
-    detail(send(client, order_id, meal_id), 409)
-    detail(send(client, order_id, other, replaces=job_id), 409)
-    detail(decision(client, order_id, other, job_id, "accept"), 409)
-    ok(decision(client, order_id, other, job_id, "reject"))
-
-
-def test_unselected_worker_finishes_after_shopping_and_fails(client: TestClient) -> None:
-    order_id, [meal_id, other] = with_suggestions(client)
-    job_id = uuid4()
-    ok(send(client, order_id, other, job_id), 201)
+        fail_job(session, failed_id, "Fake provider refused.")
+    assert read(client, order_id).shopping_list == before
+    retry_id = uuid4()
+    ok(send(client, order_id, target, retry_id, replaces=failed_id), 201)
     with Session(get_engine()) as session:
-        claimed = claim_job(session, job_id)
-    ok(pick(client, order_id, meal_id))
-    ok(list_start(client, order_id), 201)
+        claimed = claim_job(session, retry_id)
     assert claimed is not None
     assert worker._save(
         claimed, meal_edit.ProposedRecipe.model_validate(recipe("Changed").model_dump()), {}
-    ) == (False, None)
-    change = read(client, order_id).recipe_changes[0]
-    assert (
-        change.state == "failed"
-        and change.error is not None
-        and "Shopping has started" in change.error
-    )
+    ) == (True, None)
+    ok(decision(client, order_id, target, retry_id, "accept"))
+    after = read(client, order_id).shopping_list
+    assert after is not None and before is not None
+    assert after.current == (not selected and not stale_source)
+    assert after.items == before.items and after.job.id == before.job.id
+    # A decided retry cannot touch subsequently authorized work.
+    ok(decision(client, order_id, target, retry_id, "accept"))
+    assert read(client, order_id).shopping_list == after
+
+
+@pytest.mark.parametrize("stage", ["pending", "running", "shop"])
+@pytest.mark.parametrize("selected", [False, True])
+def test_accept_supersedes_only_selected_active_work_atomically(
+    client: TestClient, stage: str, selected: bool
+) -> None:
+    order_id, [meal_id, other] = with_suggestions(client)
+    ok(pick(client, order_id, meal_id))
+    build = api.JobOut.model_validate(ok(list_start(client, order_id), 201))
+    if stage == "shop":
+        finish_list(str(build.id), shop=False)
+        active = api.JobOut.model_validate(
+            ok(
+                client.post(
+                    f"/v1/grocery-orders/{order_id}/list/shop",
+                    headers=as_user(MOM),
+                    json={"job_id": str(uuid4())},
+                ),
+                201,
+            )
+        )
+    else:
+        active = build
+    with Session(get_engine()) as session:
+        claimed = claim_job(session, active.id) if stage != "pending" else None
+    late_result: worker.JobResult | None = None
+    if claimed is not None:
+        if stage == "shop":
+            late_result = worker.Products(build_id=build.id, items={}, choices={})
+        else:
+            from tests.test_prepared_recipes import proportional_snapshot
+
+            assert claimed.list_source is not None
+            with Session(get_engine()) as session:
+                prepared = proportional_snapshot(
+                    shopping.recipe_meals(session, claimed.list_source)
+                )
+            late_result = worker.ListItems(items=[], source=claimed.list_source, prepared=prepared)
+    target = meal_id if selected else other
+    edit_id = proposed(client, order_id, target)
+    ok(decision(client, order_id, target, edit_id, "accept"))
+    after = read(client, order_id)
+    job = next(j for j in after.jobs if j.id == active.id)
+    assert job.status == ("failed" if selected else "pending" if stage == "pending" else "running")
+    if selected:
+        assert job.error == SUPERSEDED_ERROR
+        assert after.shopping_list is not None and not after.shopping_list.current
+        if claimed is not None and late_result is not None:
+            assert worker._save(claimed, late_result, {}) == (False, None)
+    # Accept replay does not supersede a NEW build for the accepted revision.
+    if selected:
+        new_build = api.JobOut.model_validate(ok(list_start(client, order_id), 201))
+        ok(decision(client, order_id, target, edit_id, "accept"))
+        assert (
+            next(j for j in read(client, order_id).jobs if j.id == new_build.id).status == "pending"
+        )
+
+
+def test_proposal_during_build_preserves_original_automatic_shop_pipeline(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from castle_chef_agent.products import ItemChoice, ProductCount
+    from castle_chef_agent.shopping import Aisle
+
+    from castle_chef.models import ShoppingListItem
+    from tests.test_api import ONIONS
+    from tests.test_prepared_recipes import proportional_snapshot
+
+    order_id, [meal_id] = with_suggestions(client, names=("Tacos",))
+    ok(pick(client, order_id, meal_id))
+    build = api.JobOut.model_validate(ok(list_start(client, order_id), 201))
+    processed: list[JobKind] = []
+
+    def process(job: Job) -> worker.JobResult:
+        processed.append(job.kind)
+        if job.kind == JobKind.BUILD_LIST:
+            # A new selected proposal does not alter the already-authorized inputs.
+            ok(send(client, order_id, meal_id), 201)
+            with Session(get_engine()) as session:
+                assert job.list_source is not None
+                prepared = proportional_snapshot(shopping.recipe_meals(session, job.list_source))
+            return worker.ListItems(
+                items=[
+                    shopping.ListEntry(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=[1])
+                ],
+                source=job.list_source,
+                prepared=prepared,
+            )
+        assert job.kind == JobKind.SHOP and job.build_id == build.id
+        with Session(get_engine()) as session:
+            [item] = session.exec(
+                select(ShoppingListItem).where(ShoppingListItem.job_id == build.id)
+            ).all()
+            return worker.Products(
+                build_id=build.id,
+                items={1: item.id},
+                choices={
+                    1: ItemChoice(
+                        item=1, chosen=ProductCount(product=ONIONS, count=1), alternatives=[]
+                    )
+                },
+            )
+
+    monkeypatch.setattr(worker, "process_job", process)
+    worker.run_job(build.id)
+    assert processed == [JobKind.BUILD_LIST, JobKind.SHOP]
+    result = read(client, order_id)
+    assert result.shopping_list is not None and result.shopping_list.current
+    assert result.shopping_list.shop is not None and result.shopping_list.shop.status == "succeeded"
+    assert result.shopping_list.items[0].product is not None
+    for path in ("list", "list/shop", "quote"):
+        response = client.post(
+            f"/v1/grocery-orders/{order_id}/{path}",
+            headers=as_user(MOM),
+            json={"job_id": str(build.id)},
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "recipe_changes_pending"
 
 
 def test_guards_precede_shopping_retry_and_quote_checks(client: TestClient) -> None:
@@ -397,10 +507,14 @@ def test_actual_concurrent_submissions_and_build_are_serialized(client: TestClie
     responses = run_at_once(
         [lambda: send(client, order_id, meal_id), lambda: list_start(client, order_id)]
     )
-    assert sorted(r.status_code for r in responses) == [201, 409]
+    statuses = sorted(r.status_code for r in responses)
+    # If the build wins the lock, its authorized operation survives the later proposal.
+    assert statuses in ([201, 201], [201, 409])
     with Session(get_engine()) as session:
         jobs = list(session.exec(select(Job).where(Job.grocery_order_id == UUID(order_id))).all())
-        assert sum(j.kind in (JobKind.EDIT_MEAL, JobKind.BUILD_LIST) for j in jobs) == 1
+        assert sum(j.kind in (JobKind.EDIT_MEAL, JobKind.BUILD_LIST) for j in jobs) == (
+            2 if statuses == [201, 201] else 1
+        )
 
 
 def test_two_edit_submissions_leave_one_undecided(client: TestClient) -> None:
@@ -439,6 +553,9 @@ def test_actual_worker_tools_produce_failure_or_review_never_direct_save(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, count: int
 ) -> None:
     order_id, [meal_id] = with_suggestions(client, names=("Tacos",))
+    ok(pick(client, order_id, meal_id))
+    ready_list(client, order_id)
+    before = read(client, order_id).shopping_list
     job_id = uuid4()
     ok(send(client, order_id, meal_id, job_id), 201)
     use_fake_agent(monkeypatch, meals=count)
@@ -447,6 +564,7 @@ def test_actual_worker_tools_produce_failure_or_review_never_direct_save(
     worker.run_job(job_id)
     change = read(client, order_id).recipe_changes[0]
     assert change.state == ("ready" if count else "failed")
+    assert read(client, order_id).shopping_list == before
     assert not notified
     assert read(client, order_id).jobs[0].meals[0].revision == 0
     if count:
@@ -532,6 +650,8 @@ def test_accept_failure_rolls_back_recipe_and_decision(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     order_id, [meal_id] = with_suggestions(client, names=("Tacos",))
+    ok(pick(client, order_id, meal_id))
+    build = api.JobOut.model_validate(ok(list_start(client, order_id), 201))
     job_id = proposed(client, order_id, meal_id)
     # A storage failure after the replacement is staged must roll back all its rows.
     with Session(get_engine()) as session:
@@ -551,6 +671,7 @@ def test_accept_failure_rolls_back_recipe_and_decision(
         meal = session.get_one(Meal, UUID(meal_id))
         assert (meal.name, meal.revision) == ("Tacos", 0)
         assert session.get_one(Job, job_id).decision is None
+        assert session.get_one(Job, build.id).status == JobStatus.PENDING
 
 
 def test_discard_racing_worker_cannot_deadlock_or_recreate_results(client: TestClient) -> None:
@@ -661,7 +782,7 @@ def test_failure_handler_and_late_worker_keep_edit_failed_until_choice(
     job_id = uuid4()
     ok(send(client, order_id, meal_id, job_id), 201)
     with Session(get_engine()) as session:
-        claimed = claim_job(session, job_id)
+        claimed = claim_job(session, job_id, TASK)
     assert claimed is not None
     response = events.post("/events", json=task_stopped(str(job_id), 137, "OutOfMemoryError"))
     assert response.status_code == 200
@@ -772,3 +893,136 @@ def test_legacy_yield_reaches_worker_and_accept_scales_shopping_once(
             "0.3 lb ground beef, browned",
             "salt",
         ]
+
+
+@pytest.mark.parametrize("kind", ["build", "shop"])
+@pytest.mark.parametrize("running", [False, True])
+@pytest.mark.parametrize("affected", [False, True])
+def test_accept_only_stops_pinned_dependencies_and_undo_restores_other_work(
+    client: TestClient, kind: str, running: bool, affected: bool
+) -> None:
+    from castle_chef_agent.products import ItemChoice, ProductCount
+    from castle_chef_agent.shopping import Aisle
+
+    from tests.test_api import ONIONS
+    from tests.test_prepared_recipes import proportional_snapshot
+
+    order_id, [a, b] = with_suggestions(client)
+    ok(pick(client, order_id, a))
+    build = api.JobOut.model_validate(ok(list_start(client, order_id), 201))
+    if kind == "shop":
+        finish_list(str(build.id), shop=False)
+        active = api.JobOut.model_validate(
+            ok(
+                client.post(
+                    f"/v1/grocery-orders/{order_id}/list/shop",
+                    headers=as_user(MOM),
+                    json={"job_id": str(uuid4())},
+                ),
+                201,
+            )
+        )
+    else:
+        active = build
+    with Session(get_engine()) as session:
+        original: Job = session.get_one(Job, active.id)
+        if running:
+            claimed = claim_job(session, active.id)
+            assert claimed is not None
+            original = claimed
+        pinned = session.get_one(Job, build.id).list_source
+        assert pinned is not None
+        if kind == "build":
+            result: worker.JobResult = worker.ListItems(
+                items=[
+                    shopping.ListEntry(name="tortillas", quantity=8, aisle=Aisle.PANTRY, meals=[1])
+                ],
+                source=pinned,
+                prepared=proportional_snapshot(shopping.recipe_meals(session, pinned)),
+            )
+        else:
+            bought = [item for item in shopping.items_of(session, build.id) if not item.on_hand]
+            result = worker.Products(
+                build_id=build.id,
+                items={n: item.id for n, item in enumerate(bought, 1)},
+                choices={
+                    n: ItemChoice(
+                        item=n, chosen=ProductCount(product=ONIONS, count=4), alternatives=[]
+                    )
+                    for n, _ in enumerate(bought, 1)
+                },
+            )
+    # Work was pinned only to A. Adding B must remain reversible even after B changes.
+    ok(pick(client, order_id, b))
+    target = a if affected else b
+    edit = proposed(client, order_id, target)
+    ok(decision(client, order_id, target, edit, "accept"))
+    after = read(client, order_id)
+    stored = next(job for job in after.jobs if job.id == active.id)
+    assert stored.status == ("failed" if affected else "running" if running else "pending")
+    assert after.shopping_list is not None and not after.shopping_list.source_current
+    ok(client.delete(f"/v1/grocery-orders/{order_id}/meals/{b}", headers=as_user(MOM)))
+    undone = read(client, order_id)
+    assert undone.shopping_list is not None
+    assert undone.shopping_list.source_current is not affected
+    assert undone.shopping_list.current == (not affected and kind == "shop")
+    if affected:
+        assert stored.error == SUPERSEDED_ERROR
+        with Session(get_engine()) as session:
+            assert claim_job(session, active.id) is None
+        assert worker._save(original, result, {}) == (False, None)
+        unchanged = read(client, order_id)
+        assert unchanged.shopping_list is not None
+        assert unchanged.shopping_list.items == undone.shopping_list.items
+    else:
+        if not running:
+            with Session(get_engine()) as session:
+                claimed = claim_job(session, active.id)
+            assert claimed is not None
+            original = claimed
+        saved, next_shop = worker._save(original, result, {})
+        assert saved and (next_shop is not None) == (kind == "build")
+        finished = read(client, order_id)
+        assert finished.shopping_list is not None and finished.shopping_list.current
+        if kind == "shop":
+            assert finished.shopping_list.shop is not None
+            assert finished.shopping_list.shop.status == "succeeded"
+            assert all(
+                item.product is not None and item.product.count == 4
+                for item in finished.shopping_list.items
+                if not item.on_hand
+            )
+
+
+@pytest.mark.parametrize("status", ["pending", "running", "failed", "succeeded"])
+def test_source_current_reports_exact_inputs_independent_of_status(
+    client: TestClient, status: str
+) -> None:
+    order_id, [a, b] = with_suggestions(client)
+    ok(pick(client, order_id, a))
+    build = api.JobOut.model_validate(ok(list_start(client, order_id), 201))
+    if status == "succeeded":
+        finish_list(str(build.id))
+    elif status == "running":
+        with Session(get_engine()) as session:
+            assert claim_job(session, build.id) is not None
+    elif status == "failed":
+        with Session(get_engine()) as session:
+            fail_job(session, build.id, "Fake provider failed to build the list.")
+    before = read(client, order_id).shopping_list
+    assert before is not None and before.source_current
+    assert before.current == (status == "succeeded")
+    ok(set_servings(client, order_id, a, 6))
+    changed = read(client, order_id).shopping_list
+    assert changed is not None and not changed.source_current and not changed.current
+    ok(set_servings(client, order_id, a, 4))
+    assert read(client, order_id).shopping_list == before
+    ok(pick(client, order_id, b))
+    changed = read(client, order_id).shopping_list
+    assert changed is not None and not changed.source_current
+    ok(client.delete(f"/v1/grocery-orders/{order_id}/meals/{b}", headers=as_user(MOM)))
+    assert read(client, order_id).shopping_list == before
+    edit = proposed(client, order_id, a)
+    ok(decision(client, order_id, a, edit, "accept"))
+    accepted = read(client, order_id).shopping_list
+    assert accepted is not None and not accepted.source_current and not accepted.current

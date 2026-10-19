@@ -96,6 +96,13 @@ async def to_checkout(opened: Browser) -> str:
 
 async def schedule_and_tip(opened: Browser, page: str) -> str:
     page = await opened.click(ref(page, 'button "Schedule'))
+    names = re.findall(r'tab "([^"\n]+)"', page)
+    for name in names:
+        page = await opened.click(ref(page, 'tab "' + re.escape(name) + '"'))
+        offered = re.findall(r'button "[^"\n]*(?:am|pm|Noon)[^"\n]*" \[ref=(\w+)\]', page)
+        await checkout.record_day(
+            opened.job_dir, opened, ref(page, 'tab "' + re.escape(name) + '"'), offered
+        )
     page = await opened.click(ref(page, 'button "4pm'))
     page = await opened.click(ref(page, 'button "Other"'))
     page = await opened.type(ref(page, 'textbox "Other amount"'), "1.96")

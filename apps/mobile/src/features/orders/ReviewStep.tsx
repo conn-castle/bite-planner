@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useRef } from 'react'
 import type { Checkout, ClockTime, GroceryOrder, ISODate } from '../../lib/api/types'
-import { addDays, formatClockTime, formatDate, formatWindow } from '../../lib/dates'
+import { addDays, formatClockTime, formatDate } from '../../lib/dates'
 import { elapsed, plural } from '../../lib/format'
 import { haptics } from '../../lib/haptics'
 import { logger } from '../../lib/log'
@@ -20,7 +20,7 @@ import { MealRow } from '../meals/MealRow'
 import { recipeCacheContext } from '../meals/servings'
 import { useHousehold } from '../settings/settings'
 import { pickedMeals } from './batches'
-import { coveredDays, dayRange } from './dates'
+import { coveredDays, dayRange, deliveryAvailable, deliveryExpired } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
 import { listCounts, productTotals, storeName } from './list'
@@ -215,6 +215,7 @@ function Reviewed({
   const session = useOrderSession()
   const household = useHousehold().shown
   const place = usePlaceOrder()
+  const now = useNow(1000)
   // Placing waits until every change is saved, so the order placed is the one shown.
   const saving = useEditsPending()
   const meals = pickedMeals(order)
@@ -225,9 +226,9 @@ function Reviewed({
   const store = storeName(order)
   const covered = coveredDays(delivery, next)
   const arrives = by ? `${formatDate(delivery, 'medium')} by ${formatClockTime(by)}` : formatDate(delivery, 'medium')
-  const fallback = order.fallback_window
-  // No window ends by the time or includes it: it can't be booked.
-  const unbookable = order.best_window === null
+  const expired = deliveryExpired(delivery, by, order.delivery_time_zone, now)
+  const unbookable = by === null || !deliveryAvailable(order, delivery, by, now)
+  const unsaved = delivery !== order.delivery_date || by !== order.delivery_by || next !== order.next_delivery_date
 
   function placeOrder() {
     if (by === null) return
@@ -250,8 +251,10 @@ function Reviewed({
       notice={
         place.isError ? (
           <Notice>Couldn't place the order: {place.error.message}</Notice>
-        ) : unbookable && by ? (
-          <Notice>No delivery window ends by {formatClockTime(by)} or includes it. Choose a later time to place it.</Notice>
+        ) : expired ? (
+          <Notice>Your saved delivery has passed. Choose a new date and time; nothing has been moved.</Notice>
+        ) : unbookable || unsaved ? (
+          <Notice>Open Delivery to check the available times and confirm your selection.</Notice>
         ) : blocked ? (
           <Notice>
             {store} won't take this order yet ({blocked}). Add to the shopping list to order it.
@@ -270,7 +273,7 @@ function Reviewed({
             variant="accent"
             large
             onClick={placeOrder}
-            disabled={recipeBlockers(order).length > 0 || checkout === null || by === null || unbookable || saving || place.isPending}
+            disabled={recipeBlockers(order).length > 0 || checkout === null || by === null || unbookable || unsaved || saving || place.isPending}
           >
             {place.isPending ? 'Placing…' : 'Place order'}
           </Button>
@@ -337,11 +340,7 @@ function Reviewed({
         <Group title="Delivery">
           <Row
             label="Arrives"
-            sub={
-              by && fallback
-                ? `By ${formatClockTime(by)}, or ${formatWindow(fallback)} if nothing earlier is left`
-                : undefined
-            }
+            sub="A later arrival needs your approval."
             detail={arrives}
             chevron
             onClick={() => onChange('delivery')}

@@ -327,3 +327,12 @@ describe('members', () => {
     expect(queryClient.getQueryState(sessionQuery.queryKey)?.isInvalidated).toBe(false)
   })
 })
+
+it.each([{ tip_percent: 15 }, { tip_max_cents: 1000 }])('refreshes the open draft and Home after a tip change (%j)', async (change: HouseholdChange) => {
+  queryClient.setQueryData(queryKeys.order('draft'), { id: 'draft' })
+  queryClient.setQueryData(queryKeys.nextOrder, { draft: { id: 'draft' } })
+  request.mockResolvedValueOnce(household(change))
+  await changeHousehold(change)
+  expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(true)
+  expect(queryClient.getQueryState(queryKeys.nextOrder)?.isInvalidated).toBe(true)
+})

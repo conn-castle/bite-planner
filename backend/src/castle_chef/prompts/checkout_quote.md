@@ -16,8 +16,12 @@ or half there, `look` again before doing anything else.
    out-of-stock setting (what Instacart does if it's out of stock) with
    `record_replacements`, giving the ref of that setting on every item.
 2. Go on to checkout (past any "got everything you need?" page).
-3. Choose a scheduled delivery: the Schedule option, then any day and time
-   window. Not Priority, which costs more, and not Fast.
+3. Open the Schedule option (not Priority or Fast). Visit EVERY day tab,
+   including Today. On each tab call `record_day` with its tab ref and all
+   enabled time-window button refs (omit disabled/full windows; [] if none).
+   Record every day in the tablist, even days with no windows. Never invent
+   dates or windows. Then select any available scheduled window. If no day
+   has a window, stop after recording all days; nothing can be priced yet.
 4. Call `tip` with the ref of the items' total line in the order summary, and
    set the delivery tip to exactly that amount (the tip's other or custom
    amount), then save it.

@@ -1,19 +1,22 @@
 import { AppLauncher } from '@capacitor/app-launcher'
 import { useIonAlert } from '@ionic/react'
+import { useState } from 'react'
 import type { BookFields, BookState, ISODate } from '../../lib/api/types'
-import { formatDate, formatWindow } from '../../lib/dates'
+import { addDays, dateRange, formatClockTime, formatDate, formatWindow } from '../../lib/dates'
 import { logger } from '../../lib/log'
 import { formatMoney } from '../../lib/products'
+import { useNow } from '../../lib/useNow'
+import { DateBar } from '../../ui/DateBar'
 import { Group, Row } from '../../ui/Group'
 import { Notice } from '../../ui/Notice'
 import { BOOK_STATE_LABEL, DRY_RUN, changeStep, changeable } from './booking'
-import { useBookAgain, useCancelOrder, useChangeOrder, useSettleOrder } from './orders'
+import { useApproveDelivery, useBookAgain, useCancelOrder, useChangeOrder, useDeferDelivery, useSettleOrder } from './orders'
 
 // The household's orders on Instacart's website (measured 2026-10-01: "Order history").
 const INSTACART_ORDERS = 'https://www.instacart.com/store/account/orders'
 
 interface BookingGroupProps {
-  order: BookFields & { id: string; number: number; delivery_date: ISODate | null; book_state: BookState }
+  order: BookFields & { id: string; number: number; delivery_date: ISODate | null; next_delivery_date: ISODate | null; book_state: BookState }
   /** It's the household's draft again, to change: open the flow at this step (else where it got to). */
   onChanged: (step: 'delivery' | 'list' | undefined) => void
   /** It was cancelled (it's gone). */
@@ -34,10 +37,18 @@ export function BookingGroup({ order, onChanged, onCancelled }: BookingGroupProp
   const cancel = useCancelOrder()
   const bookAgain = useBookAgain()
   const settle = useSettleOrder()
+  const approve = useApproveDelivery()
+  const defer = useDeferDelivery()
+  const now = useNow(1000)
+  const [chosenNext, setChosenNext] = useState<ISODate | null>(null)
   const state = order.book_state
   const booked = order.booking
-  const busy = change.isPending || cancel.isPending || bookAgain.isPending || settle.isPending
-  const failed = change.error ?? cancel.error ?? bookAgain.error ?? settle.error
+  const busy = change.isPending || cancel.isPending || bookAgain.isPending || settle.isPending || approve.isPending || defer.isPending
+  const failed = change.error ?? cancel.error ?? bookAgain.error ?? settle.error ?? approve.error ?? defer.error
+  const proposal = state === 'needs_time' ? order.book_issue?.proposal : null
+  const next: ISODate | null = chosenNext ?? order.next_delivery_date
+  const nextValid: boolean = proposal != null && next !== null && next > proposal.day
+  const proposalExpired: boolean = proposal != null && (now.getTime() >= new Date(proposal.starts_at).getTime() || now.getTime() >= new Date(proposal.valid_until).getTime())
 
   function changeIt() {
     const step = changeStep(state)
@@ -70,6 +81,21 @@ export function BookingGroup({ order, onChanged, onCancelled }: BookingGroupProp
       {failed && (
         <Notice>Couldn't do that: {failed.message}</Notice>
       )}
+      {proposal && <Group title="Approve a new delivery" footer="Nothing has been ordered. This alternative only books after you approve it.">
+        <Row label={formatDate(proposal.day, 'long')} detail={formatWindow(proposal.window)} sub={`Arrive by ${formatClockTime(proposal.window.end)}`} />
+        {!nextValid && <Row label="Choose the next delivery date" sub="The new delivery falls on or after your previous next delivery. Choose when the following order should arrive." />}
+        {(!order.next_delivery_date || order.next_delivery_date <= proposal.day) && <DateBar
+          label="Next delivery date" selected={nextValid ? next : null}
+          days={dateRange(addDays(proposal.day, 1), addDays(proposal.day, 14)).map((date) => ({ date, selectable: true, coveredBy: null, tag: null }))}
+          onChoose={setChosenNext}
+        />}
+        {nextValid && next && <Row label="Next delivery" detail={formatDate(next, 'medium')} />}
+        <Row label={proposalExpired ? 'Check times again' : 'Approve delivery'} chevron disabled={busy || (!proposalExpired && !nextValid)} onClick={() => {
+          if (proposalExpired) bookAgain.mutate({ orderId: order.id })
+          else if (next && nextValid) approve.mutate({ orderId: order.id, proposalId: proposal.id, nextDelivery: next })
+        }} />
+        <Row label={order.book_issue?.deferred_at ? 'Waiting for your decision' : 'Decide later'} sub="The order stays pending. Nothing is booked automatically." disabled={busy || order.book_issue?.deferred_at != null} onClick={() => defer.mutate({ orderId: order.id, proposalId: proposal.id })} />
+      </Group>}
       <Group
         title="Instacart"
         footer={
@@ -102,8 +128,8 @@ export function BookingGroup({ order, onChanged, onCancelled }: BookingGroupProp
             {booked.total_cents !== null && <Row label="Charged" detail={formatMoney(booked.total_cents)} />}
           </>
         )}
-        {state === 'not_booked' && (
-          <Row label="Try again" chevron disabled={busy} onClick={() => bookAgain.mutate({ orderId: order.id })} />
+        {(state === 'not_booked' || (state === 'needs_time' && !proposal)) && (
+          <Row label={state === 'needs_time' ? 'Check delivery times' : 'Try again'} chevron disabled={busy} onClick={() => bookAgain.mutate({ orderId: order.id })} />
         )}
         {state === 'check_instacart' && (
           <>
@@ -116,9 +142,9 @@ export function BookingGroup({ order, onChanged, onCancelled }: BookingGroupProp
             />
             <Row
               label="It wasn't placed"
-              sub="Nothing was ordered; book it again"
+              sub={order.can_confirm_absent ? "I've checked Instacart and confirmed there is no order" : 'Waiting for confirmation that booking stopped. Check Instacart in the meantime.'}
               chevron
-              disabled={busy}
+              disabled={busy || !order.can_confirm_absent}
               onClick={() => settle.mutate({ orderId: order.id, placed: false })}
             />
           </>

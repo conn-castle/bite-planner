@@ -238,6 +238,8 @@ class ShoppingListOut(BaseModel):
 
     # The newest build: its status, error, who started it, and when.
     job: JobOut
+    # Exact accepted-input match, including active or failed builds.
+    source_current: bool
     # Ready for the order's picks and servings now: the newest build succeeded, from them.
     current: bool
     # Shopping the newest succeeded build's items at the store: its newest shop
@@ -279,6 +281,9 @@ class QuoteOut(BaseModel):
     # minimum), or what checkout showed.
     blocked_because: str | None
     checkout: Checkout | None
+    availability: windows.Availability | None
+    availability_current: bool
+    availability_valid_until: datetime | None
 
 
 class ProposedRecipeOut(ProposedRecipe):
@@ -323,15 +328,10 @@ class GroceryOrderOut(BaseModel):
     # The decide-by date less the household's reminder lead: daily reminders from then.
     reminders_start_date: date | None
     earliest_delivery_date: date
+    delivery_time_zone: str
     delivery_date: date | None
     # The latest time it should arrive by, in the store's time zone; null until chosen.
     delivery_by: time | None
-    # For that time (or, until one is chosen, the household's delivery time): the
-    # window booking picks when every window is open (null: none ends by it or
-    # includes it, so it can't be booked), and the one it may use that ends after
-    # the time if nothing ending by it is left ("or 2-4 PM"; null if none).
-    best_window: windows.Window | None
-    fallback_window: windows.Window | None
     next_delivery_date: date | None
     # The furthest step its flow has reached: where the flow opens again.
     reached_step: OrderStep
@@ -354,6 +354,7 @@ class GroceryOrderOut(BaseModel):
     book_on: date | None
     booking: Booking | None
     book_issue: BookIssue | None
+    can_confirm_absent: bool
 
 
 class PlacedOrderOut(BaseModel):
@@ -376,6 +377,7 @@ class PlacedOrderOut(BaseModel):
     book_on: date
     booking: Booking | None
     book_issue: BookIssue | None
+    can_confirm_absent: bool
 
 
 class NextOrderOut(BaseModel):
@@ -389,6 +391,7 @@ class NextOrderOut(BaseModel):
     # The first day of the daily reminders to decide it; none without a target date.
     reminders_start_date: date | None
     earliest_delivery_date: date
+    delivery_time_zone: str
     # Its draft, once someone has started one.
     draft: GroceryOrderOut | None
 
@@ -627,6 +630,10 @@ class DatesIn(BaseModel):
     _minute = field_validator("delivery_by")(clock_minute)
 
 
+class QuoteIn(JobIn):
+    refresh: bool = False
+
+
 class PlaceIn(BaseModel):
     """The dates and time the member saw when placing, saved with it, and the
     quote (the estimated total) they saw, which must be the order's current one."""
@@ -647,6 +654,15 @@ class SettleIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     placed: bool
+
+
+class DeliveryProposalIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    proposal_id: UUID
+
+
+class ApproveDeliveryIn(DeliveryProposalIn):
+    next_delivery_date: date
 
 
 class InviteIn(BaseModel):
@@ -922,9 +938,11 @@ def shopping_list_out(
         and "Delivery address:" in shop.error
     ):
         address_problem = shop.error[shop.error.index("Delivery address:") :]
+    source_matches: bool = shopping.source_current(session, order.id, newest)
     return ShoppingListOut(
         job=job_out(newest, [], people, rated),
-        current=shopping.is_current(session, order.id, newest),
+        source_current=source_matches,
+        current=source_matches and newest.status == JobStatus.SUCCEEDED,
         shop=job_out(shop, [], people, rated) if shop is not None else None,
         shop_current=order.status == GroceryOrderStatus.PLACED
         or (
@@ -957,6 +975,13 @@ def quote_out(
         signed_out=newest.status == JobStatus.FAILED and newest.error == SIGNED_OUT_ERROR,
         blocked_because=result.blocked_because if result else None,
         checkout=result.checkout if result else None,
+        availability=result.availability if result else None,
+        availability_current=quotes.availability_fresh(result, booking.store_now()),
+        availability_valid_until=(
+            result.availability.observed_at + windows.AVAILABILITY_MAX_AGE
+            if result and result.availability
+            else None
+        ),
     )
 
 
@@ -985,7 +1010,6 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
 
     target = orders.target_date(session, order)
     decide_by = orders.decide_by_date(session, order.household_id, target)
-    by = order.delivery_by or session.get_one(Household, order.household_id).delivery_time
     book_state, book_issue = book_state_out(order)
     return GroceryOrderOut(
         id=order.id,
@@ -996,11 +1020,10 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
         target_date=target,
         decide_by_date=decide_by,
         reminders_start_date=orders.reminders_start_date(session, order.household_id, decide_by),
-        earliest_delivery_date=orders.earliest_delivery_date(today),
+        earliest_delivery_date=booking.store_now().date(),
+        delivery_time_zone=get_settings().store_time_zone,
         delivery_date=order.delivery_date,
         delivery_by=order.delivery_by,
-        best_window=windows.choose(windows.DAY, by),
-        fallback_window=windows.fallback(by),
         next_delivery_date=order.next_delivery_date,
         reached_step=order.reached_step,
         jobs=[job_out(job, meals[job.id], people, rated) for job in jobs],
@@ -1021,8 +1044,7 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
             )
             for change in meal_edits.changes(session, order)
         ],
-        recipes_editable=order.status == GroceryOrderStatus.DRAFT
-        and not meal_edits.shopping_started(session, order.id),
+        recipes_editable=order.status == GroceryOrderStatus.DRAFT,
         picks=[
             PickOut(meal_id=pick.meal.id, servings=pick.servings)
             for pick in orders.picks(session, order.id)
@@ -1036,10 +1058,12 @@ def order_out(session: Session, order: GroceryOrder, today: date, viewer: UUID) 
         else None,
         booking=order.booking,
         book_issue=book_issue,
+        can_confirm_absent=booking.can_confirm_absent(session, order),
     )
 
 
 def placed_order_out(
+    session: Session,
     order: GroceryOrder,
     number: int,
     picks: list[orders.Pick],
@@ -1081,6 +1105,7 @@ def placed_order_out(
         book_on=booking.book_on(delivery),
         booking=order.booking,
         book_issue=book_issue,
+        can_confirm_absent=booking.can_confirm_absent(session, order),
     )
 
 
@@ -1091,7 +1116,6 @@ ORDER_ERRORS: dict[type[Exception], int] = {
     meal_edits.EditDecided: status.HTTP_409_CONFLICT,
     meal_edits.EditNotReady: status.HTTP_409_CONFLICT,
     meal_edits.EditStale: status.HTTP_409_CONFLICT,
-    meal_edits.EditNotAllowed: status.HTTP_409_CONFLICT,
     meal_edits.EditNotFound: status.HTTP_404_NOT_FOUND,
     orders.OrderNotFound: status.HTTP_404_NOT_FOUND,
     orders.NotASuggestion: status.HTTP_404_NOT_FOUND,
@@ -1657,7 +1681,7 @@ def create_app() -> FastAPI:
         )
         return [
             placed_order_out(
-                order, numbers[order.id], picks[order.id], lists[order.id], people, rated
+                session, order, numbers[order.id], picks[order.id], lists[order.id], people, rated
             )
             for order in placed
         ]
@@ -1679,7 +1703,8 @@ def create_app() -> FastAPI:
             reminders_start_date=orders.reminders_start_date(
                 session, caller.household_id, decide_by
             ),
-            earliest_delivery_date=orders.earliest_delivery_date(day),
+            earliest_delivery_date=booking.store_now().date(),
+            delivery_time_zone=get_settings().store_time_zone,
             draft=order_out(session, draft, day, caller.user_id) if draft else None,
         )
 
@@ -1759,7 +1784,41 @@ def create_app() -> FastAPI:
         day: Annotated[date, Depends(today)],
     ) -> GroceryOrderOut:
         """Say whether Instacart has an order booking couldn't confirm."""
-        order = booking.settle(session, caller.household_id, order_id, body.placed)
+        order = booking.settle(session, caller.household_id, order_id, body.placed, caller.user_id)
+        return order_out(session, order, day, caller.user_id)
+
+    @api.post("/v1/grocery-orders/{order_id}/delivery/approve")
+    def approve_delivery(
+        order_id: UUID,
+        body: ApproveDeliveryIn,
+        caller: Annotated[Member, Depends(member)],
+        session: DbSession,
+        dispatcher: Annotated[JobDispatcher, Depends(get_dispatcher)],
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        order, job = booking.approve_delivery(
+            session,
+            caller.household_id,
+            order_id,
+            body.proposal_id,
+            body.next_delivery_date,
+            caller.user_id,
+        )
+        if job is not None:
+            dispatch_booking(session, dispatcher, job.id)
+        return order_out(session, order, day, caller.user_id)
+
+    @api.post("/v1/grocery-orders/{order_id}/delivery/later")
+    def defer_delivery(
+        order_id: UUID,
+        body: DeliveryProposalIn,
+        caller: Annotated[Member, Depends(member)],
+        session: DbSession,
+        day: Annotated[date, Depends(today)],
+    ) -> GroceryOrderOut:
+        order = booking.defer_delivery(
+            session, caller.household_id, order_id, body.proposal_id, caller.user_id
+        )
         return order_out(session, order, day, caller.user_id)
 
     @api.post("/v1/grocery-orders/{order_id}/lock")
@@ -1877,7 +1936,7 @@ def create_app() -> FastAPI:
     @api.post("/v1/grocery-orders/{order_id}/quote", status_code=status.HTTP_201_CREATED)
     def quote_order(
         order_id: UUID,
-        body: JobIn,
+        body: QuoteIn,
         response: Response,
         caller: Annotated[Member, Depends(member)],
         by: Annotated[orders.Orderer, Depends(orderer)],
@@ -1892,7 +1951,9 @@ def create_app() -> FastAPI:
         if (problem := orders.shopped_problem(session, draft.id)) is not None:
             session.rollback()
             raise orders.NotReady(problem)
-        job, created = quotes.submit_quote(session, draft, caller.user_id, body.job_id)
+        job, created = quotes.submit_quote(
+            session, draft, caller.user_id, body.job_id, body.refresh
+        )
         start_job(
             session,
             job,
@@ -2050,7 +2111,7 @@ def create_app() -> FastAPI:
             body.delivery_date,
             body.delivery_by,
             body.next_delivery_date,
-            day,
+            booking.store_now().date(),
             by,
         )
         order = orders.get_order(session, caller.household_id, order_id)
@@ -2077,11 +2138,22 @@ def create_app() -> FastAPI:
             body.delivery_by,
             body.next_delivery_date,
             body.quote_id,
-            day,
+            booking.store_now().date(),
         )
         if now:
             job = booking.start_if_due(session, placed, booking.store_now())
             session.commit()
+            log.info(
+                "grocery_order.placed",
+                extra={
+                    "grocery_order_id": str(placed.id),
+                    "user_id": str(caller.user_id),
+                    "delivery_date": placed.delivery_date,
+                    "delivery_by": placed.delivery_by,
+                    "next_delivery_date": placed.next_delivery_date,
+                    "quote_id": str(placed.quote_id),
+                },
+            )
             if job is not None:
                 dispatch_booking(session, dispatcher, job.id)
         order = orders.get_order(session, caller.household_id, order_id)

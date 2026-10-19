@@ -417,6 +417,17 @@ def checkout_server(job_dir: Path) -> MCPServer:
             return f"Recorded: {', '.join(settings)}."
 
     @server.tool()
+    async def record_day(
+        day: Annotated[str, Field(description="The ref of a delivery-day tab, selected.")],
+        windows: Annotated[
+            list[Ref], Field(description="Every enabled window on this day; [] if none.")
+        ],
+    ) -> str:
+        """Read actual available windows. Visit and record every day in the schedule's tablist."""
+        found = await act(checkout.record_day(job_dir, opened[0], day, windows))
+        return f"Recorded {len(found)} available windows. Record the other days too."
+
+    @server.tool()
     async def report(
         items: Annotated[str, Field(description="The ref of the items' total line.")],
         lines: Annotated[
@@ -453,11 +464,20 @@ def checkout_server(job_dir: Path) -> MCPServer:
     if booking:
 
         @server.tool()
+        async def propose_delivery() -> str:
+            """After reading every day, record the next available delivery for member approval.
+            Never orders. Only before any purchase request, when the approved time is unavailable.
+            """
+            return await act(checkout.propose_delivery(job_dir, opened[0]))
+
+        @server.tool()
         async def choose_window(
             day: Annotated[str, Field(description="The ref of the delivery day's tab, selected.")],
             windows: Annotated[
                 list[Ref],
-                Field(min_length=1, description="The ref of each time window offered that day."),
+                Field(
+                    description="The ref of each enabled time window offered that day; [] if none."
+                ),
             ],
         ) -> str:
             """Choose which of the day's delivery windows to book (by the household's

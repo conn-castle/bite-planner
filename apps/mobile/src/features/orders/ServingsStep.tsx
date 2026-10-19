@@ -13,11 +13,11 @@ import { useOrderSession } from './lock'
 import { useEditsPending, useSetServings } from './orders'
 import styles from './Steps.module.css'
 import { stepIndex } from './steps'
-import { RecipeChanges } from './RecipeChanges'
-import { recipeBlockers, unselectedChanges } from './recipeChangesState'
+import { recipeBlockers } from './recipeChangesState'
 
 interface ServingsStepProps {
   order: GroceryOrder
+  startError?: string | null
   onOpenMeal: (mealId: string, servings?: number) => void
   onBack: () => void
   onNext: () => void
@@ -25,7 +25,7 @@ interface ServingsStepProps {
 }
 
 /** How much of each picked meal to make: they start at the household's default. */
-export function ServingsStep({ order, onOpenMeal, onBack, onNext, onClose }: ServingsStepProps) {
+export function ServingsStep({ order, onOpenMeal, onBack, onNext, onClose, startError }: ServingsStepProps) {
   const session = useOrderSession()
   const setServings = useSetServings()
   // Moving on waits until every change is saved.
@@ -40,7 +40,7 @@ export function ServingsStep({ order, onOpenMeal, onBack, onNext, onClose }: Ser
       bodyClassName={styles.servingsBody}
       onBack={onBack}
       onClose={onClose}
-      notice={setServings.isError && <Notice>Couldn't save that: {setServings.error.message}</Notice>}
+      notice={(startError || setServings.isError) && <Notice>Couldn't save that: {startError ?? setServings.error?.message}</Notice>}
       title="Servings"
       lede={`How much of each meal to make for Order ${order.number}.`}
       footer={
@@ -52,13 +52,12 @@ export function ServingsStep({ order, onOpenMeal, onBack, onNext, onClose }: Ser
           <div className={styles.footerAction}>
             {changes.size > 0 && <span className={styles.reviewCount}>{changes.size === 1 ? '1 meal needs review' : `${changes.size} meals need review`}</span>}
             <Button large onClick={onNext} disabled={saving || changes.size > 0 || meals.length === 0}>
-              {unselectedChanges(order).length ? 'Start shopping anyway' : 'Next'}
+              Next
             </Button>
           </div>
         </div>
       }
     >
-      <RecipeChanges order={order} onOpenMeal={onOpenMeal} unselected />
       <div className={styles.groups}>
         <Group footerIcon="users" footer="Servings start at the household's default, in Settings.">
           {meals.map(({ meal, servings: count }) => {

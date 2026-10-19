@@ -10,6 +10,7 @@ from castle_chef_agent.meal_edit import ProposedRecipe
 from castle_chef_agent.meals import Color, Dish, Icon
 from castle_chef_agent.products import ProductCount
 from castle_chef_agent.shopping import Aisle, PreparedRecipes
+from castle_chef_agent.windows import Window
 from pydantic import BaseModel, StringConstraints
 from pydantic import Field as ModelField
 from sqlalchemy import (
@@ -28,6 +29,7 @@ from sqlalchemy.types import TypeDecorator
 from sqlmodel import Field, Relationship, SQLModel
 
 from castle_chef.checkout import Booking, BookIssue, CartLedger, Quote, QuoteRequest
+from castle_chef.worker_tasks import WorkerStop
 
 
 def utc_now() -> datetime:
@@ -40,8 +42,7 @@ class Range(NamedTuple):
     high: int
 
 
-# Ranges checked by the database and the API alike. The earliest delivery is
-# tomorrow, so the decision comes at least a day before.
+# Ranges checked by the database and the API alike.
 DECIDE_BY_OFFSET_DAYS = Range(1, 7)
 REMINDER_LEAD_DAYS = Range(0, 7)  # 0: on the decide-by day
 SERVINGS = Range(1, 12)  # a pick's, and the household's default for new picks
@@ -331,6 +332,8 @@ class Job(TimestampMixin, SQLModel, table=True):
     error: str | None = None
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     finished_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    worker_task_arn: str | None = None
+    worker_stop: WorkerStop | None = Field(default=None, sa_type=ModelJSONB(WorkerStop))
 
 
 class GroceryOrderStatus(StrEnum):
@@ -407,6 +410,10 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
             "status = 'draft' OR quote_id IS NOT NULL OR book_state = 'booked'",
             name="grocery_order_approved_quote",
         ),
+        CheckConstraint(
+            "clicked_at IS NULL OR coalesce(book_issue->'proposal', 'null'::jsonb) = 'null'::jsonb",
+            name="grocery_order_proposal_before_click",
+        ),
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -447,9 +454,14 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
     # When booking pressed Place order (recorded just before): it's never pressed
     # again for this order, unless someone says it wasn't placed after all.
     clicked_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    # Retained after book_job_id is cleared: the exact attempt that received GO.
+    click_job_id: UUID | None = Field(default=None, foreign_key="job.id", ondelete="SET NULL")
+    # Makes repeated approval of the same alternative safe without starting another job.
+    accepted_delivery_proposal_id: UUID | None = None
     # What Instacart confirmed, once booked; null before (and for orders placed
     # before booking existed).
     booking: Booking | None = Field(default=None, sa_type=ModelJSONB(Booking))
+
     # Why it isn't booked (needs a time, a product, not booked, check Instacart).
     book_issue: BookIssue | None = Field(default=None, sa_type=ModelJSONB(BookIssue))
     # The order lock: only one ordering session (one opening of the flow, on one
@@ -464,6 +476,50 @@ class GroceryOrder(TimestampMixin, SQLModel, table=True):
     lock_step: OrderStep | None = Field(
         default=None, sa_type=Enum(OrderStep, name="order_step", values_callable=_values)
     )
+
+
+class DeliveryDecisionKind(StrEnum):
+    SELECTED = "selected"
+    APPROVED = "approved"
+    PROPOSED = "proposed"
+    REAPPROVED = "reapproved"
+    DEFERRED = "deferred"
+    AUTHORIZED = "authorized"
+    BOOKED = "booked"
+    FAILED = "failed"
+    UNCONFIRMED = "unconfirmed"
+    CONFIRMED_PRESENT = "confirmed_present"
+    CONFIRMED_ABSENT = "confirmed_absent"
+
+
+class DeliveryDecision(SQLModel, table=True):
+    """Insert-only delivery evidence, retained even when an order is cancelled."""
+
+    __tablename__ = "delivery_decision"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    # Deliberately no cascading foreign keys: cancellation must preserve the history.
+    grocery_order_id: UUID = Field(index=True)
+    household_id: UUID = Field(index=True)
+    kind: DeliveryDecisionKind = Field(
+        sa_type=Enum(
+            DeliveryDecisionKind,
+            name="delivery_decision_kind",
+            values_callable=_values,
+        )
+    )
+    occurred_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    user_id: UUID | None = None
+    job_id: UUID | None = None
+    proposal_id: UUID | None = None
+    delivery_date: date | None = None
+    delivery_by: time | None = None
+    next_delivery_date: date | None = None
+    window: Window | None = Field(default=None, sa_type=ModelJSONB(Window))
+    issue: BookIssue | None = Field(default=None, sa_type=ModelJSONB(BookIssue))
+    booking: Booking | None = Field(default=None, sa_type=ModelJSONB(Booking))
+    authorized_total_cents: int | None = None
+    worker_stop: WorkerStop | None = Field(default=None, sa_type=ModelJSONB(WorkerStop))
 
 
 class GroceryOrderMeal(SQLModel, table=True):

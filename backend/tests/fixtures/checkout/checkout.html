@@ -53,12 +53,13 @@
   const WINDOWS = ['10am–Noon', 'Noon–2pm', '2pm–4pm', '4pm–6pm']
   let tip = 200, priority = 100, day = 1
   function dayName(offset) {
+    if (offset === 0) return "Today"
     const date = new Date()
     date.setDate(date.getDate() + offset)
     return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
   }
   function days() {
-    document.getElementById('days').innerHTML = [1, 2, 3, 4, 5].map(offset =>
+    document.getElementById('days').innerHTML = [0, 1, 2, 3, 4, 5].map(offset =>
       `<button type="button" role="tab" aria-selected="${offset === day}" onclick="pickDay(${offset})">${dayName(offset)} $0</button>`
     ).join('')
     document.getElementById('times').innerHTML = WINDOWS.map(window =>

@@ -29,9 +29,27 @@ export function InfoDialog({ isOpen, onClose, icon, title, children, footer, dis
   // Where it goes: inside the Ionic modal it's opened from (e.g. the order flow), whose focus
   // trap would otherwise pull focus back out of it; else the page's body.
   const [host, setHost] = useState<HTMLElement | null>(null)
+  const [pageShown, setPageShown] = useState<boolean>(true)
   const anchor = useCallback((node: HTMLSpanElement | null) => {
-    if (node) setHost(node.closest<HTMLElement>('ion-modal') ?? document.body)
+    if (!node) return
+    setHost(node.closest<HTMLElement>('ion-modal') ?? document.body)
+    // IonNav keeps the previous page mounted. Its dialog must wait until that
+    // page is shown again, including after accepting a recipe on top of List.
+    const page: HTMLElement | null = node.closest<HTMLElement>('.ion-page')
+    if (!page) return
+    setPageShown(!page.classList.contains('ion-page-hidden'))
+    const enter = (): void => setPageShown(true)
+    const leave = (): void => setPageShown(false)
+    // A cancelled swipe fires only "will" events; keep the current page's
+    // dialogs usable until navigation actually completes.
+    page.addEventListener('ionViewDidEnter', enter)
+    page.addEventListener('ionViewDidLeave', leave)
+    return () => {
+      page.removeEventListener('ionViewDidEnter', enter)
+      page.removeEventListener('ionViewDidLeave', leave)
+    }
   }, [])
+  const open: boolean = isOpen && pageShown
   // The latest close, so re-renders while it's open don't move the focus.
   const close = useRef(onClose)
   useEffect(() => {
@@ -41,7 +59,7 @@ export function InfoDialog({ isOpen, onClose, icon, title, children, footer, dis
   // A modal for the keyboard too: focus moves into it, Tab stays in it, Escape
   // closes it, and focus goes back to what opened it.
   useEffect(() => {
-    if (!isOpen) return
+    if (!open) return
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const input = initialFocus === 'input' ? dialog.current?.querySelector<HTMLElement>('textarea, input') : null
     if (input) input.focus()
@@ -74,10 +92,10 @@ export function InfoDialog({ isOpen, onClose, icon, title, children, footer, dis
       document.removeEventListener('keydown', onKey, true)
       opener?.focus()
     }
-  }, [isOpen, initialFocus])
+  }, [open, initialFocus])
 
   const shown =
-    isOpen &&
+    open &&
     host !== null &&
     createPortal(
     <div className={styles.backdrop} onClick={() => { if (dismissible) onClose() }}>

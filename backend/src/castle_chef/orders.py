@@ -12,16 +12,18 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, literal, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import Session, col, func, select
 
-from castle_chef import delivery, products, quotes, ratings, shopping
+from castle_chef import delivery, delivery_decisions, products, quotes, ratings, shopping
 from castle_chef.db import for_update
 from castle_chef.jobs import shop_of
 from castle_chef.models import (
     BookState,
+    DeliveryDecisionKind,
     GroceryOrder,
     GroceryOrderMeal,
     GroceryOrderStatus,
@@ -173,9 +175,21 @@ def release_locks_of(session: Session, household_id: UUID, user_id: UUID) -> Non
 
 
 def earliest_delivery_date(today: date) -> date:
-    """The soonest delivery date a member can choose. Later this asks the grocery
-    service for its soonest slot."""
-    return today + timedelta(days=1)
+    """Same-day is allowed; actual availability is read at the store."""
+    return today
+
+
+def delivery_now() -> datetime:
+    return datetime.now(ZoneInfo(get_settings().store_time_zone))
+
+
+def check_deadline(delivery: date | None, by: time | None, now: datetime) -> None:
+    if (
+        delivery is not None
+        and by is not None
+        and datetime.combine(delivery, by, now.tzinfo) <= now
+    ):
+        raise InvalidDates("That delivery date and arrive-by time have passed. Choose again.")
 
 
 def get_draft(session: Session, household_id: UUID) -> GroceryOrder | None:
@@ -426,13 +440,34 @@ def set_dates(
     order = lock_draft(session, household_id, order_id, orderer)
     try:
         check_dates(delivery, next_delivery, today)
+        check_deadline(delivery, delivery_by, delivery_now())
     except InvalidDates:
         session.rollback()
         raise
+    previous = {
+        "delivery_date": order.delivery_date,
+        "delivery_by": order.delivery_by,
+        "next_delivery_date": order.next_delivery_date,
+    }
     order.delivery_date, order.next_delivery_date = delivery, next_delivery
     order.delivery_by = delivery_by
     session.add(order)
+    delivery_decisions.record(
+        session, order, DeliveryDecisionKind.SELECTED, user_id=orderer.user_id
+    )
     session.commit()
+
+    log.info(
+        "delivery.selected",
+        extra={
+            "grocery_order_id": str(order.id),
+            "user_id": str(orderer.user_id),
+            "previous": previous,
+            "delivery_date": delivery,
+            "delivery_by": delivery_by,
+            "next_delivery_date": next_delivery,
+        },
+    )
 
 
 def place(
@@ -469,6 +504,39 @@ def place(
     if missing is not None:
         session.rollback()
         raise NotReady(missing)
+    if (delivery, delivery_by, next_delivery) != (
+        order.delivery_date,
+        order.delivery_by,
+        order.next_delivery_date,
+    ):
+        session.rollback()
+        raise NotReady("The delivery selection changed. Save and review the dates and time again.")
+    now = delivery_now()
+    try:
+        check_deadline(delivery, delivery_by, now)
+    except InvalidDates as error:
+        session.rollback()
+        raise NotReady(str(error)) from error
+    quoted = session.get_one(Job, quote_id).quote
+    availability = quoted.availability if quoted else None
+    if availability is None or not availability.days:
+        session.rollback()
+        raise NotReady("Check Instacart's current delivery times before approving.")
+    if not quotes.availability_fresh(quoted, now):
+        session.rollback()
+        raise NotReady("Those delivery times are out of date. Check times before approving.")
+    if delivery <= max(day.day for day in availability.days):
+        offered = [
+            window
+            for day in availability.remaining(now)
+            if day.day == delivery
+            for window in day.windows
+        ]
+        from castle_chef_agent.windows import choose
+
+        if choose(offered, delivery_by) is None:
+            session.rollback()
+            raise NotReady("That delivery is no longer available. Check times and choose again.")
     order.delivery_date, order.next_delivery_date = delivery, next_delivery
     order.delivery_by = delivery_by
     order.status = GroceryOrderStatus.PLACED
@@ -476,10 +544,13 @@ def place(
     order.placed_by = orderer.user_id
     order.book_state, order.quote_id = BookState.WAITING, quote_id
     order.clicked_at, order.booking, order.book_issue = None, None, None
+    order.click_job_id = None
     _clear_lock(order)
     session.add(order)
+    delivery_decisions.record(
+        session, order, DeliveryDecisionKind.APPROVED, user_id=orderer.user_id, job_id=quote_id
+    )
     session.flush()
-    log.info("grocery_order.placed", extra={"grocery_order_id": str(order.id)})
     return order, True
 
 
@@ -521,7 +592,7 @@ def list_problem(session: Session, order_id: UUID) -> str | None:
     if shopping.current_build(session, order_id) is None:
         if shopping.newest_built(session, order_id) is None:
             return "The shopping list isn't ready yet."
-        return "The shopping list was made for other meals or servings; wait for the new one."
+        return "The shopping list was made for other meals, recipes or servings; make a new list."
     return None
 
 

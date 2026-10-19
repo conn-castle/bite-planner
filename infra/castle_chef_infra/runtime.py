@@ -242,6 +242,7 @@ class RuntimeStack(Stack):
                 "CASTLE_CHEF_CODEX_LOCK_FILE": f"{CODEX_HOME_DIR}/codex.lock",
                 "CASTLE_CHEF_INSTACART_SESSION_PARAMETER": INSTACART_SESSION_PARAMETER,
                 "CASTLE_CHEF_JOB_RECORDS_BUCKET": job_records.bucket_name,
+                "CASTLE_CHEF_WORKER_CLUSTER_ARN": cluster.cluster_arn,
             },
         )
         container.add_mount_points(
@@ -409,23 +410,51 @@ class RuntimeStack(Stack):
         database_url.grant_read(api)
         jobs.grant_send_messages(api)
 
+        stop_delivery_dead_letters = sqs.Queue(
+            self,
+            "WorkerStopDeliveryDeadLetters",
+            retention_period=Duration.days(14),
+            enforce_ssl=True,
+        )
+        stop_processing_dead_letters = sqs.Queue(
+            self,
+            "WorkerStopProcessingDeadLetters",
+            retention_period=Duration.days(14),
+            enforce_ssl=True,
+        )
+        worker_stops = sqs.Queue(
+            self,
+            "WorkerStops",
+            retention_period=Duration.days(14),
+            visibility_timeout=Duration.seconds(180),
+            enforce_ssl=True,
+            dead_letter_queue=sqs.DeadLetterQueue(
+                queue=stop_processing_dead_letters, max_receive_count=5
+            ),
+        )
         failure_handler = self._api_image_function(
             "FailureHandler",
             api_image,
             memory_size=512,
             timeout=Duration.seconds(30),
-            reserved_concurrent_executions=2,
+            reserved_concurrent_executions=4,
             environment=common_environment
             | {
                 **push_environment,
                 "CASTLE_CHEF_FAILURE_HANDLER": "true",
+                "CASTLE_CHEF_WORKER_CLUSTER_ARN": cluster.cluster_arn,
+                "CASTLE_CHEF_WORKER_STOPS_QUEUE_ARN": worker_stops.queue_arn,
+                "CASTLE_CHEF_JOBS_DEAD_LETTERS_QUEUE_ARN": dead_letters.queue_arn,
                 **event_environment,
             },
         )
         for parameter in push_parameters:
             parameter.grant_read(failure_handler)
         failure_handler.add_event_source(
-            lambda_event_sources.SqsEventSource(dead_letters, batch_size=10)
+            lambda_event_sources.SqsEventSource(dead_letters, batch_size=1, max_concurrency=2)
+        )
+        failure_handler.add_event_source(
+            lambda_event_sources.SqsEventSource(worker_stops, batch_size=1, max_concurrency=2)
         )
         events.Rule(
             self,
@@ -435,7 +464,9 @@ class RuntimeStack(Stack):
                 detail_type=["ECS Task State Change"],
                 detail={"clusterArn": [cluster.cluster_arn], "lastStatus": ["STOPPED"]},
             ),
-            targets=[events_targets.LambdaFunction(failure_handler)],
+            targets=[
+                events_targets.SqsQueue(worker_stops, dead_letter_queue=stop_delivery_dead_letters)
+            ],
         )
 
         # Reminders: one schedule per member (created by the API, not here) invokes
@@ -550,6 +581,17 @@ class RuntimeStack(Stack):
         alarms = sns.Topic(self, "Alarms", display_name="Castle Chef alarms")
         alarms.add_subscription(sns_subscriptions.EmailSubscription(config.alarm_email))
         notify = cloudwatch_actions.SnsAction(alarms)
+        for name, queue in {
+            "WorkerStopDelivery": stop_delivery_dead_letters,
+            "WorkerStopProcessing": stop_processing_dead_letters,
+        }.items():
+            self._alarm(
+                f"{name}DeadLettersAlarm",
+                queue.metric_approximate_number_of_messages_visible(period=Duration.minutes(1)),
+                "Worker stop evidence could not be processed; replay the dead-lettered event. "
+                "Purchase recovery remains blocked.",
+                notify,
+            )
         for name, log_group in {
             "Api": api.log_group,
             "Worker": worker_logs,

@@ -27,7 +27,7 @@ const placed: PlacedOrder = {
   book_state: 'booked',
   book_on: '2026-09-20',
   booking: null,
-  book_issue: null,
+  book_issue: null, can_confirm_absent: false,
   id: 'order-3',
   number: 3,
   placed_at: '2026-09-18T09:00:00Z',

@@ -42,6 +42,13 @@ export function NextDeliveryStep({ order, delivery, onBack, onNext, onClose }: N
     setDates.mutate({ kind: 'dates', orderId: order.id, dates: { delivery_date: delivery, delivery_by: order.delivery_by, next_delivery_date: date }, session })
   }
 
+  function continueToReview() {
+    setDates.mutate(
+      { kind: 'dates', orderId: order.id, dates: { delivery_date: delivery, delivery_by: order.delivery_by, next_delivery_date: next }, session },
+      { onSuccess: onNext },
+    )
+  }
+
   return (
     <FlowFrame
       step={stepIndex('next')}
@@ -60,7 +67,7 @@ export function NextDeliveryStep({ order, delivery, onBack, onNext, onClose }: N
             }
             detail={`for Order ${following} · delivery ${formatDate(next, 'short')}`}
           />
-          <Button large onClick={onNext} disabled={saving}>
+          <Button large onClick={continueToReview} disabled={saving || setDates.isPending}>
             Next
           </Button>
         </>

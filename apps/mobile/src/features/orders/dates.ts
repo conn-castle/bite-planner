@@ -1,4 +1,4 @@
-import type { ClockTime, GroceryOrder, ISODate, OrderDates } from '../../lib/api/types'
+import type { ClockTime, DeliveryWindow, GroceryOrder, ISODate, OrderDates } from '../../lib/api/types'
 import { addDays, dateRange, daysBetween, formatDate, toLocalDate } from '../../lib/dates'
 import { plural } from '../../lib/format'
 import type { BarDay } from '../../ui/DateBar'
@@ -21,10 +21,50 @@ export function defaultDeliveryDate({ target_date, earliest_delivery_date }: Del
   return target_date < earliest_delivery_date ? earliest_delivery_date : target_date
 }
 
-/** The delivery date to show: the saved one while it is still possible, else the default. */
+/** Keep an expired saved selection visible until the member explicitly replaces it. */
 export function shownDeliveryDate(order: DeliveryLimits & Pick<GroceryOrder, 'delivery_date'>): ISODate | null {
-  const saved = order.delivery_date
-  return saved !== null && saved >= order.earliest_delivery_date ? saved : defaultDeliveryDate(order)
+  return order.delivery_date ?? defaultDeliveryDate(order)
+}
+
+/** Compare delivery deadlines in the store's zone, independently of the phone. */
+export function storeDateTime(now: Date, zone: string): string {
+  const parts: Intl.DateTimeFormatPart[] = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now)
+  const value = (type: Intl.DateTimeFormatPartTypes): string => {
+    const part: Intl.DateTimeFormatPart | undefined = parts.find((part) => part.type === type)
+    if (!part) throw new Error(`Missing ${type} in store time`)
+    return part.value
+  }
+  return `${value('year')}-${value('month')}-${value('day')}T${value('hour')}:${value('minute')}:${value('second')}`
+}
+
+export function deliveryExpired(delivery: ISODate | null, by: ClockTime | null, zone: string, now: Date): boolean {
+  return delivery !== null && by !== null && `${delivery}T${by}` <= storeDateTime(now, zone)
+}
+
+export function availabilityFresh(order: Pick<GroceryOrder, 'quote'>, now: Date): boolean {
+  const quote = order.quote
+  return quote?.current === true && quote.availability_current && quote.availability_valid_until !== null &&
+    now.getTime() < new Date(quote.availability_valid_until).getTime()
+}
+
+/** null means a future day that Instacart does not offer yet; [] means no live choice. */
+export function availableWindows(order: Pick<GroceryOrder, 'quote'>, day: ISODate, now: Date): DeliveryWindow[] | null {
+  const snapshot = order.quote?.availability
+  if (!snapshot || snapshot.days.length === 0) return []
+  if (!availabilityFresh(order, now)) return []
+  const last = snapshot.days.at(-1)
+  if (last && day > last.day) return null
+  const local = storeDateTime(now, snapshot.time_zone)
+  return snapshot.days.find((entry) => entry.day === day)?.windows.filter((window) => `${day}T${window.start}` > local) ?? []
+}
+
+export function deliveryAvailable(order: Pick<GroceryOrder, 'quote' | 'delivery_time_zone'>, day: ISODate, by: ClockTime, now: Date): boolean {
+  if (deliveryExpired(day, by, order.delivery_time_zone, now)) return false
+  const windows = availableWindows(order, day, now)
+  return windows === null || windows.some((window) => window.end <= by)
 }
 
 /** One day per picked meal after the delivery date (at least one day). */
@@ -73,19 +113,17 @@ function latest(first: ISODate, ...others: (ISODate | null)[]): ISODate {
 type DeliveryBarOrder = Pick<GroceryOrder, 'number' | 'target_date' | 'earliest_delivery_date' | 'delivery_date'>
 
 /**
- * The days to choose this order's delivery from. The bar starts at the last
- * day the previous order's meals cover (the day before the target date), or
- * at today once that has passed, so the user sees where they are; today
- * itself can't be chosen. It runs 30 days past where it starts (the last
- * covered day, or today), further if the chosen date is later, and
- * back to a chosen date that is earlier than the start.
+ * Keep today visible even when earlier orders still cover future meals.
+ * Today can be chosen when a live window remains. The bar runs 30 days past
+ * the last covered day (or today), further to a later saved choice, and back
+ * to an expired saved choice so it remains visible until explicitly changed.
  */
 export function deliveryBar(order: DeliveryBarOrder, today: ISODate): BarDay[] {
   const { number, target_date: target, earliest_delivery_date: earliest } = order
   const shown = shownDeliveryDate(order)
   const lastCovered = target === null ? null : addDays(target, -1)
   const start = lastCovered !== null && lastCovered > today ? lastCovered : today
-  const first = shown !== null && shown < start ? shown : start
+  const first = shown !== null && shown < today ? shown : today
   const last = latest(addDays(start, DAYS_PAST_COVERED), target, shown)
   const targetPassed = target !== null && target < earliest
   return dateRange(first, last).map((date) => ({

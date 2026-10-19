@@ -13,6 +13,8 @@ import { apiRequest } from '../../lib/api/client'
 import { localDate } from '../../lib/dates'
 import { ApiError, isRetryable } from '../../lib/api/errors'
 import type {
+  ApproveDeliveryIn,
+  DeliveryProposalIn,
   BookFields,
   EditMealIn,
   AcceptEditIn,
@@ -101,7 +103,7 @@ const orderKey = queryKeys.order
 // that comes before the app is active again is skipped, so the poll alone could
 // leave a finished batch unseen for a whole interval.
 function placedPollInterval(data: PlacedOrder[] | undefined): number | false {
-  if (data?.some((order) => order.book_state === 'booking')) return BOOKING_POLL_MS
+  if (data?.some((order) => order.book_state === 'booking' || (order.book_state === 'check_instacart' && !order.can_confirm_absent))) return BOOKING_POLL_MS
   const today = localDate(new Date())
   return data?.some((order) => mayBookSoon(order, today)) ? BOOK_DAY_POLL_MS : false
 }
@@ -109,7 +111,7 @@ function placedPollInterval(data: PlacedOrder[] | undefined): number | false {
 function orderPollInterval(data: GroceryOrder | undefined, session: string | undefined): number | false {
   return data && hasRunningJob(data)
     ? POLL_MS
-    : data?.book_state === 'booking'
+    : data?.book_state === 'booking' || (data?.book_state === 'check_instacart' && !data.can_confirm_absent)
       ? BOOKING_POLL_MS
       : session !== undefined && data?.lock && data.lock.session !== session
         ? LOCK_RENEW_MS
@@ -206,6 +208,7 @@ async function storeOrder(queryClient: QueryClient, order: GroceryOrder) {
     decide_by_date: order.decide_by_date,
     reminders_start_date: order.reminders_start_date,
     earliest_delivery_date: order.earliest_delivery_date,
+    delivery_time_zone: order.delivery_time_zone,
     draft: order,
   })
 }
@@ -231,6 +234,8 @@ const CHANGE = ['orders', 'change']
 const CANCEL = ['orders', 'cancel']
 const BOOK_AGAIN = ['orders', 'book-again']
 const SETTLE = ['orders', 'settle']
+const APPROVE_DELIVERY = ['orders', 'approve-delivery']
+const DEFER_DELIVERY = ['orders', 'defer-delivery']
 const START_LIST = ['orders', 'start-list']
 const SHOP_LIST = ['orders', 'shop-list']
 const QUOTE = ['orders', 'quote']
@@ -269,6 +274,8 @@ export interface StartJob extends InSession {
   orderId: string
   /** Chosen here, so a resent request (e.g. after going offline) can't start a second. */
   jobId: string
+  /** Force a fresh delivery-availability read for a quote. */
+  refresh?: boolean
 }
 export interface EditRecipe extends StartJob {
   mealId: string
@@ -287,6 +294,12 @@ export interface OrderAction {
 /** Whether Instacart has an order booking couldn't confirm. */
 export interface SettleOrder extends OrderAction {
   placed: boolean
+}
+export interface DeliveryDecision extends OrderAction {
+  proposalId: string
+}
+export interface ApproveDelivery extends DeliveryDecision {
+  nextDelivery: ISODate
 }
 /** The dates and latest time an order is placed with: all of them set. */
 export interface PlacedDates {
@@ -339,8 +352,8 @@ export function registerOrderMutations(queryClient: QueryClient) {
   // Starts a job at `path` under the order, in turn after the changes before it,
   // logged as `event`; the job shows in the order, which is fetched after it.
   const startsJob = (path: string, event: string) => ({
-    mutationFn: async ({ orderId, jobId, session }: StartJob): Promise<Job> => {
-      const body = { job_id: jobId } satisfies JobIn
+    mutationFn: async ({ orderId, jobId, session, refresh }: StartJob): Promise<Job> => {
+      const body = { job_id: jobId, ...(path === 'quote' && refresh ? { refresh: true } : {}) } satisfies JobIn
       const job = await apiRequest<Job>('POST', `/v1/grocery-orders/${orderId}/${path}`, body, session)
       logger.info(event, { orderId, jobId: job.id, status: job.status })
       return job
@@ -569,6 +582,16 @@ export function registerOrderMutations(queryClient: QueryClient) {
     onSettled: (_order: GroceryOrder | undefined, _error: Error | null, { orderId }: SettleOrder) =>
       refetchAfterPlaced(queryClient, orderId),
   })
+  queryClient.setMutationDefaults(APPROVE_DELIVERY, {
+    mutationFn: ({ orderId, proposalId, nextDelivery }: ApproveDelivery) =>
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/delivery/approve`, { proposal_id: proposalId, next_delivery_date: nextDelivery } satisfies ApproveDeliveryIn),
+    onSettled: (_order: GroceryOrder | undefined, _error: Error | null, { orderId }: ApproveDelivery) => refetchAfterPlaced(queryClient, orderId),
+  })
+  queryClient.setMutationDefaults(DEFER_DELIVERY, {
+    mutationFn: ({ orderId, proposalId }: DeliveryDecision) =>
+      apiRequest<GroceryOrder>('POST', `/v1/grocery-orders/${orderId}/delivery/later`, { proposal_id: proposalId } satisfies DeliveryProposalIn),
+    onSettled: (_order: GroceryOrder | undefined, _error: Error | null, { orderId }: DeliveryDecision) => refetchAfterPlaced(queryClient, orderId),
+  })
 
   queryClient.setMutationDefaults(TAKE, {
     mutationFn: ({ orderId, session, step }: TakeLock) => {
@@ -730,6 +753,14 @@ export function useCancelOrder() {
 /** Books an approved order again, after it wasn't booked. */
 export function useBookAgain() {
   return useMutation<GroceryOrder, Error, OrderAction>({ mutationKey: BOOK_AGAIN })
+}
+
+export function useApproveDelivery() {
+  return useMutation<GroceryOrder, Error, ApproveDelivery>({ mutationKey: APPROVE_DELIVERY })
+}
+
+export function useDeferDelivery() {
+  return useMutation<GroceryOrder, Error, DeliveryDecision>({ mutationKey: DEFER_DELIVERY })
 }
 
 /** Says whether Instacart has an order booking couldn't confirm. */

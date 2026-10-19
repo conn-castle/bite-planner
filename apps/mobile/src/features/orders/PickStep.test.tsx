@@ -35,9 +35,10 @@ function order(meal: MealSummary, added: boolean): GroceryOrder {
     created_by: { user_id: 'nick', name: 'Nick' }, created_at: '2026-10-13T12:00:00Z',
     target_date: '2026-10-16', decide_by_date: '2026-10-15', reminders_start_date: null,
     earliest_delivery_date: '2026-10-14', delivery_date: null, delivery_by: null,
+    delivery_time_zone: 'America/New_York',
     next_delivery_date: null, recipe_changes: [], recipes_editable: true, reached_step: 'pick', picks: added ? [{ meal_id: meal.id, servings: 4 }] : [],
-    lock: null, shopping_list: null, quote: null, best_window: null, fallback_window: null,
-    book_state: null, book_on: null, booking: null, book_issue: null,
+    lock: null, shopping_list: null, quote: null,
+    book_state: null, book_on: null, booking: null, book_issue: null, can_confirm_absent: false,
     jobs: [{
       id: 'batch', meal_id: null, started_at: null, finished_at: null, kind: 'generate_meals', status: 'succeeded', error: null,
       requested_by: { user_id: 'nick', name: 'Nick' }, created_at: '2026-10-13T12:00:00Z', meals: [meal],

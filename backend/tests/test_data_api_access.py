@@ -20,6 +20,10 @@ TABLES = sorted(COLUMN)
 
 # A well-formed insert into every table (so each fails on privileges, not syntax).
 INSERTS = {
+    "delivery_decision": (
+        "INSERT INTO delivery_decision (id, grocery_order_id, household_id, kind, occurred_at) "
+        f"VALUES ('{uuid4()}', '{uuid4()}', '{uuid4()}', 'selected', now())"
+    ),
     "household": f"INSERT INTO household (id, name) VALUES ('{uuid4()}', 'Castle')",
     "app_user": (f"INSERT INTO app_user (user_id, household_id) VALUES ('{uuid4()}', '{uuid4()}')"),
     "grocery_order": (

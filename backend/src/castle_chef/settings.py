@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     # image in Docker on this machine, as Fargate runs it: scripts/worker-docker.sh).
     job_dispatch: Literal["sqs", "local"] = "local"
     jobs_queue_url: str | None = None
+    # Set on ECS workers and the failure handler. No identity means no live GO.
+    worker_cluster_arn: str | None = None
+    worker_stops_queue_arn: str | None = None
+    jobs_dead_letters_queue_arn: str | None = None
     # Suggestions per batch (a `generate_meals` job).
     meals_per_batch: int = 20
     # A pending job whose task never started is failed after this long.

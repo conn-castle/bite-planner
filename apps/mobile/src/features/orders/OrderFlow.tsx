@@ -23,14 +23,16 @@ import { useOrderLock } from './useOrderLock'
 import { LockedStep } from './LockedStep'
 import styles from './OrderFlow.module.css'
 import { ListStep } from './ListStep'
-import { closeFlowSession, nextQuery, useNextOrder, useOpenOrder, useOrder, useStartList } from './orders'
+import { closeFlowSession, nextQuery, useNextOrder, useOpenOrder, useOrder, useStartList, useEditsPending } from './orders'
 import { NextDeliveryStep } from './NextDeliveryStep'
 import { PickStep } from './PickStep'
 import { PlacedStep } from './PlacedStep'
 import { ProductPage } from './ProductPage'
 import { ReviewStep } from './ReviewStep'
 import { ServingsStep } from './ServingsStep'
-import { unselectedChangeKey } from './recipeChangesState'
+import { recipeBlockers } from './recipeChangesState'
+import { replacesList } from './list'
+import { ShoppingWorkDialog } from '../../ui/ShoppingWorkDialog'
 import { WaitStep } from './WaitStep'
 
 interface OrderFlowModalProps {
@@ -340,8 +342,16 @@ interface OrderStepProps {
 /** The screen for where the order is, each step going on to the next. */
 export function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenProduct }: OrderStepProps) {
   const session = useOrderSession()
-  const { mutate: startList } = useStartList()
-  const [acknowledgedChanges, setAcknowledgedChanges] = useState<string | null>(null)
+  const startList = useStartList()
+  const saving: boolean = useEditsPending()
+  const [replacing, setReplacing] = useState<boolean>(false)
+  const canStart: boolean = order.status === 'draft' && order.lock?.session === session && recipeBlockers(order).length === 0
+  const build = (): void => {
+    if (!canStart || saving) return
+    startList.mutate({ orderId: order.id, jobId: crypto.randomUUID(), session }, {
+      onSuccess: () => { setReplacing(false); setStep('list') },
+    })
+  }
   const household = useHousehold().shown
   if (order.status === 'placed') return <PlacedStep order={order} onChanged={setStep} onClose={onClose} />
   if (suggestions(order).length === 0) return <WaitStep order={order} onClose={onClose} />
@@ -353,25 +363,27 @@ export function OrderStep({ order, step, setStep, onClose, onOpenMeal, onOpenPro
   }
   if (shown === 'servings') {
     return (
+      <>
       <ServingsStep
         order={order}
         onOpenMeal={onOpenMeal}
         onBack={() => setStep('pick')}
         onNext={() => {
-          // Start from the saved servings, even when an older build is running or failed.
-          setAcknowledgedChanges(unselectedChangeKey(order))
-          startList({ orderId: order.id, jobId: crypto.randomUUID(), session })
-          setStep('list')
+          if (replacesList(order)) { startList.reset(); setReplacing(true) }
+          else setStep('list')
         }}
+        startError={startList.isError ? startList.error.message : null}
         onClose={onClose}
       />
+      <ShoppingWorkDialog action={replacing ? 'build' : null} onClose={() => setReplacing(false)} onConfirm={build}
+        busy={startList.isPending} saving={saving} allowed={canStart} error={startList.error?.message ?? null} />
+      </>
     )
   }
   if (shown === 'list') {
     return (
       <ListStep
         order={order}
-        acknowledgedChanges={acknowledgedChanges}
         onOpenProduct={(itemId) => onOpenProduct(order.id, itemId)}
         onOpenMeal={onOpenMeal}
         onBack={() => setStep('servings')}

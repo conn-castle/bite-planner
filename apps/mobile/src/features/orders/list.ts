@@ -6,16 +6,15 @@ import { isRunning } from './batches'
 /** A draft's shopping list, as its step shows it. */
 
 /**
- * Where the list is: none started, or one built for older picks with nothing
- * being made (to start); being made; its newest build failed (a build replaced
- * by a newer one is never the newest); built for the picks now but not shopped
+ * Where the list is: no build for the accepted inputs (to start); a matching
+ * build being made or genuinely failed; built for the picks now but not shopped
  * (to shop: e.g. built before shopping started with each list); being shopped
  * at the store; its shopping failed; or shopped, its products ready.
  */
 export type ListState = 'start' | 'building' | 'failed' | 'shopStart' | 'shopping' | 'shopFailed' | 'ready'
 
 export function listState(list: ShoppingList | null): ListState {
-  if (list === null) return 'start'
+  if (list === null || !list.source_current) return 'start'
   if (list.current) {
     if (list.address_problem !== null) return 'shopFailed'
     if (!list.shop_current) return 'shopStart'
@@ -91,4 +90,22 @@ export function readyList(order: Pick<GroceryOrder, 'shopping_list'>): ShoppingL
   if (list === null || listState(list) !== 'ready' || undecided(list.items).length > 0) return null
   if (productTotals(splitList(list.items).toBuy).count === 0) return null
   return list
+}
+
+/** Existing work affected by a replacement, including preserved items from an older build. */
+export function hasShoppingWork(order: Pick<GroceryOrder, 'shopping_list' | 'jobs'>, action: 'build' | 'shop' | 'recipe'): boolean {
+  const list = order.shopping_list
+  if (list === null) return false
+  if (action === 'shop') {
+    return (list.shop !== null && list.shop.status !== 'failed') || list.items.some((item) => item.product !== null)
+  }
+  return list.items.length > 0 || order.jobs.some((job) =>
+    (job.kind === 'build_list' || job.kind === 'shop') && job.status !== 'failed')
+}
+
+/** Matching active and finished builds are reused when leaving Servings. */
+export function replacesList(order: Pick<GroceryOrder, 'shopping_list' | 'jobs'>): boolean {
+  const list = order.shopping_list
+  const reusable: boolean = list !== null && list.source_current && list.job.status !== 'failed'
+  return !reusable && hasShoppingWork(order, 'build')
 }

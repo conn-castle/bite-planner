@@ -1,4 +1,5 @@
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { onlineManager } from '@tanstack/react-query'
 import type { GroceryOrder, ShoppingItem } from '../../lib/api/types'
 import { elapsed, plural } from '../../lib/format'
 import { haptics } from '../../lib/haptics'
@@ -8,6 +9,7 @@ import { PlateArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 import { InfoDialog } from '../../ui/InfoDialog'
+import { ShoppingWorkDialog } from '../../ui/ShoppingWorkDialog'
 import { Notice } from '../../ui/Notice'
 import { RetryNotice } from '../../ui/RetryNotice'
 import { logger } from '../../lib/log'
@@ -17,18 +19,16 @@ import { useNotifiedOfJob } from '../notifications/notifications'
 import { pickedMeals } from './batches'
 import { FlowFrame, FooterSummary } from './FlowFrame'
 import { FlowNotice } from './flowNotice'
-import { type ListState, listState, mealNames, productTotals, splitList, storeName, totalShown, undecided } from './list'
+import { type ListState, hasShoppingWork, listState, mealNames, productTotals, splitList, storeName, totalShown, undecided } from './list'
 import styles from './ListStep.module.css'
 import { useOrderSession } from './lock'
 import { useEditsPending, useSetItem, useSetItemError, useShopList, useStartList } from './orders'
 import { MAX_COUNT } from './ProductPage'
 import { stepIndex } from './steps'
 import { RecipeChanges } from './RecipeChanges'
-import { recipeBlockers, unselectedChangeKey } from './recipeChangesState'
+import { recipeBlockers } from './recipeChangesState'
 
 interface ListStepProps {
-  /** The exact pending request set acknowledged when leaving Servings. */
-  acknowledgedChanges?: string | null
   order: GroceryOrder
   onOpenMeal: (mealId: string, servings?: number) => void
   /** Opens an item's product (or, for one the store doesn't have, its alternatives) as a page. */
@@ -44,7 +44,7 @@ interface ListStepProps {
  * product, by aisle, each of which can be changed; the items the store doesn't
  * have come first, to decide on. Items assumed on hand are behind a button.
  */
-export function ListStep({ order, onOpenMeal, onOpenProduct, onBack, onNext, onClose, acknowledgedChanges }: ListStepProps) {
+export function ListStep({ order, onOpenMeal, onOpenProduct, onBack, onNext, onClose }: ListStepProps) {
   const session = useOrderSession()
   const startList = useStartList()
   const shopList = useShopList()
@@ -52,44 +52,65 @@ export function ListStep({ order, onOpenMeal, onOpenProduct, onBack, onNext, onC
   const { mutate: shop } = shopList
   const state = listState(order.shopping_list)
   const blockers = recipeBlockers(order).map((c) => `${c.job_id}:${c.state}`).sort().join(',')
-  const warning = unselectedChangeKey(order)
-  const [continued, setContinued] = useState<string | null>(null)
-  const needsAcknowledgement = !!warning && continued !== warning && acknowledgedChanges !== warning
+  const saving: boolean = useEditsPending()
+  const [requested, setRequested] = useState<boolean>(false)
+  const [dismissed, setDismissed] = useState<boolean>(false)
+  const canStart: boolean = order.status === 'draft' && order.lock?.session === session && !blockers
+  const pending: boolean = startList.isPending || shopList.isPending
+  const failed: string | null = startList.error?.message ?? shopList.error?.message ?? null
+  const action: 'build' | 'shop' = state === 'shopFailed' || state === 'shopStart' ? 'shop' : 'build'
+  const paused: boolean = hasShoppingWork(order, action) && (requested || state === 'start' || state === 'shopStart')
 
-  // A list not started for these picks (e.g. starting failed offline, or picks
-  // changed elsewhere) starts here, once; and one made but never shopped (e.g.
-  // made before each list was shopped) is shopped, once.
+  const run = (kind: 'build' | 'shop'): void => {
+    if (!canStart || saving) return
+    const request = { orderId: order.id, jobId: crypto.randomUUID(), session }
+    const onSuccess = (): void => { setRequested(false); setDismissed(false) }
+    if (kind === 'build') start(request, { onSuccess })
+    else shop(request, { onSuccess })
+  }
+  const request = (kind: 'build' | 'shop'): void => {
+    if (!canStart || saving) return
+    startList.reset()
+    shopList.reset()
+    if (hasShoppingWork(order, kind)) { setRequested(true); setDismissed(false) }
+    else run(kind)
+  }
+
+  // A cancellation is remembered for this mounted step. Returning/undoing is
+  // always possible; another automatic effect must never reopen the warning.
   const started = useRef<ListState | null>(null)
-  useEffect(() => { started.current = null }, [blockers, warning])
+  useEffect(() => { started.current = null }, [blockers, order.shopping_list?.job.id, order.shopping_list?.source_current])
   useEffect(() => {
-    if (blockers || needsAcknowledgement) return
+    if (!canStart || saving || paused) return
     if ((state !== 'start' && state !== 'shopStart') || started.current === state) return
     started.current = state
-    const request = { orderId: order.id, jobId: crypto.randomUUID(), session }
-    if (state === 'start') start(request)
-    else shop(request)
-  }, [state, start, shop, order.id, session, blockers, warning, needsAcknowledgement])
+    const kind = state === 'start' ? 'build' : 'shop'
+    const payload = { orderId: order.id, jobId: crypto.randomUUID(), session }
+    if (kind === 'build') start(payload)
+    else shop(payload)
+  }, [state, start, shop, order, session, canStart, saving, paused])
 
-  if (blockers || needsAcknowledgement) return <FlowFrame step={stepIndex('list')} title="Recipe changes" onBack={onBack} onClose={onClose}
-    footer={<Button large disabled={!!blockers} onClick={() => setContinued(warning)}>{warning ? 'Start shopping anyway' : 'Start shopping'}</Button>}>
+  if (blockers) return <FlowFrame step={stepIndex('list')} title="Recipe changes" onBack={onBack} onClose={onClose} footer={null}>
     <RecipeChanges order={order} onOpenMeal={onOpenMeal} />
-    <RecipeChanges order={order} onOpenMeal={onOpenMeal} unselected />
     <Button variant="secondary" onClick={onBack}>Back to servings</Button>
+  </FlowFrame>
+
+  if (paused) return <FlowFrame step={stepIndex('list')} title="Shopping work kept" onBack={onBack} onClose={onClose}
+    footer={<Button large disabled={saving || pending || !canStart} onClick={() => request(action)}>Continue shopping</Button>}>
+    <p>Your existing work is kept until you choose to replace it. Go back to change your meals or servings.</p>
+    <Button variant="secondary" onClick={onBack}>Back to servings</Button>
+    <ShoppingWorkDialog action={dismissed ? null : action} onClose={() => setDismissed(true)} onConfirm={() => run(action)}
+      busy={pending} saving={saving} allowed={canStart} error={failed} />
   </FlowFrame>
 
   if (state === 'ready') {
     return <ListReview order={order} onOpenProduct={onOpenProduct} onBack={onBack} onNext={onNext} onClose={onClose} />
   }
-  const failed = startList.isError ? startList.error.message : shopList.isError ? shopList.error.message : null
   return (
     <ListWait
       order={order}
       state={state}
-      onRetry={() =>
-        state === 'shopFailed' || state === 'shopStart'
-          ? shop({ orderId: order.id, jobId: crypto.randomUUID(), session })
-          : start({ orderId: order.id, jobId: crypto.randomUUID(), session })
-      }
+      onRetry={() => request(action)}
       retrying={startList.isPending || shopList.isPending}
       startFailed={failed}
       onBack={onBack}
@@ -111,6 +132,7 @@ interface ListWaitProps {
 /** While the list is made and shopped, or why it wasn't. */
 function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClose }: ListWaitProps) {
   const list = order.shopping_list
+  const online: boolean = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline())
   const shopping = state === 'shopStart' || state === 'shopping' || state === 'shopFailed'
   const job = shopping ? (list?.shop ?? undefined) : list?.job
   const now = useNow(1000)
@@ -173,6 +195,7 @@ function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClos
             : `Combining what your ${plural(meals, 'meal')} need into one list, then shopping it at ${store}. This can take several minutes.`
         }
       >
+        {!online && retrying && <Notice>You’re offline. Shopping will start when you reconnect. Your draft is saved.</Notice>}
         {!flowProblem && !startFailed && (state === 'failed' || state === 'shopFailed') && (
           <div className={styles.problem}>
             <RetryNotice

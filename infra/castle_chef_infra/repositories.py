@@ -79,6 +79,15 @@ class RepositoriesStack(Stack):
         self.deploy_role.add_to_policy(
             iam.PolicyStatement(actions=["ecr:GetAuthorizationToken"], resources=["*"])
         )
+        # The API's pinned Lambda adapter is pulled from ECR Public. Its login
+        # is separate from private ECR; authenticated pulls avoid anonymous
+        # shared-runner data limits. Neither action permits public image writes.
+        self.deploy_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ecr-public:GetAuthorizationToken", "sts:GetServiceBearerToken"],
+                resources=["*"],
+            )
+        )
         # A database restore (rollback.yml) pauses job starts and waits for
         # running workers.
         self.deploy_role.add_to_policy(

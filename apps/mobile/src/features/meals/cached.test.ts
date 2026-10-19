@@ -22,7 +22,7 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
   book_state: null,
   book_on: null,
   booking: null,
-  book_issue: null,
+  book_issue: null, can_confirm_absent: false,
   id,
   number: 4,
   status: 'draft',
@@ -32,6 +32,7 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
   decide_by_date: null,
   reminders_start_date: null,
   earliest_delivery_date: '2026-09-25',
+  delivery_time_zone: 'America/New_York',
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
@@ -51,15 +52,14 @@ const draft = (id: string, meals: MealSummary[]): GroceryOrder => ({
   lock: null,
   shopping_list: null,
   quote: null,
-  best_window: null,
-  fallback_window: null,
+
 })
 
 const placed: PlacedOrder = {
   book_state: 'booked',
   book_on: '2026-09-20',
   booking: null,
-  book_issue: null,
+  book_issue: null, can_confirm_absent: false,
   id: 'order-3',
   number: 3,
   placed_at: '2026-09-18T09:00:00Z',
@@ -82,6 +82,7 @@ describe('cachedMealSummary', () => {
       decide_by_date: null,
       reminders_start_date: null,
       earliest_delivery_date: '2026-09-25',
+      delivery_time_zone: 'America/New_York',
       draft: draft('other', [meal('soup')]),
     })
 
@@ -97,7 +98,7 @@ it('scopes recipes to build status, source, target, revision, and placed build i
   const { recipeCacheContext } = await import('./servings')
   const pending: GroceryOrder = { ...draft('draft', [meal('beans')]), picks: [{ meal_id: 'beans', servings: 5 }],
     shopping_list: { job: { ...draft('draft', []).jobs[0], id: 'build-1', kind: 'build_list', status: 'running' },
-      current: false, shop: null, shop_current: false, address_problem: null, store: 'Wegmans', items: [] } }
+      source_current: true, current: false, shop: null, shop_current: false, address_problem: null, store: 'Wegmans', items: [] } }
   const done: GroceryOrder = { ...pending, shopping_list: pending.shopping_list ? { ...pending.shopping_list,
     job: { ...pending.shopping_list.job, status: 'succeeded' }, current: true } : null }
   const replaced: GroceryOrder = { ...done, shopping_list: done.shopping_list ? { ...done.shopping_list,
@@ -131,7 +132,7 @@ it.each(['draft', 'placed'] as const)('shares an in-flight prefetch with page ob
   const originalOrder: GroceryOrder = { ...draft('draft', [base]), picks: [{ meal_id: base.id, servings: 5 }] }
   const builtOrder: GroceryOrder = { ...originalOrder, shopping_list: {
     job: { ...originalOrder.jobs[0], id: 'build-2', kind: 'build_list', status: 'succeeded' },
-    current: true, shop: null, shop_current: false, address_problem: null, store: 'Wegmans', items: [] } }
+    source_current: true, current: true, shop: null, shop_current: false, address_problem: null, store: 'Wegmans', items: [] } }
   const originalContext: string | undefined = recipeCacheContext(kind === 'draft' ? originalOrder : undefined, base.id, kind === 'placed', 'build-1')
   const freshContext: string | undefined = recipeCacheContext(kind === 'draft' ? builtOrder : undefined, base.id, kind === 'placed', 'build-2')
   const client: QueryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: false } } })

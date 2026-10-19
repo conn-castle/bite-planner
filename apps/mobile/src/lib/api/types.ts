@@ -259,7 +259,9 @@ export interface ShoppingItem {
 /** A draft's shopping list: its newest build, and the newest succeeded build's items. */
 export interface ShoppingList {
   job: Job
-  /** Ready for the order's picks and servings now: the newest build succeeded, from them. */
+  /** Exact match of the newest build's pinned accepted inputs, regardless of status. */
+  source_current: boolean
+  /** Ready for the order's accepted inputs now: the newest build succeeded, from them. */
   current: boolean
   /** Shopping the list at the store: its newest shop job (null until it starts). */
   shop: Job | null
@@ -303,6 +305,20 @@ export interface Quote {
   /** Once it succeeds: why Instacart won't check the cart out (below the store's minimum), or checkout. */
   blocked_because: string | null
   checkout: Checkout | null
+  availability: DeliveryAvailability | null
+  availability_current: boolean
+  availability_valid_until: string | null
+}
+
+export interface AvailableDeliveryDay {
+  day: ISODate
+  windows: DeliveryWindow[]
+}
+
+export interface DeliveryAvailability {
+  observed_at: string
+  time_zone: string
+  days: AvailableDeliveryDay[]
 }
 
 /** A delivery window, in the store's time zone. */
@@ -348,7 +364,21 @@ export interface Booking {
 export interface BookIssue {
   message: string
   item_ids: string[]
+  proposal: DeliveryProposal | null
+  deferred_at: string | null
 }
+
+export interface DeliveryProposal {
+  id: string
+  day: ISODate
+  window: DeliveryWindow
+  observed_at: string
+  starts_at: string
+  valid_until: string
+}
+
+export interface DeliveryProposalIn { proposal_id: string }
+export interface ApproveDeliveryIn extends DeliveryProposalIn { next_delivery_date: ISODate }
 
 /** Where a placed order is with the store (null for a draft): GroceryOrder's and PlacedOrder's. */
 export interface BookFields {
@@ -358,6 +388,8 @@ export interface BookFields {
   /** Once booked: null for orders placed before booking existed. */
   booking: Booking | null
   book_issue: BookIssue | null
+  /** AWS confirmed that the exact purchasing worker stopped. Still requires checking Instacart. */
+  can_confirm_absent: boolean
 }
 
 export interface GroceryOrder extends BookFields {
@@ -374,13 +406,12 @@ export interface GroceryOrder extends BookFields {
   /** The decide-by date less the household's reminder lead: daily reminders from then. */
   reminders_start_date: ISODate | null
   earliest_delivery_date: ISODate
+  delivery_time_zone: string
   delivery_date: ISODate | null
   /** The latest time it should arrive by, in the store's time zone; null until chosen (the household's delivery time shows). */
   delivery_by: ClockTime | null
   /** For that time: the window booking picks when every window is open; null when none ends by it or includes it (it can't be booked). */
-  best_window: DeliveryWindow | null
   /** The one window booking may use that ends after that time, if nothing ending by it is left ("or 2–4 PM"). */
-  fallback_window: DeliveryWindow | null
   next_delivery_date: ISODate | null
   /** The furthest step its flow has reached: where the flow opens again. */
   reached_step: OrderStep
@@ -457,6 +488,7 @@ export interface NextOrder {
   /** The first day of the daily reminders to decide it (they go on until it's placed); null without a target date. */
   reminders_start_date: ISODate | null
   earliest_delivery_date: ISODate
+  delivery_time_zone: string
   /** Its draft, once someone has started one. */
   draft: GroceryOrder | null
 }

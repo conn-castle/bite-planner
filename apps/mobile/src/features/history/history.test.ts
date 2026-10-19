@@ -20,7 +20,7 @@ const order = (number: number, delivery: string, meals: MealSummary[]): PlacedOr
   book_state: 'booked',
   book_on: '2026-09-20',
   booking: null,
-  book_issue: null,
+  book_issue: null, can_confirm_absent: false,
   id: `order-${number}`,
   number,
   placed_at: `${delivery}T09:00:00Z`,

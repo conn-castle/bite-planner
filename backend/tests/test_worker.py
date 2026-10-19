@@ -8,14 +8,15 @@ import os
 import sys
 import tarfile
 import time
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from datetime import time as clock
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
-from castle_chef_agent.checkout import RENEWED_SESSION_FILE, SESSION_FILE, Checkout
+from castle_chef_agent.checkout import RENEWED_SESSION_FILE, SESSION_FILE, Checkout, ClickRequest
 from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ProductCount
@@ -348,8 +349,10 @@ def test_a_job_discarded_just_after_it_was_claimed_ends_quietly(
     order = session.get(GroceryOrder, job.grocery_order_id)
     assert order is not None
 
-    def claim_then_discard(claim_session: Session, claimed_id: UUID) -> Job | None:
-        claimed = claim_job(claim_session, claimed_id)
+    def claim_then_discard(
+        claim_session: Session, claimed_id: UUID, task_arn: str | None = None
+    ) -> Job | None:
+        claimed = claim_job(claim_session, claimed_id, task_arn)
         orders.discard(session, order.household_id, order.id, order.created_by)
         return claimed
 
@@ -1302,7 +1305,7 @@ def approved(
     return booking.start(session, session.get_one(GroceryOrder, draft.id))
 
 
-BOOK_DAY = date.today() + timedelta(days=3)
+BOOK_DAY = datetime.now(ZoneInfo("America/New_York")).date() + timedelta(days=3)
 
 
 def booked_order(session: Session, book: Job) -> GroceryOrder:
@@ -1312,6 +1315,13 @@ def booked_order(session: Session, book: Job) -> GroceryOrder:
 
 def use_booking(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     monkeypatch.setenv("CASTLE_CHEF_INSTACART_BOOKING", mode)
+    if mode == "live":
+        from castle_chef.worker_tasks import WorkerTask
+        from tests.test_failures import CLUSTER, TASK
+
+        monkeypatch.setattr(
+            "castle_chef.worker.current_task", lambda: WorkerTask(task_arn=TASK, cluster=CLUSTER)
+        )
     get_settings.cache_clear()
 
 
@@ -1407,8 +1417,8 @@ def test_a_live_booking_records_the_click_before_pressing_and_keeps_the_confirma
     claims: list[GroceryOrder] = []
     claim = booking.claim_click
 
-    def recorded(db: Session, job_id: UUID) -> bool:
-        claimed = claim(db, job_id)
+    def recorded(db: Session, job_id: UUID, request: ClickRequest) -> bool:
+        claimed = claim(db, job_id, request)
         claims.append(booked_order(session, book))
         return claimed
 
@@ -1481,7 +1491,33 @@ def test_booking_while_its_turned_off_stops_before_place_order_and_isnt_booked(
     assert order.book_issue == BookIssue(message="Booking at Instacart isn't turned on yet.")
 
 
+@pytest.mark.parametrize("agent_exit", [0, 3])
 def test_a_day_with_no_window_left_for_the_time_needs_another_day_or_time(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    agent_exit: int,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job, by=clock(9))  # the stand-in's start at 10 AM
+    use_fake_agent(monkeypatch, meals=1, exit_code=agent_exit)
+
+    run_job(book)
+
+    order = booked_order(session, book)
+    assert order.book_state == BookState.NEEDS_TIME
+    assert order.clicked_at is None
+    assert order.book_issue is not None and order.book_issue.proposal is not None
+    assert order.book_issue.message.endswith("you approved. Nothing was ordered.")
+    assert order.book_issue.proposal.day == BOOK_DAY
+    assert order.book_issue.proposal.window == Window(start=clock(10), end=clock(12))
+
+
+def test_skipping_alternative_discovery_fails_explicitly_instead_of_claiming_no_alternative(
     session: Session,
     draft: GroceryOrder,
     job: Job,
@@ -1491,16 +1527,107 @@ def test_a_day_with_no_window_left_for_the_time_needs_another_day_or_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     start_cart(codex_home, {})
-    book = approved(session, draft, job, by=clock(9))  # the stand-in's start at 10 AM
+    book = approved(session, draft, job, by=clock(9))
+    use_fake_agent(monkeypatch, meals=4)
+    run_job(book)
+    order = booked_order(session, book)
+    assert order.book_state == BookState.NOT_BOOKED and order.clicked_at is None
+    assert order.book_issue is not None and order.book_issue.proposal is None
+    assert order.book_issue.message == (
+        "Booking stopped before checking the available alternatives. "
+        "Nothing was ordered. Check delivery times and try again."
+    )
+
+
+@pytest.mark.parametrize("by", [clock(12), clock(18)])
+def test_expired_permission_uses_only_observed_alternatives_without_guessing_unread_days(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+    by: clock,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job, by=by)
+    use_booking(monkeypatch, "live")
     use_fake_agent(monkeypatch, meals=1)
 
-    run_job(book)
+    def expired(_session: Session, _job_id: UUID, request: ClickRequest) -> bool:
+        now = datetime.combine(request.day, request.window.start, ZoneInfo("America/New_York"))
+        monkeypatch.setattr(booking, "store_now", lambda: now + timedelta(minutes=1))
+        return False
 
+    monkeypatch.setattr(booking, "claim_click", expired)
+    run_job(book)
     order = booked_order(session, book)
-    assert order.book_state == BookState.NEEDS_TIME
-    assert order.book_issue == BookIssue(
-        message=f"No delivery window is left on {BOOK_DAY:%a, %b} {BOOK_DAY.day} for the time "
-        "it needs."
+    assert order.book_state == BookState.NEEDS_TIME and order.clicked_at is None
+    assert order.delivery_date == BOOK_DAY and order.delivery_by == by
+    assert order.book_issue is not None
+    proposal = order.book_issue.proposal
+    if by == clock(12):
+        assert proposal is not None and proposal.day == BOOK_DAY
+        assert proposal.window == Window(start=clock(12), end=clock(14))
+    else:
+        # Tomorrow's tabs exist, but this attempt never read their windows.
+        assert proposal is None
+
+
+def test_refused_purchase_permission_gives_an_actionable_time_failure(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    use_booking(monkeypatch, "live")
+    use_fake_agent(monkeypatch, meals=1)
+
+    def denied(_session: Session, _job_id: UUID, _request: ClickRequest) -> bool:
+        return False
+
+    monkeypatch.setattr(booking, "claim_click", denied)
+    run_job(book)
+    order = booked_order(session, book)
+    assert order.book_state == BookState.NEEDS_TIME and order.clicked_at is None
+    assert order.book_issue is not None
+    assert order.book_issue.message == (
+        "The approved delivery could not be authorized before purchase. "
+        "Nothing was ordered. Check times for an alternative."
+    )
+
+
+def test_a_day_the_store_isnt_offering_yet_never_gets_replaced(
+    session: Session,
+    draft: GroceryOrder,
+    job: Job,
+    codex_home: Path,
+    instacart_site: str,
+    sessions: RecordingSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start_cart(codex_home, {})
+    book = approved(session, draft, job)
+    order = session.get_one(GroceryOrder, draft.id)
+    day = BOOK_DAY + timedelta(days=10)
+    order.delivery_date, order.next_delivery_date = day, day + timedelta(days=3)
+    session.add(order)
+    session.commit()
+    use_fake_agent(monkeypatch, meals=1)
+    run_job(book)
+    order = booked_order(session, book)
+    assert order.book_state == BookState.NOT_BOOKED and order.clicked_at is None
+    assert order.delivery_date == day
+    assert order.book_issue is not None and order.book_issue.proposal is None
+    assert order.book_issue.message == (
+        "Instacart isn't offering the approved delivery day yet. "
+        "Your delivery has not changed. Check times again later."
     )
 
 

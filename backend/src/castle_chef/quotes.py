@@ -3,15 +3,26 @@ the worker fills the household's cart with the list's products and reads
 checkout (castle_chef.cart, castle_chef.checkout). A quote is current while the
 list's products and counts, and the household's tip rule, are the ones it read."""
 
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from castle_chef_agent.windows import AVAILABILITY_MAX_AGE
 from sqlmodel import Session
 
 from castle_chef import delivery, products, shopping
 from castle_chef.checkout import CartLine, QuoteRequest
+from castle_chef.checkout import Quote as QuoteResult
 from castle_chef.jobs import ACTIVE, add_job, fail_stale_jobs, newest_job, retried
 from castle_chef.meal_edits import require_resolved
 from castle_chef.models import GroceryOrder, Household, Job, JobKind, JobStatus
+
+
+def availability_fresh(quote: QuoteResult | None, now: datetime) -> bool:
+    return (
+        quote is not None
+        and quote.availability is not None
+        and timedelta(0) <= now - quote.availability.observed_at <= AVAILABILITY_MAX_AGE
+    )
 
 
 class NothingToQuote(Exception):
@@ -56,7 +67,7 @@ def newest_quote(session: Session, order_id: UUID) -> Job | None:
 
 
 def submit_quote(
-    session: Session, order: GroceryOrder, member_id: UUID, job_id: UUID
+    session: Session, order: GroceryOrder, member_id: UUID, job_id: UUID, refresh: bool = False
 ) -> tuple[Job, bool]:
     """Start a quote of the draft as it is now, and commit. Returns (job,
     created): a quote waiting, running, or done for the same products, counts,
@@ -76,7 +87,21 @@ def submit_quote(
     if (
         newest is not None
         and newest.quote_request == request
-        and newest.status in (*ACTIVE, JobStatus.SUCCEEDED)
+        and (
+            newest.status in ACTIVE
+            or (
+                newest.status == JobStatus.SUCCEEDED
+                and not refresh
+                and (
+                    availability_fresh(newest.quote, datetime.now(UTC))
+                    or (
+                        newest.quote is not None
+                        and newest.quote.blocked_because is not None
+                        and datetime.now(UTC) - newest.created_at <= AVAILABILITY_MAX_AGE
+                    )
+                )
+            )
+        )
     ):
         session.rollback()
         return newest, False

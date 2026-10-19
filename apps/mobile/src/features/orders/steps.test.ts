@@ -15,7 +15,7 @@ const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   book_state: null,
   book_on: null,
   booking: null,
-  book_issue: null,
+  book_issue: null, can_confirm_absent: false,
   id: 'draft',
   number: 4,
   status: 'draft',
@@ -25,6 +25,7 @@ const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   decide_by_date: '2026-09-26',
   reminders_start_date: null,
   earliest_delivery_date: '2026-09-25',
+  delivery_time_zone: 'America/New_York',
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
@@ -34,8 +35,7 @@ const order = (fields: Partial<GroceryOrder>): GroceryOrder => ({
   lock: null,
   shopping_list: null,
   quote: null,
-  best_window: null,
-  fallback_window: null,
+
   ...fields,
 })
 const onions: ShoppingItem = {
@@ -69,6 +69,7 @@ const onions: ShoppingItem = {
 const list = (current: boolean) => ({
   job: { ...batch, id: 'build', kind: 'build_list' as const },
   current,
+  source_current: current,
   shop: { ...batch, id: 'shop', kind: 'shop' as const },
   shop_current: true,
   address_problem: null,

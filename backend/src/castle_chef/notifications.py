@@ -148,13 +148,19 @@ def booking(session: Session, order: GroceryOrder) -> Notification | None:
             body += f" {swap.gone} was gone, so it's {swap.bought} instead."
     elif order.book_state == BookState.NEEDS_TIME:
         title, body = f"Order {number} needs a new time", f"{issue} Open it to choose another."
+        proposal = order.book_issue.proposal if order.book_issue else None
+        if proposal is not None:
+            body = (
+                f"Nothing was ordered. Available: {_long_date(proposal.day)}, "
+                f"{windows.label(proposal.window)}. Open to approve or decide later."
+            )
     elif order.book_state == BookState.NEEDS_PRODUCT:
         title, body = f"Order {number} needs a product chosen", f"{issue} Open it to choose."
     elif order.book_state == BookState.NOT_BOOKED:
         title, body = f"Order {number} wasn't booked", f"{issue} Nothing was ordered."
     elif order.book_state == BookState.CHECK_INSTACART:
         title = f"Check Instacart for Order {number}"
-        body = f"{issue} Open it to say whether Instacart has it."
+        body = f"{issue} Check your Instacart orders before attempting another purchase."
     else:
         return None
     return Notification(

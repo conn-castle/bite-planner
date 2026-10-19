@@ -24,10 +24,12 @@ from castle_chef_agent.checkout import (
     CLICK_REQUEST_FILE,
     RENEWED_SESSION_FILE,
     SESSION_FILE,
+    BookingRefusal,
     BookTarget,
     CheckoutJob,
     ClickAnswer,
     ClickReply,
+    ClickRequest,
 )
 from castle_chef_agent.checkout import load_state as load_checkout_state
 from castle_chef_agent.instacart import InstacartError
@@ -95,6 +97,7 @@ from castle_chef.products import InvalidProducts
 from castle_chef.records import keeping_record
 from castle_chef.settings import REPO_ROOT, current_release, get_settings
 from castle_chef.shopping import InvalidList, ListEntry
+from castle_chef.worker_tasks import current_task
 
 log = logging.getLogger(__name__)
 
@@ -169,9 +172,10 @@ def _run_one(job_id: UUID) -> UUID | None:
     """Claim the job and run it; returns the job to run next, if any."""
     fields = {"job_id": str(job_id)}
     log.info("worker.started", extra=current_release() | fields)
+    task = current_task()
     try:
         with get_session() as session:
-            job = claim_job(session, job_id)
+            job = claim_job(session, job_id, task.task_arn if task else None)
     except LookupError:
         log.info("job.discarded", extra=fields)
         return None
@@ -211,7 +215,6 @@ def _process(job: Job, fields: dict[str, str]) -> JobResult | None:
     except (
         AgentRunError,
         meal_edit.EditRefused,
-        meal_edits.EditNotAllowed,
         ValidationError,
         InvalidList,
         InvalidProducts,
@@ -292,9 +295,6 @@ def _save(job: Job, result: JobResult, fields: dict[str, str]) -> tuple[bool, UU
                             error="The order or recipe changed before this edit finished.",
                         )
                         return False, None
-                    if meal_edits.shopping_started(session, order.id):
-                        finish_job(session, job.id, error=meal_edits.SHOPPING_STARTED)
-                        return False, None
                     result = meal_edit.ProposedRecipe.model_validate(result.model_dump())
                     if not meal_edit.changed(meal_edits.current_recipe(meal), result):
                         finish_job(session, job.id, error="The agent didn't change anything.")
@@ -356,7 +356,6 @@ def _save(job: Job, result: JobResult, fields: dict[str, str]) -> tuple[bool, UU
                         or newest.id != job.id
                         or result.source != locked_job.list_source
                         or result.source != shopping.current_source(session, order.id)
-                        or meal_edits.recipe_blockers(session, order)
                     ):
                         finish_job(
                             session, job.id, error="The order or recipes changed; build a new list."
@@ -368,7 +367,9 @@ def _save(job: Job, result: JobResult, fields: dict[str, str]) -> tuple[bool, UU
                         result.prepared,
                     )
                     shopping.add_items(session, job.id, result.items, result.source)
-                    shop_id = create_shop(session, job, uuid4(), job.requested_by).id
+                    shop_id = create_shop(
+                        session, job, uuid4(), job.requested_by, task_arn=job.worker_task_arn
+                    ).id
                 case _:
                     assert_never(result)
             if not finish_job(
@@ -516,7 +517,6 @@ def process_job(job: Job) -> JobResult:
                     raise meal_edit.EditRefused(
                         "The order or recipe changed before this edit started."
                     )
-                meal_edits.require_editable(session, order)
                 current = meal_edits.current_recipe(meal)
                 feedback = job.meal_edit.feedback
             edit_context = meal_edit.EditMealJob(current=current)
@@ -656,9 +656,18 @@ def process_quote(job: Job, job_dir: Path) -> Quote:
     read = load_checkout_state(job_dir)
     if read.signed_out:
         raise CheckoutError(SIGNED_OUT_ERROR)
+    if read.availability is None or set(read.offered_days) != {
+        day.day for day in read.availability.days
+    }:
+        raise AgentRunError(f"The agent didn't read every offered delivery day; see {job_dir}.")
     if read.checkout is None:
+        if not any(day.windows for day in read.availability.days):
+            return Quote(
+                blocked_because="Instacart has no remaining scheduled delivery windows right now.",
+                availability=read.availability,
+            )
         raise AgentRunError(f"The agent didn't report checkout; see {job_dir}.")
-    return Quote(checkout=read.checkout)
+    return Quote(checkout=read.checkout, availability=read.availability)
 
 
 @dataclass(frozen=True)
@@ -834,11 +843,21 @@ def _book_filled(job: Job, job_dir: Path, to_book: _ToBook, filled: cart.FilledC
         try:
             run_agent(job_dir, prompt, Tools.CHECKOUT, context)
         except AgentRunError as error:
-            # Once Place order was pressed, what the tools recorded says how it went.
-            if not load_checkout_state(job_dir).clicked:
+            # A recorded authorization/refusal survives an agent exiting badly.
+            read = load_checkout_state(job_dir)
+            if not (
+                read.clicked
+                or read.click in (ClickAnswer.GO, ClickAnswer.REFUSED)
+                or read.refusal is not None
+                or read.alternatives_checked
+            ):
                 raise
             log.error(
-                "booking.agent_failed_after_click",
+                "booking.agent_failed_after_click"
+                if read.clicked
+                else "booking.agent_failed_after_delivery_check"
+                if read.alternatives_checked
+                else "booking.agent_failed_after_refusal",
                 extra={"job_id": str(job.id), "error": str(error)},
             )
     return _outcome(job_dir, to_book, swaps)
@@ -862,12 +881,12 @@ def _outcome(job_dir: Path, to_book: _ToBook, swaps: dict[str, CartLine]) -> Boo
         for gone, alternative in swaps.items()
         for item in to_book.items.get(gone, [])[:1]
     ]
-    if read.clicked:
+    if read.clicked or read.click == ClickAnswer.GO:
         if read.confirmation is None:
             return Booked(
                 state=BookState.CHECK_INSTACART,
                 issue=BookIssue(
-                    message="Place order was pressed, but Instacart didn't confirm it."
+                    message="Place order may have been pressed, but Instacart didn't confirm it."
                 ),
             )
         confirmed = read.confirmation
@@ -894,13 +913,65 @@ def _outcome(job_dir: Path, to_book: _ToBook, swaps: dict[str, CartLine]) -> Boo
         )
     if read.click == ClickAnswer.OFF:
         return Booked(state=BookState.NOT_BOOKED, issue=BookIssue(message=booking.BOOKING_OFF))
+    if read.refusal == BookingRefusal.DAY_NOT_OFFERED:
+        return Booked(
+            state=BookState.NOT_BOOKED,
+            issue=BookIssue(
+                message="Instacart isn't offering the approved delivery day yet. "
+                "Your delivery has not changed. Check times again later.",
+            ),
+        )
+    if read.click == ClickAnswer.REFUSED or read.refusal == BookingRefusal.WINDOW_EXPIRED:
+        proposal: windows.DeliveryProposal | None = None
+        snapshot = read.availability
+        now = booking.store_now()
+        if snapshot is not None:
+            approved = [
+                window
+                for day in snapshot.remaining(now)
+                if day.day == to_book.target.day
+                for window in day.windows
+            ]
+            if windows.choose(approved, to_book.target.by) is None:
+                if set(read.offered_days) != {day.day for day in snapshot.days}:
+                    # A later window on the observed approved day is known to
+                    # precede every unobserved future day. Never guess across
+                    # gaps in a partial snapshot.
+                    snapshot = snapshot.model_copy(
+                        update={
+                            "days": [day for day in snapshot.days if day.day == to_book.target.day]
+                        }
+                    )
+                proposal = windows.propose(snapshot, to_book.target.day, to_book.target.by, now)
+        return Booked(
+            state=BookState.NEEDS_TIME,
+            issue=BookIssue(
+                message="The approved delivery could not be authorized before purchase. "
+                "Nothing was ordered. Check times for an alternative.",
+                proposal=proposal,
+            ),
+        )
+    if read.refusal == BookingRefusal.PERMISSION_NOT_RECEIVED:
+        return Booked(
+            state=BookState.NOT_BOOKED,
+            issue=BookIssue(
+                message="Booking did not receive permission to place the order. "
+                "Check delivery times and try again.",
+            ),
+        )
     if read.no_window:
+        if not read.alternatives_checked:
+            raise AgentRunError(
+                "Booking stopped before checking the available alternatives. "
+                "Nothing was ordered. Check delivery times and try again."
+            )
         day = to_book.target.day
         return Booked(
             state=BookState.NEEDS_TIME,
             issue=BookIssue(
                 message=f"No delivery window is left on {day:%a, %b} {day.day} for the time "
-                "it needs."
+                "you approved. Nothing was ordered.",
+                proposal=read.proposal,
             ),
         )
     if read.changed is not None:
@@ -910,7 +981,10 @@ def _outcome(job_dir: Path, to_book: _ToBook, swaps: dict[str, CartLine]) -> Boo
         )
     if read.signed_out:
         return Booked(state=BookState.NOT_BOOKED, issue=BookIssue(message=SIGNED_OUT_ERROR))
-    raise AgentRunError(f"The agent didn't book the order; see {job_dir}.")
+    log.error("booking.no_outcome", extra={"job_dir": str(job_dir)})
+    raise AgentRunError(
+        "Booking stopped without confirming a result. Check delivery times and try again."
+    )
 
 
 @contextmanager
@@ -929,8 +1003,9 @@ def answering_clicks(job_dir: Path, job_id: UUID) -> Iterator[None]:
         try:
             mode = get_settings().instacart_booking
             if mode == "live":
+                requested = ClickRequest.model_validate_json(request.read_text())
                 with get_session() as session:
-                    claimed = booking.claim_click(session, job_id)
+                    claimed = booking.claim_click(session, job_id, requested)
                 reply = ClickAnswer.GO if claimed else ClickAnswer.REFUSED
             else:
                 reply = ClickAnswer.DRY_RUN if mode == "dry_run" else ClickAnswer.OFF
@@ -977,6 +1052,7 @@ def _checkout(
         session_dir=session_dir,
         book=book,
         delivery_address=delivery_address,
+        time_zone=settings.store_time_zone,
     )
     try:
         _hand_over_session(session_dir, sessions.load())

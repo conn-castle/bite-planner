@@ -117,9 +117,9 @@ export function registerSettingsMutations(queryClient: QueryClient) {
             session?.household ? { ...session, household: { ...session.household, name: household.name } } : session,
         )
       }
-      // Decide-by and reminder dates are computed from the offset and the lead.
+      // Dates, shopping and estimates also depend on these household settings.
       if (change.decide_by_offset_days !== undefined || change.reminder_lead_days !== undefined
-        || change.delivery_address !== undefined) {
+        || change.delivery_address !== undefined || change.tip_percent !== undefined || change.tip_max_cents !== undefined) {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: queryKeys.nextOrder }),
           queryClient.invalidateQueries({ queryKey: queryKeys.orders }),

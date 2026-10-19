@@ -26,11 +26,12 @@ import re
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -97,6 +98,7 @@ class CheckoutJob(BaseModel):
     session_dir: Path
     book: BookTarget | None = None
     delivery_address: str | None = None
+    time_zone: str = "America/New_York"
     # Instacart's website: the worker passes its setting (tests point it at stand-ins).
     site: str = SITE
     # How often a page is checked for having stopped changing: the worker passes
@@ -143,10 +145,19 @@ class ClickRequest(BaseModel):
     """A booking asking to press Place order, for this checkout."""
 
     total_cents: int
+    day: date
+    by: time
+    window: Window
 
 
 class ClickReply(BaseModel):
     answer: ClickAnswer
+
+
+class BookingRefusal(StrEnum):
+    DAY_NOT_OFFERED = "day_not_offered"
+    WINDOW_EXPIRED = "window_expired"
+    PERMISSION_NOT_RECEIVED = "permission_not_received"
 
 
 class Confirmation(BaseModel):
@@ -166,9 +177,15 @@ class CheckoutState(BaseModel):
     replacements: list[str] | None = None
     checkout: Checkout | None = None
     signed_out: bool = False
+    availability: windows.Availability | None = None
+    # All dates in the schedule's tablist: a quote may not omit a displayed day.
+    offered_days: list[date] = []
+    proposal: windows.DeliveryProposal | None = None
+    alternatives_checked: bool = False
     # A booking's: the window the rule chose, or that none that day works.
     window: Window | None = None
     no_window: bool = False
+    refusal: BookingRefusal | None = None
     # The address or card isn't the one the order was approved with.
     changed: str | None = None
     # Its Place order: the worker's answer, whether it was pressed, and what
@@ -451,6 +468,7 @@ async def browser(job_dir: Path) -> AsyncIterator[Browser]:
             context = await chromium.new_context(
                 storage_state=state,  # type: ignore[arg-type]
                 viewport={"width": 1280, "height": 1000},
+                timezone_id=job.time_zone,
             )
             context.set_default_timeout(TIMEOUT_MS)
             context.set_default_navigation_timeout(NAVIGATION_TIMEOUT_MS)
@@ -542,7 +560,10 @@ async def report(job_dir: Path, opened: Browser, refs: ReportRefs) -> Checkout:
     if (
         book is not None
         and state.window is not None
-        and (windows.parse(delivery) != state.window or not _day_named(delivery, book.day))
+        and (
+            windows.parse(delivery) != state.window
+            or not _delivery_matches(delivery, book.day, opened.job.time_zone)
+        )
     ):
         problems.append(
             f"The delivery chosen shows {delivery[:60]!r}, not the window to book "
@@ -567,6 +588,11 @@ async def report(job_dir: Path, opened: Browser, refs: ReportRefs) -> Checkout:
     )
     if problems := check_checkout(checkout, opened.job):
         raise CheckoutRefused(" ".join(problems))
+    if book is None and (
+        state.availability is None
+        or set(state.offered_days) != {day.day for day in state.availability.days}
+    ):
+        raise CheckoutRefused("Record every delivery-day tab with record_day before reporting.")
     expected_address = opened.job.delivery_address
     if expected_address is not None and (
         normalized_label(checkout.address) != normalized_label(expected_address)
@@ -616,6 +642,90 @@ def _day_named(text: str, day: date) -> bool:
     return re.search(rf"\b{day:%b}\w*\.?\s+{day.day}\b", text, re.I) is not None
 
 
+def _delivery_matches(text: str, day: date, zone: str) -> bool:
+    if _names_a_day(text):
+        return _day_named(text, day)
+    if re.search(r"\b(today|tomorrow)\b", text, re.I):
+        return delivery_day(text, datetime.now(ZoneInfo(zone)).date()) == day
+    return False
+
+
+def delivery_day(text: str, today: date) -> date:
+    """Resolve a schedule tab, including relative labels, at the store."""
+    if re.search(r"\btoday\b", text, re.I):
+        day = today
+    elif re.search(r"\btomorrow\b", text, re.I):
+        day = today + timedelta(days=1)
+    else:
+        for offset in range(367):
+            candidate = today + timedelta(days=offset)
+            if _day_named(text, candidate):
+                return candidate
+        raise CheckoutRefused(f"Cannot read the delivery date in {text[:80]!r}.")
+    if _names_a_day(text) and not _day_named(text, day):
+        raise CheckoutRefused(f"The date and relative day disagree in {text[:80]!r}.")
+    return day
+
+
+async def record_day(
+    job_dir: Path, opened: Browser, day: str, offered: list[str]
+) -> dict[str, Window]:
+    """Read a selected day's available windows from DOM refs, shared by quotes and bookings."""
+    state = load_state(job_dir)
+    if state.checkout is not None or state.click is not None or state.clicked:
+        raise CheckoutRefused(
+            "Checkout was reported or purchase was requested: don't change times."
+        )
+    await opened._stay_on_site()
+    tab = await opened._element(day)
+    if await tab.get_attribute("role") != "tab":
+        raise CheckoutRefused("Point at a delivery-day tab.")
+    now = datetime.now(ZoneInfo(opened.job.time_zone))
+    date_shown = delivery_day(await opened.element_text(day), now.date())
+    if await tab.is_disabled():
+        if offered:
+            raise CheckoutRefused("That day is disabled and has no available windows.")
+    elif await tab.get_attribute("aria-selected") != "true":
+        raise CheckoutRefused("Click that day's tab first, then give its windows.")
+    names: list[str] = await tab.evaluate(
+        """element => {
+            const list = element.closest('[role=tablist]')
+            if (!list) throw new Error('The day has no delivery tablist')
+            return [...list.querySelectorAll('[role=tab]')].map(tab => tab.innerText)
+        }"""
+    )
+    dates = sorted({delivery_day(name, now.date()) for name in names})
+    if len(set(offered)) != len(offered):
+        raise CheckoutRefused("Give each window once.")
+    found: dict[str, Window] = {}
+    for ref in offered:
+        element = await opened._element(ref)
+        if await element.is_disabled() or not await element.is_visible():
+            raise CheckoutRefused(
+                "Give only available, visible windows; omit full or disabled ones."
+            )
+        text = " ".join((await opened.element_text(ref)).split())
+        window = windows.parse(text)
+        if window is None:
+            raise CheckoutRefused(f"{text[:40]!r} isn't a delivery window.")
+        if datetime.combine(date_shown, window.start, now.tzinfo) > now:
+            found[ref] = window
+    with _changing(job_dir) as state:
+        previous = state.availability
+        captured = (
+            {entry.day: entry for entry in previous.days if entry.day in dates} if previous else {}
+        )
+        captured[date_shown] = windows.AvailableDay(day=date_shown, windows=list(found.values()))
+        state.proposal, state.alternatives_checked = None, False
+        state.offered_days = dates
+        state.availability = windows.Availability(
+            observed_at=previous.observed_at if previous else now.astimezone(UTC),
+            time_zone=opened.job.time_zone,
+            days=[captured[key] for key in sorted(captured)],
+        )
+    return found
+
+
 async def choose_window(job_dir: Path, opened: Browser, day: str, offered: list[str]) -> str:
     """Choose the delivery window to book among those Instacart offers on the
     order's day (the tab `day`, selected), by the rule (windows.choose); or
@@ -623,33 +733,52 @@ async def choose_window(job_dir: Path, opened: Browser, day: str, offered: list[
     book = _book(opened)
     if load_state(job_dir).checkout is not None:
         raise CheckoutRefused("Checkout is reported: the window is chosen.")
-    tab = await opened._element(day)
     shown = " ".join((await opened.element_text(day)).split())
-    if not _day_named(shown, book.day):
+    today = datetime.now(ZoneInfo(opened.job.time_zone)).date()
+    if delivery_day(shown, today) != book.day:
         raise CheckoutRefused(
             f"That's {shown[:40]!r}: point at the tab for {book.day:%a, %b} {book.day.day}."
         )
-    if await tab.get_attribute("aria-selected") == "false":
-        raise CheckoutRefused("Click that day's tab first, then give its windows.")
-    if len(set(offered)) != len(offered):
-        raise CheckoutRefused("Give each window once.")
-    found: dict[str, Window] = {}
-    for ref in offered:
-        text = " ".join((await opened.element_text(ref)).split())
-        window = windows.parse(text)
-        if window is None:
-            raise CheckoutRefused(f"{text[:40]!r} isn't a delivery window: give only the windows.")
-        found[ref] = window
+    found = await record_day(job_dir, opened, day, offered)
     chosen = windows.choose(list(found.values()), book.by)
     with _changing(job_dir) as state:
         state.window, state.no_window = chosen, chosen is None
     if chosen is None:
         return (
             "None of that day's windows works for the time the order needs: that's recorded, "
-            "and someone chooses another day or time. Stop here."
+            "and someone must approve an alternative. Record every day with record_day, "
+            "then call propose_delivery and stop without placing anything."
         )
     ref = next(ref for ref, window in found.items() if window == chosen)
     return f"Book {windows.label(chosen)}: click {ref}, then go on."
+
+
+async def propose_delivery(job_dir: Path, opened: Browser) -> str:
+    """Propose the next store-observed delivery, strictly before purchase authorization."""
+    book = _book(opened)
+    with _changing(job_dir) as state:
+        if state.clicked or state.click is not None or (job_dir / CLICK_REQUEST_FILE).exists():
+            raise CheckoutRefused("Purchase may have been attempted. Never propose or place again.")
+        snapshot = state.availability
+        if snapshot is None or set(state.offered_days) != {day.day for day in snapshot.days}:
+            raise CheckoutRefused(
+                "Record every displayed day first, including days with no windows."
+            )
+        state.alternatives_checked = True
+        if not snapshot.days or book.day > max(day.day for day in snapshot.days):
+            state.refusal = BookingRefusal.DAY_NOT_OFFERED
+            return (
+                "The approved day isn't offered yet. That's recorded. "
+                "Stop; don't propose another day."
+            )
+        now = datetime.now(ZoneInfo(opened.job.time_zone))
+        remaining = snapshot.remaining(now)
+        approved = [w for day in remaining if day.day == book.day for w in day.windows]
+        if windows.choose(approved, book.by) is not None:
+            raise CheckoutRefused("An approved window is still available: use choose_window.")
+        state.window, state.no_window = None, True
+        state.proposal = windows.propose(snapshot, book.day, book.by, now)
+    return "Alternative recorded for explicit approval. Nothing was ordered. Stop here."
 
 
 async def _await_answer(job_dir: Path) -> ClickAnswer | None:
@@ -678,11 +807,20 @@ async def place_order(job_dir: Path, opened: Browser, ref: str) -> str:
         request = job_dir / CLICK_REQUEST_FILE
         if state.click is not None or request.exists() or state.checkout is None:
             raise CheckoutRefused("Place order was asked for already: it's never asked for twice.")
-        asked = ClickRequest(total_cents=state.checkout.total_cents)
+        if state.window is None:
+            raise CheckoutRefused("The approved delivery window is missing.")
+        book = _book(opened)
+        asked = ClickRequest(
+            total_cents=state.checkout.total_cents, day=book.day, by=book.by, window=state.window
+        )
         replace_file(request, asked.model_dump_json())
     answer = await _await_answer(job_dir)
     if answer is None:
-        raise CheckoutRefused("Booking didn't answer, so nothing was ordered. Stop here.")
+        with _changing(job_dir) as state:
+            state.refusal = BookingRefusal.PERMISSION_NOT_RECEIVED
+        raise CheckoutRefused(
+            "Booking did not answer. Do not retry; the worker must verify purchase authorization."
+        )
     with _changing(job_dir) as state:
         state.click = answer
     if answer == ClickAnswer.DRY_RUN:
@@ -691,6 +829,12 @@ async def place_order(job_dir: Path, opened: Browser, ref: str) -> str:
         return "Booking isn't turned on yet: Place order wasn't pressed. Stop here."
     if answer == ClickAnswer.REFUSED:
         return "This order mustn't be placed now: Place order wasn't pressed. Stop here."
+    state = load_state(job_dir)
+    now = datetime.now(ZoneInfo(opened.job.time_zone))
+    if state.window is None or datetime.combine(book.day, state.window.start, now.tzinfo) <= now:
+        with _changing(job_dir) as state:
+            state.refusal = BookingRefusal.WINDOW_EXPIRED
+        raise CheckoutRefused("The delivery window passed while waiting. Do not press Place order.")
     try:
         await (await opened._element(ref)).click()
     finally:
@@ -710,8 +854,8 @@ async def record_confirmation(
     job_dir: Path, opened: Browser, number: str, window: str, total: str
 ) -> Confirmation:
     """Read what Instacart confirmed from the elements the agent points at: this
-    order's, which shows the window booked (on its day, if it names one) and the
-    total reported at checkout."""
+    order's, showing its day (including Today/Tomorrow), window and reported total.
+    A time-only entry cannot identify the delivery date of this purchase."""
     state = load_state(job_dir)
     book = _book(opened)
     if not state.clicked or state.checkout is None:
@@ -730,7 +874,7 @@ async def record_confirmation(
     charged = money(await opened.element_text(total))
     if (
         booked != state.window
-        or (_names_a_day(when) and not _day_named(when, book.day))
+        or not _delivery_matches(when, book.day, opened.job.time_zone)
         or charged != state.checkout.total_cents
     ):
         raise CheckoutRefused(

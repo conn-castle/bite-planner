@@ -19,7 +19,7 @@ const order: GroceryOrder = {
   book_state: null,
   book_on: null,
   booking: null,
-  book_issue: null,
+  book_issue: null, can_confirm_absent: false,
   id: 'order-2',
   number: 2,
   status: 'draft',
@@ -29,6 +29,7 @@ const order: GroceryOrder = {
   decide_by_date: '2026-09-28',
   reminders_start_date: null,
   earliest_delivery_date: '2026-09-26',
+  delivery_time_zone: 'America/New_York',
   delivery_date: '2026-09-29',
   delivery_by: null,
   next_delivery_date: '2026-10-02',
@@ -38,8 +39,7 @@ const order: GroceryOrder = {
   lock: null,
   shopping_list: null,
   quote: null,
-  best_window: null,
-  fallback_window: null,
+
 }
 
 const picked = (shown: GroceryOrder) => shown.picks.map((pick) => pick.meal_id)
@@ -160,6 +160,7 @@ describe('changes to the shopping list', () => {
         meals: [],
       },
       current: true,
+      source_current: true,
       shop: null,
       shop_current: false,
       address_problem: null,

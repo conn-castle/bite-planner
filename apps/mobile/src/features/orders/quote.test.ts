@@ -18,6 +18,7 @@ const quote = (fields: Partial<Quote>): Quote => ({
   signed_out: false,
   blocked_because: null,
   checkout: null,
+  availability: null, availability_current: false, availability_valid_until: null,
   ...fields,
 })
 

@@ -18,8 +18,13 @@ presses Place order: only `place_order` does, once.
 2. Choose a scheduled delivery: the Schedule option (not Priority, which
    costs more, and not Fast). Click the tab for $day, then call
    `choose_window` with that tab's ref and the ref of every time window it
-   offers. It says which window to click; click it and save the choice. If it
-   says none works, stop.
+   offers (only enabled windows; [] if none). It says which window to click;
+   click it and save the choice. Today or Tomorrow may be the tab's label.
+   Never choose another day or a window ending after the approved time.
+   If the approved day is missing or no approved window works, visit and
+   `record_day` EVERY displayed day tab and its enabled window refs, including
+   days with [] windows. Then call `propose_delivery` and stop. This records
+   an alternative for the member to approve; NEVER purchase the alternative.
 3. Call `tip` with the ref of the items' total line in the order summary, and
    set the delivery tip to exactly that amount (the tip's other or custom
    amount), then save it.
@@ -36,6 +41,10 @@ presses Place order: only `place_order` does, once.
    account's orders (its menu's "Your orders") for this order (its day,
    window, and total); if it's there, call `confirmed` with its refs; if not,
    call `not_confirmed`.
+
+For confirmation, point at a delivery element that includes the day (or
+Today/Tomorrow) and window together, or their containing element. A time-only
+entry cannot confirm which delivery date was purchased.
 
 If Instacart asks you to sign in before you've placed the order, call
 `signed_out` with the ref of its sign-in control and stop.

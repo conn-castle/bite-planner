@@ -8,8 +8,8 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 - [x] Anyone in the household can create and place an order.
 - [x] Creating an order walks the user through picking the meals, the delivery date, and the next delivery date.
 - [x] The delivery date defaults to the order's target date (the previous order's next delivery date); the user can change it.
-- [x] The earliest selectable delivery date comes from a function; it returns tomorrow.
-- [x] The delivery is a day and a latest time it should arrive by ("by 6:00 PM"), chosen after the shopping list. Any day from the earliest can be chosen, not only the days Instacart offers yet (it shows up to five days after today); the time starts at the household's delivery time (stage 3).
+- [x] The earliest selectable delivery date is today in the store’s time zone; only remaining, store-observed windows are selectable.
+- [x] The delivery is a day and a latest time it should arrive by ("by 6:00 PM"), chosen after the shopping list. Near-term choices use actual delivery windows from a fresh checkout snapshot, including today. Dates beyond the store’s offered horizon remain available for planning, clearly labelled as awaiting availability; their time starts at the household’s delivery time. An expired saved selection remains visible until explicitly replaced.
 - [x] The next delivery date defaults to the delivery date plus one day per meal; the user can change it.
 - [x] The next delivery date becomes the target date of the household's next order.
 - [x] Each order's decide-by date is its target date minus the household's decide-by offset.
@@ -78,7 +78,7 @@ Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-2
 - Walmart is the path if Castle Chef is ever offered to other households: its product API is self-serve, and one link fills anyone's Walmart cart with chosen products and quantities; the shopper then checks out themselves.
 
 - [x] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings (stages 1 and 2), asynchronously (it takes minutes), starting as soon as the servings are chosen; the user sees it when it's done.
-- [x] Changing the picked meals or their servings after the list was built rebuilds it from scratch; the user's changes to the old list are dropped. (Generation isn't deterministic and can change the list a lot, so there is no merging.)
+- [x] Changing selected meals, their servings or accepted recipe revisions makes a list stale. Replacing it rebuilds from scratch after a warning; quantities, removals and product choices reset. Picks and servings can be undone to restore the old list before replacement. (Generation isn't deterministic and can change the list a lot, so there is no merging.)
 - [x] The user can remove items from the shopping list and change their quantities.
 - [x] Items assumed to be on hand are never on the list. The list is the same for every household and isn't editable: salt, pepper, olive oil, vegetable oil, water. When the meals need any of them, an icon on the shopping list shows it; tapping it lists the assumed items these recipes need. They aren't shown otherwise (they'd be noise).
 - [x] Every confirmed ingredient line ends up in exactly one item to buy or one staple; the agent says which lines each covers, and the list isn't saved until every line is covered.
@@ -89,20 +89,21 @@ Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-2
 - [x] An item Wegmans doesn't have comes with alternatives to buy and/or why the meal works without it. Such items come first, in a red card; the user skips each or picks an alternative before going on.
 - [x] Tapping a product opens its page: whether it was bought before and what it's for; the user can change how many, switch to an alternative (up to eight), or not buy it.
 - [x] During list generation, before any Instacart interaction, the agent supplies one broader search term per item (for example, chicken sausage → sausage). Shopping code automatically runs that single search and saves its matching products. More alternatives on the product page shows those saved matches immediately, with pictures, prices, sizes, bought-before badges, and suggested quantities. It makes no live search, expands no queries, and keeps the curated alternatives separate. The single search's result count applies (10 in the live integration tests); old lists without a term need to be generated again to gain this feature.
-- [x] The delivery step is the day and the latest time ("by 6:00 PM"); it doesn't ask Instacart anything. The time is the store's local time (the delivery address's), shown as that time whatever the phone's own time zone.
-- [x] The final review fills the household's Wegmans cart with the chosen products and reads checkout for the estimated total: items, fees, tax, and the tip (from settings). Whenever the cart is filled (here, and when booking), the household's own items already in it are set aside first and put back when that's done: read, booked, failed, or interrupted (a run that stops midway puts them back on the next one).
+- [x] The delivery step reads checkout once for the estimated total and all displayed delivery-day tabs. It shows actual remaining windows, refreshed explicitly when stale, with the time in the store’s time zone independently of the phone. Progression explicitly saves the date and latest arrival time shown.
+- [x] Delivery reads the household’s cart and checkout; final review reuses that quote while its products, counts, tip rule and availability are current. Whenever the cart is filled, the household’s existing items are set aside and restored after reading, booking, failure or interruption (an interrupted run restores them on the next run).
 - [x] The final review shows the estimated total (the items, each of checkout's other lines as Instacart labels them, and the tip), the day and latest time, and the account's address, card, and what Instacart does when an item is out of stock (a setting on each item in the cart, "Replace with best match" unless changed: the one setting, or "Varies by item"). Below the store's minimum ($10 at Wegmans), it says so and the order can't be approved.
-- [x] Approving the order books it at Instacart with nothing more to do. The window (any of Instacart's windows; they're two hours, starting every hour from 7–9 AM to 9–11 PM, measured 2026-09-28): the latest one that day that ends by the chosen time; if it's full, the one before it, and so on, earlier through the day; if none of those is left, the earliest-ending window the time falls in (for "by 3:00 PM", 2–4 PM; for "by 3:30 PM", 2–4 PM, not 3–5 PM), the one window allowed to end after the chosen time. The review says so ("by 3:00 PM, or 2–4 PM if nothing earlier is left"), and the confirmation shows the window booked.
-- [x] When it books: one day after Instacart first offers the chosen day (Instacart shows up to five days after today, so a Friday delivery first shows on Sunday and books on Monday, four days before), at 9:00 AM store time, from a scheduled job; an order approved later than that books right away. Until then it waits to book.
+- [x] Approval authorizes exactly the saved delivery date and latest arrival time. Booking chooses the latest remaining window on that date ending no later than the approved time. It never substitutes another date or a later arrival without a new explicit approval; final review states that policy.
+- [x] An approved delivery whose date has actual windows in its fresh snapshot books immediately. For future dates not yet offered, booking waits until four days before delivery at 9:00 AM store time, or starts immediately when approved after that time.
 - [x] The scheduled job runs every hour from 9:00 AM to 9:00 PM store time, starting only the orders that are due and still waiting: a run that failed is made up by the next one, and running it again never starts an order twice (decided 2026-10-04). The alarms cover its schedule.
 - [x] While it waits to book, the order can be changed, unless the following order already has a draft or has been placed (then only cancelled): opening it goes through the flow again, and it needs approving again (the total is read again); it doesn't book while it's being changed or until it's approved again.
-- [x] Choosing the window never needs the user, except when the chosen day has none of those windows left: nothing is ordered, and the user is told and picks another day or time, which books it the same way.
+- [x] If no approved window is available before purchasing, nothing is ordered. Booking records the next actual available date/window as a proposal and notifies the approver. Approve delivery explicitly authorizes that proposal; Decide later keeps it pending and starts no purchase. Expired proposals require checking times again. A proposal colliding with the next delivery requires choosing that next date explicitly.
 - [x] Booking fills the cart again with the approved products and counts, and just before placing it checks that the cart is those products and counts, the address and card are the ones the final review showed, and the tip follows the tip rule, then clicks once. The window and the total are Instacart's at that moment (prices can change between approving and booking); the confirmation shows the total charged. An order is clicked at most once: a retried job, a second approve, or a scheduled run after it never clicks again.
 - [x] Booking never goes without a product that was approved. If one is no longer available, the household's setting decides: use the first of its alternatives that's available (and tell whoever approved it about the swap), or ask (nothing is ordered, and whoever approved it is told and picks an alternative). With none of its alternatives available, it asks either way.
 - [x] While it waits to book, the order can be cancelled outright (discarded, like a draft), up to when it books.
 - [x] A failure before the click (signed out, the store's minimum not met, the address or card changed, the checkout page changed) orders nothing: the order stays approved, marked "Not booked" with why, and Try again books it the same way.
 - [x] An order still waiting to book two hours after its booking time shows as "Not booked" ("It didn't book on Mon, Oct 5 as planned."), with Try again, which books it through the API, not the schedule; until then the next hourly run may still book it. No notification says it's late: one would need our code to be running, and whenever it is, the hourly run books it (decided 2026-10-04).
-- [x] A failure after the click with no confirmation marks the order "check Instacart", never "not placed". The worker first looks for it in Instacart's orders; if it can't tell, the order asks "Was Order 4 placed?" with a link to the household's Instacart orders and "It was placed" / "It wasn't placed". Nothing books it again until that's settled.
+- [x] Once purchase authorization is recorded, every unconfirmed outcome is “Check Instacart”, including a lost GO reply or a browser reporting no local click. Retry, change, cancellation and alternative approval remain blocked. “It was placed” is available immediately. “It wasn’t placed” requires both the member checking Instacart and persisted AWS STOPPED evidence for the exact purchasing task. A timeout, missing task, failed job or absent confirmation never supplies that proof.
+- [x] Selected, approved, proposed, reapproved, deferred, purchase-authorized, confirmed and manually resolved delivery decisions are recorded transactionally with date/time, actor, job/proposal IDs and outcome evidence. Cancellation preserves this history. ECS stop evidence arrives through a dedicated queue with retries, dead-letter queues and owner alarms; missing evidence keeps recovery blocked.
 - [x] Only production places orders; development never orders and doesn't touch the real Instacart cart unless agreed for a test.
 
 ## Placing and status
@@ -156,10 +157,48 @@ Personal settings:
 - [x] Order view: an order's dates, status, meals, and shopping list (from stage 3, its Instacart order too).
 - [x] Meal view: a meal's recipe (servings, ingredients, facts).
 - [x] A suggestion's recipe has the same Add/Added toggle and household default order servings as its card, with save failures shown separately from recipe servings.
-- [x] Before shopping starts, freeform Feedback proposes edits to this order's recipe through the agent. The user reviews all recipe facts, ingredients, instructions, timers, step ingredient assignments and artwork before Accept; red struck removals and blue additions show changes. Reject keeps the recipe; Revise starts from the last accepted recipe with editable earlier feedback.
-- [x] Selected undecided recipe changes, including failed/stalled attempts, block shopping, totals and order submission. Failures require Keep current recipe or Try again (another blocking attempt). Unselected changes do not block; starting shopping explicitly warns which unselected changes can no longer apply. All recipe edits and acceptance close for the order once any shopping list build is successful or still active, including after reopening the order.
+- [x] On a draft, including after shopping, freeform Feedback proposes edits to this order's recipe through the agent. The user reviews all recipe facts, ingredients, instructions, timers, step ingredient assignments and artwork before Accept; red struck removals and blue additions show changes. Reject keeps the recipe; Revise starts from the last accepted recipe with editable earlier feedback.
+- [x] Selected undecided recipe changes, including failed/stalled attempts, block new explicit shopping, totals and order submission. Failures require Keep current recipe or Try again (another blocking attempt). Unselected changes do not block or expire when shopping starts. An already-requested build and automatic shop may finish against unchanged accepted recipes. Selected acceptance warns before irreversibly changing the revision when existing shopping work is affected, and atomically supersedes obsolete active builds and shops.
 
 - [x] Instructions view: a meal's cooking steps.
+
+## Shopping freshness
+
+Only accepted input values determine whether derived work is current. The canonical
+comparisons are `ListSource` (selected meal IDs, order servings, accepted recipe revisions),
+current build identity and shop address, and `QuoteRequest` (actual cart product IDs/counts,
+tip percent/cap and address). The response-only `source_current` reports exact ListSource
+equality regardless of job status; `current` also requires success. Neither value is
+persisted. Obsolete inputs need a new start; matching active work is reused and matching
+failed work retains its genuine failure. There are no separate stale flags or consent fields.
+
+| Accepted change | Ingredient list | Product shopping | Estimate |
+| --- | --- | --- | --- |
+| Picks, order servings, selected accepted revision, not-for-us unpick | Requires matching ListSource | Requires current build | Requires current ready shopping and matching pricing inputs |
+| Delivery address | Keep | Requires matching address | Requires matching address |
+| Tip percent or cap | Keep | Keep | Requires matching tip; refresh open draft queries |
+| Product IDs/counts, removals or alternatives | Keep | Keep current member choices | Requires matching actual cart lines |
+| Ingredient quantity with unchanged cart IDs/counts | Keep | Keep | Keep |
+| Dates, delivery time, next date, default servings, names, reminders, decide-by, product-gone policy, other ratings | Keep | Keep | Keep |
+| Proposed, failed or rejected edit; unselected acceptance | Keep | Existing accepted work may finish | Keep; selected undecided edits still block new explicit starts/place |
+| Same value, idempotent retry, undo before replacement | Reuse matching work | Reuse matching work | Reuse matching work |
+
+A valid estimate can be reused across different builds if the actual pricing inputs
+are identical. Booking and historical-order policies remain unchanged: the approved
+address, card and list stay frozen; booking uses the live household tip and product-gone rule.
+
+Every build/re-shop entry point warns before replacing affected existing work, using
+the shared dialog. The first build/shop and quote-only refresh need no shopping-loss
+warning. Picks and servings remain freely reversible until replacement. Selected recipe
+acceptance is irreversible, so it warns before acceptance when existing work is affected.
+Acceptance supersedes only active builds and shops whose pinned source contains that
+recipe. Adding B, accepting B, then removing B preserves work pinned only to A.
+Nonreplacement Servings Next opens List immediately without a build mutation; List owns
+necessary first/stale starts and re-shop warnings. Offline first starts visibly wait for
+reconnection; a current list opens offline without a queued job. Offline recipe decisions
+stay unqueued and explain on the recipe page why they are disabled.
+Cancel starts no job and applies no acceptance, preserves work, and never automatically
+reopens the warning. The warning describes resets without claiming that manual edits exist.
 
 ## Deferred
 

@@ -29,8 +29,8 @@ class NothingToList(Exception):
     """A shopping list needs picks."""
 
 
-# A build for other picks, failed as a new one starts.
-SUPERSEDED_ERROR = "The picks changed, so a new list is being made."
+# Work whose accepted inputs were replaced.
+SUPERSEDED_ERROR = "The meals, recipes or servings changed; make a new shopping list."
 
 
 def retried(
@@ -147,13 +147,7 @@ def submit_build_list(
         session.rollback()
         return newest, False
     # Shopping an older list too: its products would be for items being replaced.
-    superseded = _fail(
-        session,
-        SUPERSEDED_ERROR,
-        col(Job.grocery_order_id) == order.id,
-        col(Job.kind).in_((JobKind.BUILD_LIST, JobKind.SHOP)),
-        col(Job.status).in_(ACTIVE),
-    )
+    superseded = supersede_shopping(session, order.id)
     job = Job(
         id=job_id,
         grocery_order_id=order.id,
@@ -164,13 +158,52 @@ def submit_build_list(
     return add_job(session, job, superseded=superseded), True
 
 
-def claim_job(session: Session, job_id: UUID) -> Job | None:
+def supersede_shopping(session: Session, order_id: UUID, meal_id: UUID | None = None) -> int:
+    """Stop all replaced work, or just work pinned to an irreversibly changed recipe.
+
+    Stage under the caller's order lock; the caller commits with its change.
+    """
+    affected: list[ColumnElement[bool]] = []
+    if meal_id is not None:
+        builds: list[Job] = list(
+            session.exec(
+                select(Job).where(Job.grocery_order_id == order_id, Job.kind == JobKind.BUILD_LIST)
+            ).all()
+        )
+        build_ids: list[UUID] = [
+            build.id
+            for build in builds
+            if build.list_source is not None
+            and any(pick.meal_id == meal_id for pick in build.list_source.picks)
+        ]
+        affected.append(col(Job.id).in_(build_ids) | col(Job.build_id).in_(build_ids))
+    return _fail(
+        session,
+        SUPERSEDED_ERROR,
+        col(Job.grocery_order_id) == order_id,
+        col(Job.kind).in_((JobKind.BUILD_LIST, JobKind.SHOP)),
+        col(Job.status).in_(ACTIVE),
+        *affected,
+    )
+
+
+def claim_job(session: Session, job_id: UUID, task_arn: str | None = None) -> Job | None:
     """Mark a pending job as running and return it, or None if it was already
     claimed (a duplicate delivery) or overdue. Raises LookupError if the job does not exist."""
     job = session.scalars(
         update(Job)
-        .where(col(Job.id) == job_id, col(Job.status) == JobStatus.PENDING, ~_stale())
-        .values(status=JobStatus.RUNNING, started_at=func.now(), updated_at=func.now())
+        .where(
+            col(Job.id) == job_id,
+            col(Job.status) == JobStatus.PENDING,
+            ~_stale(),
+            col(Job.worker_task_arn).is_(None) | (col(Job.worker_task_arn) == task_arn),
+        )
+        .values(
+            status=JobStatus.RUNNING,
+            started_at=func.now(),
+            updated_at=func.now(),
+            worker_task_arn=task_arn,
+        )
         .returning(Job)
     ).first()
     session.commit()
@@ -238,9 +271,8 @@ RUNNING_MARGIN = timedelta(minutes=5)
 # How long a worker can run: docker/Dockerfile's ENTRYPOINT stops it after 2400 s
 # (`timeout`) and kills it 30 s after that (`--kill-after`).
 WORKER_LIMIT = timedelta(seconds=2400 + 30)
-# A booking counts as lost only once its worker can't still be running (it may yet
-# press Place order, or be pressing it): past the worker's limit, with a margin for
-# the clocks of whoever checks.
+# This detects a lost booking, but is NOT proof its worker stopped. Purchase
+# recovery separately requires an AWS STOPPED event for its exact task.
 BOOKING_MARGIN = timedelta(minutes=5)
 
 
@@ -313,7 +345,14 @@ def shop_of(session: Session, build_id: UUID) -> Job | None:
     ).first()
 
 
-def create_shop(session: Session, build: Job, job_id: UUID, member_id: UUID) -> Job:
+def create_shop(
+    session: Session,
+    build: Job,
+    job_id: UUID,
+    member_id: UUID,
+    *,
+    task_arn: str | None = None,
+) -> Job:
     """Stage a shop job for the build's list (the caller commits)."""
     order = session.get_one(GroceryOrder, build.grocery_order_id)
     household = session.get_one(Household, order.household_id)
@@ -323,6 +362,7 @@ def create_shop(session: Session, build: Job, job_id: UUID, member_id: UUID) -> 
         kind=JobKind.SHOP,
         requested_by=member_id,
         build_id=build.id,
+        worker_task_arn=task_arn,
         delivery_address=household.delivery_address,
     )
     session.add(job)
@@ -362,9 +402,15 @@ def submit_shop(
     return add_job(session, create_shop(session, build, job_id, member_id)), True
 
 
-def fail_shops_of(session: Session, build_id: UUID, error: str) -> int:
+def fail_shops_of(session: Session, build_id: UUID, task_arn: str, error: str) -> int:
     """Fail the build's shop jobs that haven't finished, and commit (their worker
     stopped with the build's task)."""
-    failed = _fail(session, error, col(Job.build_id) == build_id, col(Job.status).in_(ACTIVE))
+    failed = _fail(
+        session,
+        error,
+        col(Job.build_id) == build_id,
+        col(Job.worker_task_arn) == task_arn,
+        col(Job.status).in_(ACTIVE),
+    )
     session.commit()
     return failed

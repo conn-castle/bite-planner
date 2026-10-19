@@ -15,6 +15,7 @@ const shop = (status: Job['status']): Job => ({ ...job(status), id: 'shop', meal
 const list = (status: Job['status'], current: boolean, shopped: Job['status'] | null = 'succeeded'): ShoppingList => ({
   job: job(status),
   current,
+  source_current: current || status !== 'succeeded',
   shop: shopped === null ? null : shop(shopped),
   shop_current: shopped !== null,
   address_problem: null,
@@ -144,4 +145,8 @@ describe('the shopped list', () => {
     expect(totals).toEqual({ count: 2, cents: 458, unpriced: 1 })
     expect(totalShown(totals)).toBe('$4.58+')
   })
+})
+
+it.each(['pending', 'running', 'failed'] satisfies Job['status'][])('starts for obsolete %s inputs instead of waiting or showing a false failure', (status: Job['status']) => {
+  expect(listState({ ...list(status, false), source_current: false })).toBe('start')
 })

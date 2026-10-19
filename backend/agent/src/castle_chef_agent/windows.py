@@ -3,13 +3,14 @@
 7-9 AM to 9-11 PM (measured 2026-09-28), all in the store's time zone."""
 
 import re
-from datetime import time
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Self
+from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-FIRST_START_HOUR = 7
-LAST_START_HOUR = 21
-WINDOW_HOURS = 2
+AVAILABILITY_MAX_AGE = timedelta(minutes=30)
 
 
 class Window(BaseModel):
@@ -20,30 +21,84 @@ class Window(BaseModel):
     start: time
     end: time
 
+    @model_validator(mode="after")
+    def same_day(self) -> Self:
+        if self.start.tzinfo is not None or self.end.tzinfo is not None or self.start >= self.end:
+            raise ValueError("A delivery window must start and end on the same local calendar day.")
+        return self
 
-# Every window Instacart has in a day (it offers those not full yet).
-DAY = [
-    Window(start=time(hour), end=time(hour + WINDOW_HOURS))
-    for hour in range(FIRST_START_HOUR, LAST_START_HOUR + 1)
-]
+
+class AvailableDay(BaseModel):
+    """Scheduled windows read from one of the store's delivery-day tabs."""
+
+    day: date
+    windows: list[Window]
+
+
+class Availability(BaseModel):
+    """A dated snapshot of the store's actual offered delivery windows."""
+
+    observed_at: AwareDatetime
+    time_zone: str
+    days: list[AvailableDay]
+
+    def remaining(self, now: datetime) -> list[AvailableDay]:
+        """Windows whose start has not passed, in the store's time zone."""
+        from zoneinfo import ZoneInfo
+
+        local = now.astimezone(ZoneInfo(self.time_zone))
+        return [
+            AvailableDay(
+                day=day.day,
+                windows=[
+                    window
+                    for window in day.windows
+                    if datetime.combine(day.day, window.start, local.tzinfo) > local
+                ],
+            )
+            for day in self.days
+        ]
+
+
+class DeliveryProposal(BaseModel):
+    """A live alternative, which is never permission to purchase it."""
+
+    id: UUID = Field(default_factory=uuid4)
+    day: date
+    window: Window
+    observed_at: AwareDatetime
+    starts_at: AwareDatetime
+    valid_until: AwareDatetime
 
 
 def choose(offered: list[Window], by: time) -> Window | None:
-    """The window to book for "by 3:00 PM" among those offered: the latest one
-    ending by then (a full one isn't offered, so it's the one before it, and so
-    on through the day); if none is left, the earliest-ending one the time falls
-    in (2-4 PM), the one window allowed to end after it; else none."""
+    """The latest offered window ending no later than the approved deadline."""
     ending_by = [window for window in offered if window.end <= by]
     if ending_by:
         return max(ending_by, key=lambda window: window.end)
-    around = [window for window in offered if window.start < by < window.end]
-    return min(around, key=lambda window: window.end) if around else None
+    return None
 
 
-def fallback(by: time) -> Window | None:
-    """The one window that may end after the chosen time, if nothing ending by
-    it is left ("by 3:00 PM, or 2-4 PM"); None when there's no such window."""
-    return choose([window for window in DAY if window.end > by], by)
+def propose(snapshot: Availability, day: date, by: time, now: datetime) -> DeliveryProposal | None:
+    """The earliest recorded alternative; never infer windows on unobserved days."""
+    alternatives = sorted(
+        (offered.day, window.start, window.end)
+        for offered in snapshot.remaining(now)
+        for window in offered.windows
+        if offered.day > day or (offered.day == day and window.end > by)
+    )
+    if not alternatives:
+        return None
+    proposed_day, start, end = alternatives[0]
+    return DeliveryProposal(
+        day=proposed_day,
+        window=Window(start=start, end=end),
+        observed_at=snapshot.observed_at,
+        starts_at=datetime.combine(proposed_day, start, ZoneInfo(snapshot.time_zone)).astimezone(
+            UTC
+        ),
+        valid_until=snapshot.observed_at + AVAILABILITY_MAX_AGE,
+    )
 
 
 # A time as Instacart writes it: "7am", "10:30 pm", "Noon"; the first of a range
@@ -57,6 +112,8 @@ def _clock(hour: str, minute: str, half: str | None, word: str) -> time | None:
     if word:
         return time(12) if word.lower() == "noon" else time(0)
     if not half:
+        return None
+    if not 1 <= int(hour) <= 12 or not 0 <= int(minute or 0) <= 59:
         return None
     hours = int(hour) % 12 + (12 if half.lower() == "p" else 0)
     return time(hours, int(minute or 0))
@@ -72,12 +129,14 @@ def parse(text: str) -> Window | None:
         start_hour, start_minute, start_half, start_word = (g or "" for g in match.groups()[:4])
         start = _clock(start_hour, start_minute, start_half, start_word)
         if start is None and start_hour:
+            if not 1 <= int(start_hour) <= 12 or not 0 <= int(start_minute or 0) <= 59:
+                continue
             # "2–4pm": the same half of the day as the end, unless that puts it after it.
             hours = int(start_hour) % 12 + (12 if end.hour >= 12 else 0)
             start = time(
                 hours if hours < end.hour or end.hour == 0 else hours - 12, int(start_minute or 0)
             )
-        if start is not None and (start < end or end == time(0)):
+        if start is not None and start < end:
             return Window(start=start, end=end)
     return None
 

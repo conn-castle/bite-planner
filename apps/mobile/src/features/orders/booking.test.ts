@@ -6,7 +6,7 @@ const at = (state: BookState, fields: Partial<BookFields> = {}): BookFields => (
   book_state: state,
   book_on: '2026-10-05',
   booking: null,
-  book_issue: null,
+  book_issue: null, can_confirm_absent: false,
   ...fields,
 })
 
@@ -45,7 +45,7 @@ describe('bookingLine', () => {
   })
 
   it('says why it is not booked', () => {
-    const issue = { message: 'No delivery window is left on Sat, Oct 3 for the time it needs.', item_ids: [] }
+    const issue = { message: 'No delivery window is left on Sat, Oct 3 for the time it needs.', item_ids: [], proposal: null, deferred_at: null }
     expect(bookingLine(at('needs_time', { book_issue: issue }))).toBe(
       'No delivery window is left on Sat, Oct 3 for the time it needs',
     )

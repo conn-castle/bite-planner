@@ -357,26 +357,53 @@ def test_stopped_workers_reach_the_failure_handler(runtime: Template) -> None:
             )
         },
     )
-    [rule] = runtime.find_resources("AWS::Events::Rule").values()
+    [(rule_id, rule)] = runtime.find_resources("AWS::Events::Rule").items()
     [target] = rule["Properties"]["Targets"]
-    [mapping] = runtime.find_resources("AWS::Lambda::EventSourceMapping").values()
-    [dead_letters] = [
-        name
-        for name, queue in runtime.find_resources("AWS::SQS::Queue").items()
-        if "RedrivePolicy" not in queue["Properties"]
-    ]
+    mappings = runtime.find_resources("AWS::Lambda::EventSourceMapping")
+    queues = runtime.find_resources("AWS::SQS::Queue")
+    [stops] = [name for name in queues if name.startswith("WorkerStops")]
+    [dead_letters] = [name for name in queues if name.startswith("JobsDeadLetters")]
     [handler] = [
         name
         for name, f in runtime.find_resources("AWS::Lambda::Function").items()
         if f["Properties"]["Environment"]["Variables"].get("CASTLE_CHEF_FAILURE_HANDLER")
     ]
-    assert target["Arn"] == {"Fn::GetAtt": [handler, "Arn"]}
-    assert mapping["Properties"]["FunctionName"] == {"Ref": handler}
-    assert mapping["Properties"]["EventSourceArn"] == {"Fn::GetAtt": [dead_letters, "Arn"]}
+    assert target["Arn"] == {"Fn::GetAtt": [stops, "Arn"]}
+    for queue in (stops, dead_letters):
+        assert any(
+            mapping["Properties"]["EventSourceArn"] == {"Fn::GetAtt": [queue, "Arn"]}
+            and mapping["Properties"]["FunctionName"] == {"Ref": handler}
+            and mapping["Properties"]["BatchSize"] == 1
+            and mapping["Properties"]["ScalingConfig"]["MaximumConcurrency"] == 2
+            for mapping in mappings.values()
+        )
+    assert "RedrivePolicy" in queues[stops]["Properties"]
+    [delivery_dlq] = [name for name in queues if name.startswith("WorkerStopDeliveryDeadLetters")]
+    [processing_dlq] = [
+        name for name in queues if name.startswith("WorkerStopProcessingDeadLetters")
+    ]
+    assert target["DeadLetterConfig"]["Arn"] == {"Fn::GetAtt": [delivery_dlq, "Arn"]}
+    assert queues[stops]["Properties"]["RedrivePolicy"]["deadLetterTargetArn"] == {
+        "Fn::GetAtt": [processing_dlq, "Arn"]
+    }
+    alarms = runtime.find_resources("AWS::CloudWatch::Alarm")
+    assert any(name.startswith("WorkerStopDeliveryDeadLettersAlarm") for name in alarms)
+    assert any(name.startswith("WorkerStopProcessingDeadLettersAlarm") for name in alarms)
+    # Only the lifecycle rule's AWS service principal can supply stop proof.
+    [policy] = [
+        policy["Properties"]["PolicyDocument"]
+        for policy in runtime.find_resources("AWS::SQS::QueuePolicy").values()
+        if {"Ref": stops} in policy["Properties"]["Queues"]
+    ]
+    [send] = [statement for statement in policy["Statement"] if statement["Effect"] == "Allow"]
+    assert send["Principal"] == {"Service": "events.amazonaws.com"}
+    assert "sqs:SendMessage" in send["Action"]
+    assert send["Condition"] == {"ArnEquals": {"aws:SourceArn": {"Fn::GetAtt": [rule_id, "Arn"]}}}
     # An error response fails the invocation, so the event is delivered again
     # instead of dropped.
     variables = functions(runtime)[handler]["Environment"]["Variables"]
     assert variables["AWS_LWA_ERROR_STATUS_CODES"] == "500-599"
+    assert functions(runtime)[handler]["ReservedConcurrentExecutions"] == 4
 
 
 def reminders_function(runtime: Template) -> tuple[str, dict[str, Any]]:
@@ -469,6 +496,31 @@ def test_deploys_come_only_from_this_repositorys_main_branch(repositories: Templ
     repositories.has_resource_properties(
         "AWS::ECR::Repository", {"ImageTagMutability": "IMMUTABLE"}
     )
+
+
+def test_release_can_authenticate_public_pulls_without_public_writes(
+    repositories: Template,
+) -> None:
+    [role] = [
+        name
+        for name, resource in repositories.find_resources("AWS::IAM::Role").items()
+        if resource["Properties"].get("RoleName") == "castle-chef-github-deploy"
+    ]
+    actions: set[str] = {
+        action
+        for policy in repositories.find_resources("AWS::IAM::Policy").values()
+        if {"Ref": role} in policy["Properties"]["Roles"]
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]
+        if statement["Effect"] == "Allow"
+        for action in (
+            [statement["Action"]] if isinstance(statement["Action"], str) else statement["Action"]
+        )
+    }
+    assert {"ecr-public:GetAuthorizationToken", "sts:GetServiceBearerToken"} <= actions
+    assert {action for action in actions if action.startswith("ecr-public:")} == {
+        "ecr-public:GetAuthorizationToken"
+    }
+    assert "*" not in actions and "sts:*" not in actions
 
 
 def test_each_stage_deploys_its_own_runtime_stack(tmp_path: Path) -> None:

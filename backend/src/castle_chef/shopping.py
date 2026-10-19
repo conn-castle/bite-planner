@@ -294,13 +294,18 @@ def items_of(session: Session, job_id: UUID) -> list[ShoppingListItem]:
     return sorted(items, key=lambda item: aisles.index(item.aisle))
 
 
+def source_current(session: Session, order_id: UUID, build: Job | None) -> bool:
+    """Whether the pinned inputs still match, independent of build status."""
+    return build is not None and build.list_source == current_source(session, order_id)
+
+
 def is_current(session: Session, order_id: UUID, newest: Job | None) -> bool:
     """Whether the order's list is ready for its picks: its newest build
     succeeded, from the picks and servings the order has now."""
     return (
         newest is not None
         and newest.status == JobStatus.SUCCEEDED
-        and newest.list_source == current_source(session, order_id)
+        and source_current(session, order_id, newest)
     )
 
 

@@ -19,24 +19,25 @@ unless a member says it wasn't placed after all.
 import logging
 from datetime import date, datetime, time, timedelta
 from uuid import UUID, uuid4
-from zoneinfo import ZoneInfo
 
+from castle_chef_agent.checkout import ClickRequest
 from sqlalchemy import literal, or_, tuple_
 from sqlmodel import Session, col, func, select, update
 
-from castle_chef import orders
+from castle_chef import delivery_decisions, orders
 from castle_chef.checkout import Booking, BookIssue
 from castle_chef.db import for_update
 from castle_chef.jobs import STALE_ERROR, fail_if_stale
 from castle_chef.models import (
     BookState,
+    DeliveryDecisionKind,
     GroceryOrder,
     GroceryOrderStatus,
     Job,
     JobKind,
     JobStatus,
+    utc_now,
 )
-from castle_chef.settings import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def book_on(delivery: date) -> date:
 
 def store_now() -> datetime:
     """Now, in the store's time zone."""
-    return datetime.now(ZoneInfo(get_settings().store_time_zone))
+    return orders.delivery_now()
 
 
 def is_due(delivery: date, now: datetime) -> bool:
@@ -116,14 +117,26 @@ def start_if_due(session: Session, order: GroceryOrder, now: datetime) -> Job | 
     if order.book_state != BookState.WAITING or order.delivery_date is None:
         return None
     if not is_due(order.delivery_date, now):
-        return None
+        approved = session.get(Job, order.quote_id) if order.quote_id else None
+        availability = approved.quote.availability if approved and approved.quote else None
+        from castle_chef.quotes import availability_fresh
+
+        if (
+            not availability_fresh(approved.quote if approved else None, now)
+            or availability is None
+            or not any(
+                day.day == order.delivery_date and day.windows
+                for day in availability.remaining(now)
+            )
+        ):
+            return None
     return start(session, order)
 
 
 def start_due(session: Session, now: datetime) -> list[UUID]:
     """The hourly run: start booking every waiting order whose day has come, and
-    settle bookings whose job stopped without saying how it went (its worker was
-    lost, and can no longer be running). Returns the book jobs to dispatch."""
+    surface stale jobs as failed or uncertain. Staleness never proves that the
+    worker stopped or that a purchase failed. Returns the book jobs to dispatch."""
     started: list[UUID] = []
     waiting = session.exec(
         select(GroceryOrder.id).where(GroceryOrder.book_state == BookState.WAITING)
@@ -144,7 +157,11 @@ def start_due(session: Session, now: datetime) -> list[UUID]:
             log.error("booking.job_stale", extra={"job_id": str(job_id)})
         job = session.get(Job, job_id)
         if job is not None and job.status == JobStatus.FAILED:
-            job_failed(session, job.id, job.error or STALE_ERROR)
+            settled = job_failed(session, job.id, job.error or STALE_ERROR)
+            if settled is not None:
+                from castle_chef.notifications import notify_booking
+
+                notify_booking(settled.id)
     return started
 
 
@@ -170,26 +187,64 @@ def _booking_order(session: Session, job_id: UUID, expected: bool = True) -> Gro
     return order
 
 
-def claim_click(session: Session, job_id: UUID) -> bool:
+def claim_click(session: Session, job_id: UUID, request: ClickRequest) -> bool:
     """Record that this job is about to press Place order, and commit: false if
     it mustn't (the order isn't being booked by it, or was clicked before, or the
     job is no longer running)."""
-    running = select(Job.id).where(Job.id == job_id, Job.status == JobStatus.RUNNING).exists()
-    claimed = session.exec(
+    now = store_now()
+    if (
+        request.window.end > request.by
+        or datetime.combine(request.day, request.window.start, now.tzinfo) <= now
+        or datetime.combine(request.day, request.by, now.tzinfo) <= now
+    ):
+        session.rollback()
+        return False
+    running = (
+        select(Job.id)
+        .where(
+            Job.id == job_id,
+            Job.status == JobStatus.RUNNING,
+            col(Job.worker_task_arn).is_not(None),
+            col(Job.worker_stop).is_(None),
+        )
+        .exists()
+    )
+    claimed = session.scalars(
         update(GroceryOrder)
         .where(
             col(GroceryOrder.book_job_id) == job_id,
             col(GroceryOrder.book_state) == BookState.BOOKING,
             col(GroceryOrder.clicked_at).is_(None),
+            col(GroceryOrder.delivery_date) == request.day,
+            col(GroceryOrder.delivery_by) == request.by,
             # Not failed (as stale) meanwhile: its outcome would go unheard.
             running,
         )
-        .values(clicked_at=func.now())
-    ).rowcount
+        .values(clicked_at=func.now(), click_job_id=job_id)
+        .returning(GroceryOrder)
+    ).first()
+    if claimed is not None:
+        delivery_decisions.record(
+            session,
+            claimed,
+            DeliveryDecisionKind.AUTHORIZED,
+            job_id=job_id,
+            window=request.window,
+            authorized_total_cents=request.total_cents,
+        )
     session.commit()
-    if claimed:
-        log.info("booking.clicking", extra={"job_id": str(job_id)})
-    return bool(claimed)
+    if claimed is not None:
+        log.info(
+            "booking.clicking",
+            extra={
+                "job_id": str(job_id),
+                "delivery_date": request.day,
+                "delivery_by": request.by,
+                "window": request.window.model_dump(mode="json"),
+                "total_cents": request.total_cents,
+            },
+        )
+    return claimed is not None
 
 
 def _settle(
@@ -199,9 +254,20 @@ def _settle(
     booking: Booking | None = None,
     issue: BookIssue | None = None,
 ) -> None:
+    job_id = order.book_job_id
     order.book_state, order.book_job_id = state, None
     order.booking, order.book_issue = booking, issue
     session.add(order)
+    kind = (
+        DeliveryDecisionKind.PROPOSED
+        if issue and issue.proposal
+        else DeliveryDecisionKind.UNCONFIRMED
+        if state == BookState.CHECK_INSTACART
+        else DeliveryDecisionKind.BOOKED
+        if state == BookState.BOOKED
+        else DeliveryDecisionKind.FAILED
+    )
+    delivery_decisions.record(session, order, kind, job_id=job_id or order.click_job_id)
     session.commit()
     # What Instacart confirmed, when it did: which order, when, and what it charged.
     confirmed: dict[str, object] = (
@@ -216,7 +282,17 @@ def _settle(
     )
     log.info(
         "booking.settled",
-        extra={"grocery_order_id": str(order.id), "state": state, "issue": issue and issue.message}
+        extra={
+            "grocery_order_id": str(order.id),
+            "job_id": str(job_id) if job_id else None,
+            "state": state,
+            "issue": issue and issue.message,
+            "delivery_date": order.delivery_date,
+            "delivery_by": order.delivery_by,
+            "proposal": issue.proposal.model_dump(mode="json")
+            if issue and issue.proposal
+            else None,
+        }
         | confirmed,
     )
 
@@ -235,6 +311,28 @@ def finish(
     order = _booking_order(session, job_id)
     if order is None:
         return None
+    if order.clicked_at is not None and (
+        state != BookState.BOOKED or booking is None or booking.order_number in (None, DRY_RUN)
+    ):
+        log.error(
+            "booking.unconfirmed_authorization",
+            extra={"job_id": str(job_id), "local_state": state, "clicked_at": order.clicked_at},
+        )
+        state, booking = BookState.CHECK_INSTACART, None
+        issue = BookIssue(
+            message="Place order may have been pressed, but the purchase is unconfirmed."
+        )
+    elif (
+        state == BookState.BOOKED
+        and booking is not None
+        and booking.order_number not in (None, DRY_RUN)
+        and order.clicked_at is None
+    ):
+        log.error("booking.unexpected_confirmation", extra={"job_id": str(job_id)})
+        state, booking = BookState.CHECK_INSTACART, None
+        issue = BookIssue(
+            message="A purchase was reported without its authorization. Check Instacart."
+        )
     _settle(session, order, state, booking, issue)
     return order
 
@@ -248,7 +346,8 @@ def job_failed(session: Session, job_id: UUID, error: str) -> GroceryOrder | Non
         return None
     if order.clicked_at is not None:
         issue = BookIssue(
-            message="Place order was pressed, but booking stopped before Instacart confirmed it."
+            message="Place order may have been pressed, "
+            "but booking stopped before Instacart confirmed it."
         )
         _settle(session, order, BookState.CHECK_INSTACART, issue=issue)
     else:
@@ -272,6 +371,9 @@ def _locked_placed(session: Session, household_id: UUID, order_id: UUID) -> Groc
 
 def _refuse_unless(session: Session, order: GroceryOrder, *states: BookState) -> None:
     if order.book_state in states:
+        if order.clicked_at is not None and order.book_state != BookState.CHECK_INSTACART:
+            session.rollback()
+            raise NotChangeable("A purchase may have been attempted. Check Instacart first.")
         return
     session.rollback()
     if order.book_state == BookState.BOOKING:
@@ -313,6 +415,7 @@ def change(session: Session, household_id: UUID, order_id: UUID) -> GroceryOrder
         )
     order.status, order.placed_at, order.placed_by = GroceryOrderStatus.DRAFT, None, None
     order.book_state, order.quote_id, order.book_issue = None, None, None
+    order.accepted_delivery_proposal_id = None
     session.add(order)
     session.commit()
     session.refresh(order)
@@ -341,16 +444,141 @@ def book_again(session: Session, household_id: UUID, order_id: UUID) -> Job:
         and is_due(order.delivery_date, store_now())
     )
     if not due:
-        _refuse_unless(session, order, BookState.NOT_BOOKED)
+        _refuse_unless(session, order, BookState.NOT_BOOKED, BookState.NEEDS_TIME)
     return start(session, order)
 
 
-def settle(session: Session, household_id: UUID, order_id: UUID, placed: bool) -> GroceryOrder:
+def approve_delivery(
+    session: Session,
+    household_id: UUID,
+    order_id: UUID,
+    proposal_id: UUID,
+    next_delivery: date,
+    member_id: UUID,
+) -> tuple[GroceryOrder, Job | None]:
+    """Explicitly approve exactly one persisted alternative, under the order lock."""
+    order = _locked_placed(session, household_id, order_id)
+    if order.accepted_delivery_proposal_id == proposal_id:
+        session.rollback()
+        return order, None
+    _refuse_unless(session, order, BookState.NEEDS_TIME)
+    issue = order.book_issue
+    proposal = issue.proposal if issue else None
+    if proposal is None or proposal.id != proposal_id:
+        session.rollback()
+        raise NotChangeable("That delivery proposal changed. Review the current proposal.")
+    now = store_now()
+    if datetime.combine(proposal.day, proposal.window.start, now.tzinfo) <= now:
+        session.rollback()
+        raise NotChangeable("That delivery window has passed. Check times again.")
+    from castle_chef_agent.windows import AVAILABILITY_MAX_AGE
+
+    if not timedelta(0) <= now - proposal.observed_at <= AVAILABILITY_MAX_AGE:
+        session.rollback()
+        raise NotChangeable("Those delivery times are out of date. Check times again.")
+    if next_delivery <= proposal.day:
+        session.rollback()
+        raise NotChangeable("Choose a next delivery date after the proposed delivery.")
+    previous = {
+        "delivery_date": order.delivery_date,
+        "delivery_by": order.delivery_by,
+        "next_delivery_date": order.next_delivery_date,
+    }
+    order.delivery_date, order.delivery_by = proposal.day, proposal.window.end
+    order.next_delivery_date = next_delivery
+    order.accepted_delivery_proposal_id = proposal.id
+    session.add(order)
+    delivery_decisions.record(
+        session,
+        order,
+        DeliveryDecisionKind.REAPPROVED,
+        user_id=member_id,
+        proposal_id=proposal.id,
+        window=proposal.window,
+    )
+    # start commits these exact dates and the proposal id together with the job.
+    job = start(session, order)
+    log.info(
+        "delivery.reapproved",
+        extra={
+            "grocery_order_id": str(order.id),
+            "user_id": str(member_id),
+            "job_id": str(job.id),
+            "proposal_id": str(proposal.id),
+            "previous": previous,
+            "delivery_date": proposal.day,
+            "delivery_by": proposal.window.end,
+            "next_delivery_date": next_delivery,
+        },
+    )
+    return order, job
+
+
+def defer_delivery(
+    session: Session,
+    household_id: UUID,
+    order_id: UUID,
+    proposal_id: UUID,
+    member_id: UUID,
+) -> GroceryOrder:
+    order = _locked_placed(session, household_id, order_id)
+    _refuse_unless(session, order, BookState.NEEDS_TIME)
+    issue = order.book_issue
+    if issue is None or issue.proposal is None or issue.proposal.id != proposal_id:
+        session.rollback()
+        raise NotChangeable("That delivery proposal changed. Review the current proposal.")
+    if issue.deferred_at is None:
+        order.book_issue = issue.model_copy(update={"deferred_at": utc_now()})
+        session.add(order)
+        delivery_decisions.record(session, order, DeliveryDecisionKind.DEFERRED, user_id=member_id)
+        session.commit()
+        log.info(
+            "delivery.deferred",
+            extra={
+                "grocery_order_id": str(order.id),
+                "user_id": str(member_id),
+                "proposal_id": str(proposal_id),
+            },
+        )
+    else:
+        session.rollback()
+    return order
+
+
+def can_confirm_absent(session: Session, order: GroceryOrder) -> bool:
+    """AWS stopped the exact task that received this order's purchase authority."""
+    if order.book_state != BookState.CHECK_INSTACART or order.clicked_at is None:
+        return False
+    job = session.get(Job, order.click_job_id) if order.click_job_id else None
+    return (
+        job is not None
+        and job.worker_task_arn is not None
+        and job.worker_stop is not None
+        and job.grocery_order_id == order.id
+        and job.kind == JobKind.BOOK
+        and job.worker_stop.event.detail.task_arn == job.worker_task_arn
+    )
+
+
+def settle(
+    session: Session,
+    household_id: UUID,
+    order_id: UUID,
+    placed: bool,
+    member_id: UUID,
+) -> GroceryOrder:
     """A member says whether Instacart has an order that booking couldn't confirm:
     booked (with nothing confirmed), or not booked (and it may be booked again)."""
     order = _locked_placed(session, household_id, order_id)
     _refuse_unless(session, order, BookState.CHECK_INSTACART)
     if placed:
+        delivery_decisions.record(
+            session,
+            order,
+            DeliveryDecisionKind.CONFIRMED_PRESENT,
+            user_id=member_id,
+            job_id=order.click_job_id,
+        )
         _settle(
             session,
             order,
@@ -358,7 +586,29 @@ def settle(session: Session, household_id: UUID, order_id: UUID, placed: bool) -
             booking=Booking(order_number=None, window=None, total_cents=None),
         )
     else:
+        if not can_confirm_absent(session, order):
+            session.rollback()
+            log.error(
+                "booking.stop_proof_missing",
+                extra={"grocery_order_id": str(order.id), "job_id": str(order.click_job_id)},
+            )
+            raise NotChangeable(
+                "Waiting for AWS to confirm that the booking worker stopped. "
+                "Check Instacart; rebooking remains blocked."
+            )
+        if order.click_job_id is None:
+            raise RuntimeError("Verified purchase attempt is missing its job ID.")
+        attempt = session.get_one(Job, order.click_job_id)
+        delivery_decisions.record(
+            session,
+            order,
+            DeliveryDecisionKind.CONFIRMED_ABSENT,
+            user_id=member_id,
+            job_id=attempt.id,
+            worker_stop=attempt.worker_stop,
+        )
         order.clicked_at = None
+        order.click_job_id = None
         _settle(
             session,
             order,

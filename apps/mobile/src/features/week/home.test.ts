@@ -15,7 +15,7 @@ function placed(number: number, delivery: string, next: string, placedAt = '2026
     book_state: 'booked',
     book_on: '2026-09-20',
     booking: null,
-    book_issue: null,
+    book_issue: null, can_confirm_absent: false,
     id: `order-${number}`,
     number,
     placed_at: placedAt,
@@ -41,6 +41,7 @@ function nextOrder(
     decide_by_date: decideBy,
     reminders_start_date: remindersStart,
     earliest_delivery_date: '2026-09-25',
+    delivery_time_zone: 'America/New_York',
     draft,
   }
 }
@@ -50,7 +51,7 @@ function draft(number: number, jobs: Job[]): GroceryOrder {
     book_state: null,
     book_on: null,
     booking: null,
-    book_issue: null,
+    book_issue: null, can_confirm_absent: false,
     id: 'draft',
     number,
     status: 'draft',
@@ -60,6 +61,7 @@ function draft(number: number, jobs: Job[]): GroceryOrder {
     decide_by_date: '2026-09-27',
     reminders_start_date: null,
     earliest_delivery_date: '2026-09-25',
+    delivery_time_zone: 'America/New_York',
     delivery_date: null,
     delivery_by: null,
     next_delivery_date: null,
@@ -69,8 +71,7 @@ function draft(number: number, jobs: Job[]): GroceryOrder {
     lock: null,
     shopping_list: null,
     quote: null,
-    best_window: null,
-    fallback_window: null,
+
   }
 }
 

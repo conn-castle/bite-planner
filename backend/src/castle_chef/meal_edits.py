@@ -25,7 +25,6 @@ from castle_chef.models import (
     utc_now,
 )
 
-SHOPPING_STARTED = "Shopping has started, so recipes can't change on this order."
 type ChangeState = Literal["running", "ready", "failed"]
 
 
@@ -42,10 +41,6 @@ class EditNotReady(Exception):
 
 
 class EditStale(Exception):
-    pass
-
-
-class EditNotAllowed(Exception):
     pass
 
 
@@ -166,25 +161,6 @@ def require_resolved(session: Session, order: GroceryOrder) -> None:
         raise RecipeChangesPending(blockers)
 
 
-def shopping_started(session: Session, order_id: UUID) -> bool:
-    # Reads also interpret overdue builds as failed without changing data.
-    return any(
-        not jobs.is_stale(j, utc_now())
-        for j in session.exec(
-            select(Job).where(
-                Job.grocery_order_id == order_id,
-                Job.kind == JobKind.BUILD_LIST,
-                col(Job.status).in_((*jobs.ACTIVE, JobStatus.SUCCEEDED)),
-            )
-        ).all()
-    )
-
-
-def require_editable(session: Session, order: GroceryOrder) -> None:
-    if shopping_started(session, order.id):
-        raise EditNotAllowed(SHOPPING_STARTED)
-
-
 def _suggestion(session: Session, order: GroceryOrder, meal_id: UUID) -> Meal:
     meal = session.exec(
         select(Meal)
@@ -232,7 +208,6 @@ def submit(
         == MealRating.NOT_FOR_US
     ):
         raise orders.NotForUs("This meal is marked not for us.")
-    require_editable(session, order)
     undecided = next((j for j in open_jobs(session, order.id) if j.meal_id == meal_id), None)
     previous = session.get(Job, replaces) if replaces is not None else None
     if replaces is not None:
@@ -303,7 +278,6 @@ def decide(
             raise RuntimeError(f"Succeeded edit {job.id} has no proposal/request.")
         if base_revision != request.base_revision or meal.revision != request.base_revision:
             raise EditStale("The recipe changed. Refresh it before reviewing changes.")
-        require_editable(session, order)
         # Validate the immutable saved proposal again before touching accepted data.
         proposal = ProposedRecipe.model_validate(proposal.model_dump())
         if not changed(current_recipe(meal), proposal):
@@ -323,6 +297,8 @@ def decide(
         ]
         meal.revision += 1
         session.add(meal)
+        if any(p.meal.id == meal_id for p in orders.picks(session, order.id)):
+            jobs.supersede_shopping(session, order.id, meal_id)
     _decide(job, member_id, decision)
     session.add(job)
     session.commit()

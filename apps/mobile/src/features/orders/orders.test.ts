@@ -29,7 +29,7 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   book_state: null,
   book_on: null,
   booking: null,
-  book_issue: null,
+  book_issue: null, can_confirm_absent: false,
   id: 'draft',
   number: 4,
   status: 'draft',
@@ -39,6 +39,7 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   decide_by_date: '2026-09-26',
   reminders_start_date: null,
   earliest_delivery_date: '2026-09-25',
+  delivery_time_zone: 'America/New_York',
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
@@ -48,8 +49,7 @@ const draft = (mealIds: string[]): GroceryOrder => ({
   lock: null,
   shopping_list: null,
   quote: null,
-  best_window: null,
-  fallback_window: null,
+
 })
 
 // The ordering session of the flow making the changes.
@@ -91,6 +91,7 @@ describe('marking a suggestion "not for us"', () => {
       decide_by_date: '2026-09-26',
       reminders_start_date: null,
       earliest_delivery_date: '2026-09-25',
+      delivery_time_zone: 'America/New_York',
       draft: shownDraft,
     })
     request.mockImplementation(async (method) => (method === 'GET' ? { ...draft([]), status: 'placed' } : undefined))

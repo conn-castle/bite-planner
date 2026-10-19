@@ -5,6 +5,8 @@ import { elapsed } from '../../lib/format'
 import { useNow } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { InfoDialog } from '../../ui/InfoDialog'
+import { ShoppingWorkDialog } from '../../ui/ShoppingWorkDialog'
+import { hasShoppingWork } from '../orders/list'
 import { Notice } from '../../ui/Notice'
 import { Note } from '../../ui/Note'
 import { TextField } from '../../ui/TextField'
@@ -24,6 +26,7 @@ export function RecipeFeedback({ order, meal, summary }: { order: GroceryOrder; 
   const saving = useEditsPending()
   const now = useNow(1000)
   const [open, setOpen] = useState(false)
+  const [accepting, setAccepting] = useState<boolean>(false)
   const [feedback, setFeedback] = useState('')
   // Keep a transport retry bound to its original payload and id, even after a lost response.
   const attempt = useRef<EditRecipe | null>(null)
@@ -47,11 +50,12 @@ export function RecipeFeedback({ order, meal, summary }: { order: GroceryOrder; 
     } catch { /* The dialog retains its text and reports the error below. */ }
   }
   const decision = (action: 'accept' | 'reject') => {
-    if (!change) return
-    decide.mutate({ orderId: order.id, mealId: summary.id, jobId: change.job_id, decision: action, baseRevision: change.base_revision, session })
+    if (!change || !online || saving || !editable) return
+    decide.mutate({ orderId: order.id, mealId: summary.id, jobId: change.job_id, decision: action, baseRevision: change.base_revision, session }, { onSuccess: () => setAccepting(false) })
   }
   return <section className={styles.feedback}>
-    {!editable && <Note icon="info">{order.recipes_editable ? 'Open this order here to change its recipes.' : "Shopping has started, so recipes can't change on this order."}</Note>}
+    {!editable && <Note icon="info">{order.recipes_editable ? 'Open this order here to change its recipes.' : "This order has been placed. Reopen it to change its recipes."}</Note>}
+    {!online && editable && (ready || change?.state === 'failed') && <Notice>You’re offline. Reconnect to accept changes, reject them or keep the current recipe.</Notice>}
     {change?.state === 'running' && <div className={styles.status} role="status" aria-busy="true">
       <strong>Changing your recipe · {elapsed(new Date(change.started_at ?? change.created_at), now)}</strong>
       <p>You can keep choosing meals or close the app. Your changes will be here to review when they're ready.</p>
@@ -60,7 +64,7 @@ export function RecipeFeedback({ order, meal, summary }: { order: GroceryOrder; 
       <Notice>{change.error ?? "We couldn't change this recipe."} Your last accepted recipe is kept below.</Notice>
       <div className={styles.actions}>
         {editable && <Button variant="secondary" onClick={request} disabled={saving}>Try again</Button>}
-        <Button variant="secondary" onClick={() => decision('reject')} disabled={saving || order.lock?.session !== session}>Keep current recipe</Button>
+        <Button variant="secondary" onClick={() => decision('reject')} disabled={!online || saving || !editable}>Keep current recipe</Button>
       </div>
     </>}
     {ready && change.proposal && <>
@@ -70,13 +74,19 @@ export function RecipeFeedback({ order, meal, summary }: { order: GroceryOrder; 
       {meal && meal.revision === change.base_revision ? <RecipeDiff sections={recipeDiff(meal, change.proposal)}
         currentArt={<MealArt meal={meal} />} proposedArt={<MealArt meal={{ id: meal.id, picture: proposalPicture(change.proposal) }} />} /> : <Note icon="info">Refreshing the recipe before comparing changes…</Note>}
       <div className={styles.actions}>
-        <Button block onClick={() => decision('accept')} disabled={!editable || saving || !meal || meal.revision !== change.base_revision}>Accept changes</Button>
-        <Button variant="secondary" onClick={() => decision('reject')} disabled={saving || order.lock?.session !== session}>Reject</Button>
+        <Button block onClick={() => {
+          if (order.picks.some((pick) => pick.meal_id === summary.id) && hasShoppingWork(order, 'recipe')) { decide.reset(); setAccepting(true) }
+          else decision('accept')
+        }} disabled={!online || !editable || saving || !meal || meal.revision !== change.base_revision}>Accept changes</Button>
+        <Button variant="secondary" onClick={() => decision('reject')} disabled={!online || saving || !editable}>Reject</Button>
         {editable && <Button variant="secondary" onClick={request} disabled={saving}>Revise</Button>}
       </div>
     </>}
     {!change && editable && <Button variant="secondary" block onClick={request} disabled={summary.rating === 'not_for_us'}>Feedback</Button>}
     {decide.isError && <Notice>Couldn't save that decision: {decide.error.message}</Notice>}
+    <ShoppingWorkDialog action={accepting ? 'recipe' : null} onClose={() => setAccepting(false)} onConfirm={() => decision('accept')}
+      busy={decide.isPending} saving={saving} allowed={editable && ready && !!meal && meal.revision === change?.base_revision}
+      error={decide.error?.message ?? null} />
     <InfoDialog initialFocus="input" isOpen={open} onClose={() => setOpen(false)} dismissible={!send.isPending} title="Feedback" icon="spark" footer={
       <div className={styles.actions}>
         <Button variant="secondary" onClick={() => setOpen(false)} disabled={send.isPending}>Cancel</Button>

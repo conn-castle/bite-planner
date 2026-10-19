@@ -112,6 +112,19 @@ async def use_tools() -> None:
                 raise SystemExit(f"No {pattern!r} on the page.")
             return match.group(1) or match.group(2)
 
+        async def record_schedule(page: str) -> str:
+            names = re.findall(r'tab "([^"\n]+)"', page)
+            for name in names:
+                page = await page_after(
+                    "click", {"ref": ref(page, 'tab "' + re.escape(name) + '"')}
+                )
+                refs = re.findall(r'button "[^"\n]*(?:am|pm|Noon)[^"\n]*" \[ref=(\w+)\]', page)
+                await call(
+                    "record_day",
+                    {"day": ref(page, 'tab "' + re.escape(name) + '"'), "windows": refs},
+                )
+            return page
+
         booking = prompt.startswith("Book the household's")
         if "meal-edit" in server["args"]:
             if meal_count == "0":
@@ -131,12 +144,20 @@ async def use_tools() -> None:
             page = await page_after("click", {"ref": ref(page, 'button "View cart')})
             page = await page_after("click", {"ref": ref(page, 'button "Go to checkout')})
             page = await page_after("click", {"ref": ref(page, 'button "Schedule')})
+            if not re.search(rf'tab "\w+, {day}\b', page):
+                await record_schedule(page)
+                await call("propose_delivery", {})
+                return
             page = await page_after("click", {"ref": ref(page, rf'tab "\w+, {day}\b')})
             windows = re.findall(r'button "[^"]*(?:am|pm|Noon)[^"]*" \[ref=(\w+)\]', page)
             said = await page_after(
                 "choose_window", {"day": ref(page, rf'tab "\w+, {day}\b'), "windows": windows}
             )
-            if "Stop here" in said:
+            if "Record every day" in said:
+                if meal_count == "4":
+                    return  # A broken agent stops without checking alternatives.
+                await record_schedule(page)
+                await call("propose_delivery", {})
                 return
             page = await page_after("click", {"ref": found(r"click (\w+)", said)})
             tip = await page_after("tip", {"items": ref(page, r"\d+ items")})
@@ -189,6 +210,7 @@ async def use_tools() -> None:
             await call("record_replacements", {"refs": settings})
             page = await page_after("click", {"ref": ref(page, 'button "Go to checkout')})
             page = await page_after("click", {"ref": ref(page, 'button "Schedule')})
+            page = await record_schedule(page)
             page = await page_after("click", {"ref": ref(page, 'button "4pm')})
             tip = await page_after("tip", {"items": ref(page, r"\d+ items")})
             amount = found(r"type ([\d.]+)", tip)

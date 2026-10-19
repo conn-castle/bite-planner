@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { GroceryOrder, Quote } from '../../lib/api/types'
+import { availableWindows, deliveryAvailable, deliveryExpired, storeDateTime } from './dates'
 import {
   coveredDays,
   datesForDelivery,
@@ -19,6 +21,42 @@ import {
 // Time zones are set with vi.stubEnv('TZ', ...), which Node applies at once.
 afterEach(() => {
   vi.unstubAllEnvs()
+})
+
+describe('live delivery choices', () => {
+  const snapshot: Quote = {
+    job: { id: 'times', meal_id: null, kind: 'quote', status: 'succeeded', error: null, requested_by: { user_id: 'des', name: 'Des' }, created_at: '2026-10-18T18:00:00Z', started_at: null, finished_at: null, meals: [] },
+    current: true, signed_out: false, blocked_because: null, checkout: null,
+    availability_current: true, availability_valid_until: '2026-10-18T18:30:00Z',
+    availability: { observed_at: '2026-10-18T18:00:00Z', time_zone: 'America/New_York', days: [
+      { day: '2026-10-18', windows: [{ start: '13:00:00', end: '15:00:00' }, { start: '15:00:00', end: '17:00:00' }] },
+      { day: '2026-10-19', windows: [] },
+    ] },
+  }
+  const order: Pick<GroceryOrder, 'quote' | 'delivery_time_zone'> = { quote: snapshot, delivery_time_zone: 'America/New_York' }
+
+  it('allows remaining same-day windows and keeps the approved arrival deadline strict', () => {
+    const now: Date = new Date('2026-10-18T18:05:00Z')
+    expect(availableWindows(order, '2026-10-18', now)).toEqual([{ start: '15:00:00', end: '17:00:00' }])
+    expect(deliveryAvailable(order, '2026-10-18', '17:00:00', now)).toBe(true)
+    expect(deliveryAvailable(order, '2026-10-18', '16:00:00', now)).toBe(false)
+    expect(availableWindows(order, '2026-10-19', now)).toEqual([])
+    expect(availableWindows(order, '2026-10-20', now)).toBeNull()
+  })
+
+  it('requires fresh evidence even to distinguish future planning from offered dates', () => {
+    const expired: Date = new Date('2026-10-18T18:30:00Z')
+    expect(availableWindows(order, '2026-10-18', expired)).toEqual([])
+    expect(availableWindows(order, '2026-10-20', expired)).toEqual([])
+  })
+
+  it('uses the store calendar when the phone has already reached tomorrow', () => {
+    vi.stubEnv('TZ', 'Pacific/Kiritimati')
+    const now: Date = new Date('2026-10-19T02:00:00Z')
+    expect(storeDateTime(now, order.delivery_time_zone)).toBe('2026-10-18T22:00:00')
+    expect(deliveryExpired('2026-10-19', '09:00:00', order.delivery_time_zone, now)).toBe(false)
+    expect(deliveryExpired('2026-10-18', '21:00:00', order.delivery_time_zone, now)).toBe(true)
+  })
 })
 
 describe('defaultDeliveryDate', () => {
@@ -46,8 +84,8 @@ describe('shownDeliveryDate', () => {
     expect(shownDeliveryDate({ ...limits, delivery_date: '2026-09-30' })).toBe('2026-09-30')
   })
 
-  it('falls back to the default when the chosen date is no longer possible', () => {
-    expect(shownDeliveryDate({ ...limits, delivery_date: '2026-09-24' })).toBe('2026-09-28')
+  it('preserves an expired selection until the user chooses again', () => {
+    expect(shownDeliveryDate({ ...limits, delivery_date: '2026-09-24' })).toBe('2026-09-24')
   })
 
   it('shows the default before anything is chosen', () => {
@@ -152,10 +190,10 @@ const draft = { number: 2, earliest_delivery_date: EARLIEST, delivery_date: null
 const day = (days: ReturnType<typeof deliveryBar>, date: string) => days.find((item) => item.date === date)
 
 describe('deliveryBar', () => {
-  it('starts at the last day the previous order covers, not earlier', () => {
+  it('keeps today selectable even while a previous order still covers future meals', () => {
     // Order 1 covers through Wed 30.
-    const days = deliveryBar({ ...draft, target_date: '2026-10-01' }, TODAY)
-    expect(days[0]).toEqual({ date: '2026-09-30', coveredBy: 1, selectable: true, tag: null })
+    const days = deliveryBar({ ...draft, earliest_delivery_date: TODAY, target_date: '2026-10-01' }, TODAY)
+    expect(days[0]).toEqual({ date: TODAY, coveredBy: 1, selectable: true, tag: 'today' })
     expect(day(days, '2026-10-01')).toEqual({ date: '2026-10-01', coveredBy: null, selectable: true, tag: 'target' })
   })
 
@@ -197,9 +235,9 @@ describe('deliveryBar', () => {
     )
   })
 
-  it('reaches back to a chosen date earlier than where it would start', () => {
-    const days = deliveryBar({ ...draft, target_date: '2026-10-05', delivery_date: '2026-10-01' }, TODAY)
-    expect(days[0]).toEqual({ date: '2026-10-01', coveredBy: 1, selectable: true, tag: null })
+  it('keeps an expired saved date visible before today', () => {
+    const days = deliveryBar({ ...draft, target_date: '2026-10-05', delivery_date: '2026-09-24' }, TODAY)
+    expect(days[0]).toEqual({ date: '2026-09-24', coveredBy: 1, selectable: false, tag: null })
   })
 })
 

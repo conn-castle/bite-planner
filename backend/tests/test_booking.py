@@ -3,17 +3,17 @@ four days before delivery, repeated each hour; Place order claimed at most once;
 and bookings whose worker stopped, through the failure handler's events."""
 
 import re
-from collections.abc import Iterator
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
+from castle_chef_agent.checkout import ClickRequest
+from castle_chef_agent.windows import Window
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from castle_chef import booking, jobs, push, reminders
-from castle_chef.api import create_app
 from castle_chef.checkout import BookIssue, CartLine, QuoteRequest
 from castle_chef.jobs import STALE_ERROR
 from castle_chef.models import (
@@ -29,9 +29,9 @@ from castle_chef.models import (
     utc_now,
 )
 from castle_chef.push import Notification, Outcome, Sent
-from castle_chef.settings import get_settings
 from tests.test_checkout_tools import DOCKERFILE
-from tests.test_failures import task_stopped
+from tests.test_failures import TASK, task_stopped
+from tests.test_failures import events as events
 
 STORE = ZoneInfo("America/New_York")
 TODAY = date(2026, 10, 5)
@@ -61,6 +61,7 @@ def approved(session: Session, household_id: UUID, delivery: date) -> GroceryOrd
     session.flush()
     order.status, order.placed_at, order.placed_by = GroceryOrderStatus.PLACED, utc_now(), member
     order.delivery_date, order.next_delivery_date = delivery, delivery + timedelta(days=4)
+    order.delivery_by = time(18)
     order.quote_id, order.book_state = quote.id, BookState.WAITING
     session.add(order)
     session.commit()
@@ -157,11 +158,13 @@ def running(
 ) -> None:
     """Its book job's worker claimed it `since` ago, maybe pressing Place order since."""
     job = session.get_one(Job, order.book_job_id)
+    job.worker_task_arn = TASK
     job.status, job.started_at = JobStatus.RUNNING, utc_now() - since
     session.add(job)
     if clicked:
         order = session.get_one(GroceryOrder, order.id)
         order.clicked_at = utc_now()
+        order.click_job_id = job.id
         session.add(order)
     session.commit()
 
@@ -240,17 +243,24 @@ def test_place_order_is_claimed_once(
     run_booking(monkeypatch, at(TODAY, 9))
     job_id = reloaded(session, order).book_job_id
     assert job_id is not None
+    request = ClickRequest(
+        day=TODAY + timedelta(days=4),
+        by=time(18),
+        window=Window(start=time(16), end=time(18)),
+        total_cents=2404,
+    )
     # Not before its worker has it.
-    assert booking.claim_click(session, job_id) is False
+    assert booking.claim_click(session, job_id, request) is False
     job = session.get_one(Job, job_id)
+    job.worker_task_arn = TASK
     job.status, job.started_at = JobStatus.RUNNING, utc_now()
     session.add(job)
     session.commit()
 
-    assert booking.claim_click(session, job_id) is True
-    assert booking.claim_click(session, job_id) is False
+    assert booking.claim_click(session, job_id, request) is True
+    assert booking.claim_click(session, job_id, request) is False
     # Another job (an order not being booked by it) never claims it.
-    assert booking.claim_click(session, uuid4()) is False
+    assert booking.claim_click(session, uuid4(), request) is False
     # And nothing starts booking it again.
     clicked = reloaded(session, order)
     with pytest.raises(ValueError, match="already clicked"):
@@ -264,13 +274,6 @@ class RecordingSender:
     def send(self, token: str, notification: Notification) -> Sent:
         self.sent.append((token, notification))
         return Sent(Outcome.SENT)
-
-
-@pytest.fixture
-def events(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    monkeypatch.setenv("CASTLE_CHEF_FAILURE_HANDLER", "true")
-    get_settings.cache_clear()
-    yield TestClient(create_app())
 
 
 @pytest.mark.parametrize(

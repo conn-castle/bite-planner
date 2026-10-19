@@ -18,8 +18,8 @@ from uuid import UUID
 
 from castle_chef_agent.address import Address
 from castle_chef_agent.checkout import INSTACART_COOKIE, SITE, Checkout
-from castle_chef_agent.windows import Window
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from castle_chef_agent.windows import Availability, DeliveryProposal, Window
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from castle_chef.settings import get_settings
 
@@ -82,6 +82,7 @@ class Quote(BaseModel):
 
     blocked_because: str | None = None
     checkout: Checkout | None = None
+    availability: Availability | None = None
 
     @model_validator(mode="after")
     def one_outcome(self) -> Quote:
@@ -115,6 +116,8 @@ class BookIssue(BaseModel):
 
     message: str
     item_ids: list[UUID] = []
+    proposal: DeliveryProposal | None = None
+    deferred_at: AwareDatetime | None = None
 
 
 # The session.

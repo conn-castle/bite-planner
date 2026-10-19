@@ -124,19 +124,28 @@ Each job gets a directory (in the container `/tmp/jobs/<job-id>/`) with the prom
 To run a job the way Fargate does (the worker image, read-only root filesystem, an empty `/tmp`, the task's capabilities, CPU and memory, and the agent as uid 65532), use Docker: `make worker-image` builds the image from the working tree, `make worker-login` connects Instacart once (the volume `castle-chef-codex-login`; see [AWS](#aws)), and `make worker-job JOB=<job-id>` runs one pending job against Neon dev, taking the OpenAI key from SSM and copying the job's files to `~/.local/state/castle-chef/docker-jobs/<job-id>/`.
 
 `edit_meal` proposes a change to one order-owned recipe. The member sends at most 500
-characters of feedback while picking, before shopping starts. Its tools are only
+characters of feedback on a draft, including after shopping. Its tools are only
 `propose_recipe`, `cannot_change`, and `done`: one typed outcome file, checked by the
 tools and again by the worker. A complete proposal changes nothing until the flow
 owner accepts its exact job id and base recipe revision. Accept replaces the recipe,
 ingredients, cooking metadata, facts and artwork together, and increments the revision;
 list sources include that revision. Selected undecided edits (running, ready or failed)
-block list building, shopping, totals and placing under the order lock. Failed edits
+block new explicit list, shopping and total requests and placing under the order lock.
+An already-requested build and its automatic shopping may finish against unchanged
+accepted recipes while a proposal is pending. Failed edits
 require Keep current recipe or another blocking attempt. Revise starts from the accepted
 recipe with the earlier request prefilled. Identical transport retries keep the job;
-intentional retries use a new id and name the edit they replace. Once any list build has
-succeeded or is still active, all recipes on that order are read-only, even if picks or
-servings later make that build stale. Before starting shopping, the app names pending
-changes on unselected meals that will no longer be applicable. Edits survive closing the
+intentional retries use a new id and name the edit they replace. Proposals, failures,
+rejections and unselected acceptance preserve existing shopping work. Selected acceptance
+changes the list source and atomically stops active builds and shops pinned to that
+recipe; unrelated work remains reversible. The app
+warns before that irreversible acceptance and before replacing existing shopping work
+at any build or re-shop entry point. Picks and servings can be undone to restore the
+old list and its choices until replacement. Cancelling the warning starts nothing.
+The response’s `source_current` compares the newest build’s pinned inputs regardless
+of status; `current` also requires success. Matching active builds are reused silently.
+Nonreplacement Next opens List immediately, including offline, without queuing a build.
+See the accepted-input dependency matrix in [requirements](spec/requirements.md#shopping-freshness). Edits survive closing the
 app and send no ready push notification.
 
 `job run` logs `worker.started` with its release (`YYYY.M.D.N`, or `dev-<sha>` for an untagged checkout) and commit. It refuses to run (`schema.behind`, exit status 78) if the database's migrations are older than the code. A database that is *newer* than the code (after a rollback) is fine. A job someone else already claimed is left alone, and a job that no longer exists (discarded with its draft) ends quietly (both exit 0).

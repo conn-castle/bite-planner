@@ -5,10 +5,12 @@ the worker says to, and reading the confirmation."""
 
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Callable
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
+from zoneinfo import ZoneInfo
 
 import pytest
 from castle_chef_agent import checkout
@@ -35,7 +37,8 @@ from tests.test_checkout_tools import SESSION, ref
 
 # The stand-in's days are tomorrow and the four after it; its windows on each
 # are 10am–Noon, Noon–2pm, 2pm–4pm, and 4pm–6pm.
-DAY = date.today() + timedelta(days=3)
+TODAY: date = datetime.now(ZoneInfo("America/New_York")).date()
+DAY: date = TODAY + timedelta(days=3)
 ADDRESS = "1 Main Street Rochester, NY 14604"
 CARD = "Visa ending 4242"
 
@@ -43,6 +46,35 @@ CARD = "Visa ending 4242"
 def tab_name(day: date) -> str:
     """The stand-in's tab for the day: "Sun, Oct 4"."""
     return f"{day:%a, %b} {day.day}"
+
+
+def test_same_day_reads_today_and_chooses_a_remaining_window(
+    tmp_path: Path,
+    instacart_site: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    morning = datetime.combine(DAY, time(9), ZoneInfo("America/New_York"))
+
+    class Morning(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> Self:
+            return cls.fromtimestamp(morning.timestamp(), tz)
+
+    monkeypatch.setattr(checkout, "datetime", Morning)
+    directory = make_job_dir(tmp_path, instacart_site, day=DAY, by=time(16))
+
+    async def steps(opened: Browser) -> str:
+        await opened.page.clock.install(time=morning)
+        page = await opened.open("/store/checkout_v4")
+        page = await opened.click(ref(page, 'button "Schedule'))
+        page = await opened.click(ref(page, 'tab "Today'))
+        offered = re.findall(r'button "[^"\n]*(?:am|pm|Noon)[^"\n]*" \[ref=(\w+)\]', page)
+        return await checkout.choose_window(directory, opened, ref(page, 'tab "Today'), offered)
+
+    assert "2–4 PM" in in_browser(directory, steps)
+    state = load_state(directory)
+    assert state.window == Window(start=time(14), end=time(16))
+    assert state.availability is not None and state.availability.days[0].day == DAY
 
 
 def make_job_dir(tmp_path: Path, site: str, **book: Any) -> Path:
@@ -148,7 +180,7 @@ def test_the_window_is_the_latest_on_the_day_that_ends_by_the_time(job_dir: Path
     assert load_state(job_dir).window == Window(start=time(14), end=time(16))
 
 
-def test_with_no_window_ending_by_the_time_its_the_one_the_time_falls_in(
+def test_a_window_ending_later_requires_another_approval(
     tmp_path: Path, instacart_site: str
 ) -> None:
     job_dir = make_job_dir(tmp_path, instacart_site, by=time(11, 30))
@@ -157,7 +189,8 @@ def test_with_no_window_ending_by_the_time_its_the_one_the_time_falls_in(
         _, tab, windows = await the_days_windows(opened)
         return await checkout.choose_window(job_dir, opened, tab, windows)
 
-    assert in_browser(job_dir, steps).startswith("Book 10 AM–12 PM")
+    assert "approve an alternative" in in_browser(job_dir, steps)
+    assert load_state(job_dir).window is None
 
 
 def test_a_day_with_no_window_for_the_time_needs_another_day_or_time(
@@ -171,9 +204,48 @@ def test_a_day_with_no_window_for_the_time_needs_another_day_or_time(
 
     said = in_browser(job_dir, steps)
 
-    assert "Stop here" in said
+    assert "approve an alternative" in said
     state = load_state(job_dir)
     assert (state.window, state.no_window) == (None, True)
+
+
+def test_a_disappearing_day_does_not_poison_the_remaining_availability(
+    tmp_path: Path, instacart_site: str
+) -> None:
+    directory = make_job_dir(tmp_path, instacart_site, by=time(9))
+
+    async def steps(opened: Browser) -> None:
+        _, tab, offered = await the_days_windows(opened)
+        await checkout.choose_window(directory, opened, tab, offered)
+        await opened.page.evaluate(
+            """label => {
+                const render = window.days;
+                window.days = () => {
+                    render();
+                    for (const tab of document.querySelectorAll('[role=tab]')) {
+                        if (tab.textContent.startsWith(label)) tab.remove();
+                    }
+                };
+                window.days();
+            }""",
+            tab_name(DAY),
+        )
+        page = await opened.snapshot()
+        names = re.findall(r'tab "([^"\n]+)"', page)
+        for name in names:
+            page = await opened.click(ref(page, 'tab "' + re.escape(name) + '"'))
+            offered = re.findall(r'button "[^"\n]*(?:am|pm|Noon)[^"\n]*" \[ref=(\w+)\]', page)
+            await checkout.record_day(
+                directory, opened, ref(page, 'tab "' + re.escape(name) + '"'), offered
+            )
+        await checkout.propose_delivery(directory, opened)
+
+    in_browser(directory, steps)
+    state = load_state(directory)
+    assert state.availability is not None
+    assert DAY not in {day.day for day in state.availability.days}
+    assert state.alternatives_checked
+    assert state.proposal is not None and state.proposal.day == DAY + timedelta(days=1)
 
 
 def test_the_window_is_chosen_only_on_the_orders_day_once_its_tab_is_selected(
@@ -183,7 +255,10 @@ def test_the_window_is_chosen_only_on_the_orders_day_once_its_tab_is_selected(
         refused = []
         page = await schedule_dialog(opened)
         # Tomorrow's tab is the one selected: not the order's day.
-        tomorrow = ref(page, f'tab "{tab_name(date.today() + timedelta(days=1))}')
+        tomorrow = ref(
+            page,
+            f'tab "{tab_name(TODAY + timedelta(days=1))}',
+        )
         windows = [ref(page, 'button "2pm–4pm'), ref(page, 'button "4pm–6pm')]
         theirs = ref(page, f'tab "{tab_name(DAY)}')
         for day, offered in [(tomorrow, windows), (theirs, windows)]:
@@ -198,7 +273,12 @@ def test_the_window_is_chosen_only_on_the_orders_day_once_its_tab_is_selected(
                 job_dir,
                 opened,
                 ref(page, f'tab "{tab_name(DAY)}'),
-                [ref(page, f'tab "{tab_name(date.today() + timedelta(days=1))}')],
+                [
+                    ref(
+                        page,
+                        f'tab "{tab_name(TODAY + timedelta(days=1))}',
+                    )
+                ],
             )
         except CheckoutRefused as error:
             refused.append(str(error))
@@ -286,7 +366,12 @@ def test_place_order_presses_it_once_the_worker_says_go_then_the_confirmation_is
     said, asked, number = in_browser(job_dir, steps)
 
     assert said.startswith("Place order was pressed.")
-    assert asked == ClickRequest(total_cents=1959 + 249 + 196)
+    assert asked == ClickRequest(
+        total_cents=1959 + 249 + 196,
+        day=DAY,
+        by=time(16),
+        window=Window(start=time(14), end=time(16)),
+    )
     assert number == "18234567"
     state = load_state(job_dir)
     assert (state.click, state.clicked) == (ClickAnswer.GO, True)
@@ -334,7 +419,9 @@ def test_without_the_workers_answer_place_order_isnt_pressed(
 
     said, path = in_browser(job_dir, steps)
 
-    assert said == "Booking didn't answer, so nothing was ordered. Stop here."
+    assert said == (
+        "Booking did not answer. Do not retry; the worker must verify purchase authorization."
+    )
     assert path == "/store/checkout_v4"
     assert load_state(job_dir).clicked is False
 
@@ -481,3 +568,31 @@ def test_a_confirmation_that_isnt_this_orders_isnt_recorded(job_dir: Path) -> No
     assert said.startswith("That isn't this order")
     assert said.endswith("call `not_confirmed`.")
     assert load_state(job_dir).confirmation is None
+
+
+@pytest.mark.parametrize("day", [None, DAY + timedelta(days=1)])
+def test_matching_number_total_and_window_without_the_approved_day_are_not_confirmation(
+    job_dir: Path,
+    day: date | None,
+) -> None:
+    async def steps(opened: Browser) -> None:
+        page = await reported(opened)
+        answering = asyncio.create_task(worker_answers(job_dir, ClickAnswer.GO))
+        await checkout.place_order(job_dir, opened, ref(page, 'button "Place order"'))
+        await answering
+        when = f"Arrives {tab_name(day)}, 2pm–4pm" if day else "Arrives 2pm–4pm"
+        await opened.page.locator("#when").evaluate(
+            "(element, text) => element.textContent = text", when
+        )
+        page = await opened.snapshot()
+        with pytest.raises(CheckoutRefused, match="window, day, or total"):
+            await checkout.record_confirmation(
+                job_dir,
+                opened,
+                ref(page, '"Order #'),
+                ref(page, "Arrives"),
+                ref(page, "Total"),
+            )
+
+    in_browser(job_dir, steps)
+    assert load_state(job_dir).clicked and load_state(job_dir).confirmation is None

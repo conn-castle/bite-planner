@@ -8,7 +8,7 @@ import os
 import subprocess
 import threading
 from collections.abc import Callable, Iterator, Mapping
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,7 @@ from castle_chef_agent.instacart import Product
 from castle_chef_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
 from castle_chef_agent.products import ItemChoice, ProductCount
 from castle_chef_agent.shopping import Aisle, PreparedRecipes
+from castle_chef_agent.windows import Availability, AvailableDay, Window
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from pydantic import BaseModel
@@ -458,7 +459,24 @@ def finish_quote(job_id: str, quote: Quote | None = None) -> None:
     with Session(get_engine()) as worker_session:
         claim_job(worker_session, UUID(job_id))
         job = worker_session.get_one(Job, UUID(job_id))
-        job.quote = quote or Quote(checkout=CHECKOUT)
+        job.quote = quote or Quote(
+            checkout=CHECKOUT,
+            availability=Availability(
+                observed_at=datetime.now(ZoneInfo(ZONE)),
+                time_zone=ZONE,
+                days=[
+                    AvailableDay(
+                        day=tomorrow() + timedelta(days=offset),
+                        windows=[
+                            Window(start=time(10), end=time(12)),
+                            Window(start=time(14), end=time(16)),
+                            Window(start=time(16), end=time(18)),
+                        ],
+                    )
+                    for offset in range(-1, 5)
+                ],
+            ),
+        )
         worker_session.add(job)
         assert finish_job(worker_session, UUID(job_id))
 
@@ -669,7 +687,8 @@ def test_a_household_starts_with_its_first_order_not_yet_started(client: TestCli
         "target_date": None,
         "decide_by_date": None,
         "reminders_start_date": None,
-        "earliest_delivery_date": tomorrow().isoformat(),
+        "earliest_delivery_date": (tomorrow() - timedelta(days=1)).isoformat(),
+        "delivery_time_zone": ZONE,
         "draft": None,
     }
     assert placed_orders(client, date(2000, 1, 1)) == []
@@ -688,12 +707,11 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "target_date": None,
         "decide_by_date": None,
         "reminders_start_date": None,
-        "earliest_delivery_date": tomorrow().isoformat(),
+        "earliest_delivery_date": (tomorrow() - timedelta(days=1)).isoformat(),
+        "delivery_time_zone": ZONE,
         "delivery_date": None,
         "delivery_by": None,
         # The household's delivery time (6:00 PM) until one is chosen.
-        "best_window": {"start": "16:00:00", "end": "18:00:00"},
-        "fallback_window": {"start": "17:00:00", "end": "19:00:00"},
         "next_delivery_date": None,
         "reached_step": "pick",
         "recipe_changes": [],
@@ -707,6 +725,7 @@ def test_opening_the_flow_creates_the_households_draft_once(client: TestClient) 
         "book_on": None,
         "booking": None,
         "book_issue": None,
+        "can_confirm_absent": False,
     }
     # Opening it takes its lock for Mom's phone.
     assert draft["lock"] | {"since": None, "expires_at": None} == {
@@ -898,17 +917,15 @@ def test_endpoints_that_do_not_need_today_ignore_the_time_zone(
     assert response.status_code == expected, response.text
 
 
-def test_the_earliest_delivery_date_is_tomorrow_in_the_requests_time_zone(
+def test_same_day_earliest_uses_the_store_zone_even_when_the_phone_travels(
     client: TestClient,
 ) -> None:
     order_id = open_draft(client)["id"]
-
     east = ok(client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(MOM, FAR_EAST)))
     west = ok(client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(MOM, FAR_WEST)))
-
-    assert east["earliest_delivery_date"] == tomorrow(FAR_EAST).isoformat()
-    assert west["earliest_delivery_date"] == tomorrow(FAR_WEST).isoformat()
-    assert east["earliest_delivery_date"] != west["earliest_delivery_date"]
+    assert east["earliest_delivery_date"] == booking.store_now().date().isoformat()
+    assert west["earliest_delivery_date"] == east["earliest_delivery_date"]
+    assert east["delivery_time_zone"] == ZONE
 
 
 # Dates.
@@ -937,22 +954,19 @@ def test_both_dates_are_set_each_time(client: TestClient) -> None:
 def test_the_delivery_date_cannot_be_before_the_earliest_date(client: TestClient) -> None:
     order_id = open_draft(client)["id"]
     before = get_order(client, order_id)
-    today = tomorrow() - timedelta(days=1)
+    yesterday = tomorrow() - timedelta(days=2)
 
-    detail(put_dates(client, order_id, today, today + timedelta(days=3)), 422)
-    detail(put_dates(client, order_id, today, None), 422)
+    detail(put_dates(client, order_id, yesterday, yesterday + timedelta(days=3)), 422)
+    detail(put_dates(client, order_id, yesterday, None), 422)
     assert get_order(client, order_id) == before
 
 
-def test_the_earliest_delivery_date_follows_the_requests_time_zone(client: TestClient) -> None:
+def test_phone_zone_does_not_change_delivery_date_validation(client: TestClient) -> None:
     order_id = open_draft(client)["id"]
-    # Tomorrow in the far west is still today (or earlier) in the far east.
-    west_tomorrow = tomorrow(FAR_WEST)
-
-    detail(put_dates(client, order_id, west_tomorrow, None, zone=FAR_EAST), 422)
-    accepted = ok(put_dates(client, order_id, west_tomorrow, None, zone=FAR_WEST))
-
-    assert accepted["delivery_date"] == west_tomorrow.isoformat()
+    delivery = tomorrow()
+    east = ok(put_dates(client, order_id, delivery, None, zone=FAR_EAST))
+    west = ok(put_dates(client, order_id, delivery, None, zone=FAR_WEST))
+    assert east["delivery_date"] == west["delivery_date"] == delivery.isoformat()
 
 
 @pytest.mark.parametrize("days_after", [0, -1], ids=["same day", "day before"])
@@ -1326,6 +1340,9 @@ def test_placing_saves_the_dates_the_member_saw(client: TestClient, grocer: list
     ok(put_dates(client, order_id, tomorrow(), tomorrow() + timedelta(days=1)))
     shown = (tomorrow() + timedelta(days=1), tomorrow() + timedelta(days=4))
 
+    detail(place(client, order_id, dates=shown), 409)
+    assert get_order(client, order_id)["delivery_date"] == tomorrow().isoformat()
+    ok(put_dates(client, order_id, *shown))
     placed = ok(place(client, order_id, dates=shown))
 
     assert (placed["delivery_date"], placed["next_delivery_date"]) == tuple(
@@ -1340,19 +1357,18 @@ def test_placing_saves_the_dates_the_member_saw(client: TestClient, grocer: list
     assert (other["status"], other["delivery_date"]) == ("draft", None)
 
 
-def test_placing_rechecks_that_the_delivery_date_is_still_available(
-    client: TestClient, grocer: list[UUID]
+def test_placing_rechecks_a_saved_deadline_without_advancing_it(
+    client: TestClient, grocer: list[UUID], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Valid when chosen (tomorrow in the far west), but before the earliest
-    # delivery date by the time it's placed (in the far east, a day or more ahead).
     order_id, [meal_id, _] = with_suggestions(client)
     ok(pick(client, order_id, meal_id))
-    delivery = tomorrow(FAR_WEST)
-    ok(put_dates(client, order_id, delivery, delivery + timedelta(days=3), zone=FAR_WEST))
-
-    reason = detail(place(client, order_id, zone=FAR_EAST), 409)
-
-    assert "delivery date" in reason.lower()
+    delivery = tomorrow()
+    ok(put_dates(client, order_id, delivery, delivery + timedelta(days=3)))
+    later = datetime.combine(delivery + timedelta(days=1), time(9), ZoneInfo(ZONE))
+    monkeypatch.setattr(orders, "delivery_now", lambda: later)
+    reason = detail(place(client, order_id), 409)
+    assert "delivery" in reason.lower()
+    assert get_order(client, order_id)["delivery_date"] == delivery.isoformat()
     assert get_order(client, order_id)["status"] == "draft"
     assert grocer == []
 
@@ -1543,7 +1559,8 @@ def test_the_next_order_is_decided_by_its_target_less_the_households_offset(
         "decide_by_date": (target - timedelta(days=1)).isoformat(),
         # Two days (the default reminder lead) before that.
         "reminders_start_date": (target - timedelta(days=3)).isoformat(),
-        "earliest_delivery_date": tomorrow().isoformat(),
+        "earliest_delivery_date": (tomorrow() - timedelta(days=1)).isoformat(),
+        "delivery_time_zone": ZONE,
         "draft": None,
     }
 
@@ -1946,6 +1963,7 @@ def test_placed_orders_are_listed_from_the_day_they_cover(
         "book_on": (start + timedelta(days=3 - 4)).isoformat(),
         "booking": None,
         "book_issue": None,
+        "can_confirm_absent": False,
     }
     # An order covers up to the day before its next delivery.
     last_of_first = start + timedelta(days=2)
@@ -2535,6 +2553,7 @@ def test_leaving_servings_starts_one_list_for_the_picks(
     assert get_order(client, order_id)["shopping_list"] | {"job": None} == {
         "job": None,
         "current": False,
+        "source_current": True,
         "shop": None,
         "shop_current": False,
         "address_problem": None,
@@ -2590,7 +2609,9 @@ def test_changing_the_picks_needs_a_new_list_before_placing(
 
     # The old list still shows, but it isn't the one to place, or to change.
     assert (stale["shopping_list"]["current"], listed(stale)) == (False, [("tortillas", False)])
-    assert "other meals or servings" in detail(place(client, order_id, with_list=False), 409)
+    assert "other meals, recipes or servings" in detail(
+        place(client, order_id, with_list=False), 409
+    )
     detail(change_item(client, order_id, tortillas["id"], {"removed": True}), 409)
     # A new list for the new servings replaces it.
     second = ok(request_list(client, order_id), 201)
@@ -3151,14 +3172,10 @@ def test_the_delivery_date_and_its_latest_time_are_saved_together(client: TestCl
     saved = ok(put_dates(client, order_id, tomorrow(), None, by="15:00"))
 
     assert (saved["delivery_date"], saved["delivery_by"]) == (tomorrow().isoformat(), "15:00:00")
-    assert (saved["best_window"], saved["fallback_window"]) == (
-        {"start": "13:00:00", "end": "15:00:00"},
-        {"start": "14:00:00", "end": "16:00:00"},
-    )
-    # No window ends by 6:00 AM or includes it: nothing to book.
+    assert "best_window" not in saved and "fallback_window" not in saved
     early = ok(put_dates(client, order_id, tomorrow(), None, by="06:00"))
-    assert (early["best_window"], early["fallback_window"]) == (None, None)
-    # Not chosen yet: the app shows the household's delivery time.
+    assert early["delivery_by"] == "06:00:00"
+    assert "best_window" not in early
     cleared = ok(put_dates(client, order_id, tomorrow(), None, by=None))
     assert cleared["delivery_by"] is None
     detail(put_dates(client, order_id, tomorrow(), None, by="15:00:30"), 422)
@@ -3248,6 +3265,8 @@ def test_placing_needs_the_current_quote(client: TestClient, grocer: list[UUID])
         "delivery_by": "15:00",
         "next_delivery_date": (tomorrow() + timedelta(days=2)).isoformat(),
     }
+
+    ok(client.put(f"/v1/grocery-orders/{order_id}/dates", headers=as_user(MOM), json=dates))
 
     def place_on(quote_id: str) -> Response:
         return client.post(
@@ -3532,6 +3551,8 @@ def test_an_order_still_waiting_two_hours_after_its_booking_time_is_shown_not_bo
             {
                 "message": f"It didn't book on {book_day:%a, %b} {book_day.day} as planned.",
                 "item_ids": [],
+                "proposal": None,
+                "deferred_at": None,
             },
         )
     # Only shown so: nothing was written or started, and the next run may still book it.
@@ -3569,15 +3590,10 @@ def test_someone_says_whether_instacart_has_an_order_booking_couldnt_confirm(
     book_state_of(session, order_id, "check_instacart", clicked=True)
     settle = f"/v1/grocery-orders/{order_id}/settle"
 
-    wasnt = ok(client.post(settle, headers=as_user(DAD), json={"placed": False}))
-
-    assert (wasnt["book_state"], wasnt["book_issue"]) == (
-        "not_booked",
-        {"message": "It wasn't placed at Instacart.", "item_ids": []},
-    )
-    # It can be booked again now, and nothing else needs settling.
-    detail(client.post(settle, headers=as_user(DAD), json={"placed": True}), 409)
-    book_state_of(session, order_id, "check_instacart", clicked=True)
+    refused = detail(client.post(settle, headers=as_user(DAD), json={"placed": False}), 409)
+    assert "AWS" in refused
+    assert get_order(client, order_id)["book_state"] == "check_instacart"
+    # A positive confirmation never waits for worker-stop evidence.
     was = ok(client.post(settle, headers=as_user(MOM), json={"placed": True}))
     assert (was["book_state"], was["booking"]) == (
         "booked",
@@ -3986,6 +4002,7 @@ def test_prepared_recipe_is_one_snapshot_for_recipe_list_and_shop_reference(
     ok(set_servings(client, order_id, meal_id, 5))
     assert get_meal(client, meal_id)["prepared"]["build_id"] == str(claimed.id)
     shop_list(str(claimed.id))  # deterministic local products fixture, no provider
+    ok(put_dates(client, order_id, tomorrow() + timedelta(days=7), tomorrow() + timedelta(days=10)))
     ok(
         place(
             client,

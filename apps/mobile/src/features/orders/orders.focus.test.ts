@@ -40,6 +40,7 @@ const idle: GroceryOrder = {
   decide_by_date: '2026-09-26',
   reminders_start_date: null,
   earliest_delivery_date: '2026-09-25',
+  delivery_time_zone: 'America/New_York',
   delivery_date: null,
   delivery_by: null,
   next_delivery_date: null,
@@ -47,14 +48,13 @@ const idle: GroceryOrder = {
   book_state: null,
   book_on: null,
   booking: null,
-  book_issue: null,
+  book_issue: null, can_confirm_absent: false,
   jobs: [],
   picks: [],
   lock: null,
   shopping_list: null,
   quote: null,
-  best_window: null,
-  fallback_window: null,
+
 }
 const running: GroceryOrder = {
   ...idle,
@@ -110,6 +110,15 @@ async function returnToApp(): Promise<void> {
 }
 
 describe('returning to the app while an order is polled', () => {
+  it('fetches on return while stop evidence is pending, then resumes normal freshness', async () => {
+    const uncertain: GroceryOrder = { ...idle, book_state: 'check_instacart', can_confirm_absent: false }
+    request.mockResolvedValueOnce(uncertain).mockResolvedValue({ ...uncertain, can_confirm_absent: true })
+    await observe(() => useOrder('draft'), queryKeys.order('draft'))
+    await returnToApp()
+    expect(request).toHaveBeenCalledTimes(2)
+    await returnToApp()
+    expect(request).toHaveBeenCalledTimes(2)
+  })
   it('fetches a freshly fetched running batch at once without waiting for a poll', async () => {
     request.mockResolvedValue(running)
     await observe(() => useOrder('draft'), queryKeys.order('draft'))
@@ -141,6 +150,7 @@ describe('returning to the app while an order is polled', () => {
       decide_by_date: idle.decide_by_date,
       reminders_start_date: idle.reminders_start_date,
       earliest_delivery_date: idle.earliest_delivery_date,
+      delivery_time_zone: 'America/New_York',
       draft: running,
     }
     request.mockResolvedValue(next)

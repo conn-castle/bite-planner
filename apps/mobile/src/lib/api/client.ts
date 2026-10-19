@@ -13,7 +13,7 @@ function baseUrl(): string {
 
 /**
  * The phone's IANA time zone (e.g. `America/New_York`), sent with every request:
- * the API uses it wherever it needs "today" (e.g. the earliest delivery date).
+ * the API uses it for personal dates and reminders. Delivery uses the store’s zone.
  */
 export function phoneTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
