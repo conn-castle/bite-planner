@@ -1,4 +1,6 @@
 enableGlobalVirtualStore: true
+allowBuilds:
+  core-js: false
 packageExtensions:
   '@ionic/react@9.0.5':
     peerDependencies: { '@types/react': '^18 || ^19' }
