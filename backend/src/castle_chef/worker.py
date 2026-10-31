@@ -89,6 +89,7 @@ from castle_chef.models import (
     JobStatus,
     ListSource,
     Meal,
+    MealRating,
     ProductGone,
     ShoppingListItem,
 )
@@ -1100,22 +1101,43 @@ def _take_back_session(job_dir: Path, session_dir: Path, sessions: SessionStore)
 
 
 def generate_meals_prompt(session: Session, job: Job, count: int) -> str:
-    """The agent's instructions for a batch of `count` meals for the job's
-    household, which avoid meals like the ones it marked "don't show meals like
-    this". Raises JobDiscarded if the job's draft is gone."""
+    """Instructions for `count` meals, with all household ratings current when
+    the prompt is built. Ratings saved while a batch runs reach the next batch.
+    Raises JobDiscarded if the job's draft is gone."""
     household_id = session.exec(
         select(GroceryOrder.household_id).where(GroceryOrder.id == job.grocery_order_id)
     ).first()
     if household_id is None:
         raise JobDiscarded(f"Job {job.id}'s draft was discarded.")
-    avoid = ""
-    if not_for_us := ratings.not_for_us_meals(session, household_id):
-        listed = "\n".join(
+    rated = ratings.rated_meals(session, household_id)
+    instructions: dict[MealRating, str] = {
+        MealRating.NOT_FOR_US: (
+            '### Not for us\nThe family marked these meals "don\'t show meals like this". '
+            "Don't suggest meals like them."
+        ),
+        MealRating.DOWN: (
+            "### Thumbs down\nThe family disliked these dishes. Don't suggest these dishes "
+            "again, even under another name. This does not mean they dislike each ingredient "
+            'or that similar meals are ruled out as with "not for us".'
+        ),
+        MealRating.UP: (
+            "### Thumbs up\nThe family liked these meals. "
+            "Use them to understand the family's tastes."
+        ),
+        MealRating.FAVORITE: (
+            "### Favorite\nThe family particularly liked these meals; a favorite is always liked. "
+            "Use them to understand the family's tastes."
+        ),
+    }
+    sections: list[str] = []
+    for rating, instruction in instructions.items():
+        listed = [
             f"- {meal.name}: {meal.description}" if meal.description else f"- {meal.name}"
-            for meal in not_for_us
-        )
-        avoid = (
-            'The family marked these meals "don\'t show meals like this". '
-            f"Don't suggest meals like them:\n\n{listed}\n\n"
-        )
-    return prompts.fill("generate_meals", count=count, servings=RECIPE_SERVINGS, avoid=avoid)
+            for meal in rated
+            if meal.rating == rating
+        ]
+        if listed:
+            sections.append(instruction + "\n\n" + "\n".join(listed) + "\n\n")
+    return prompts.fill(
+        "generate_meals", count=count, servings=RECIPE_SERVINGS, feedback="".join(sections)
+    )

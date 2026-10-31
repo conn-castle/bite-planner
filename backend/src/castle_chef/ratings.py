@@ -4,6 +4,7 @@ only; orders.py owns rating a meal (a not-for-us mark also unpicks it from the
 draft, under the draft's lock) and asks here whether a meal can be picked."""
 
 from collections.abc import Collection
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import delete
@@ -58,19 +59,29 @@ def is_not_for_us(session: Session, household_id: UUID, meal_id: UUID) -> bool:
     return of_meals(session, household_id, [meal_id]).get(meal_id) == MealRating.NOT_FOR_US
 
 
-def not_for_us_meals(session: Session, household_id: UUID) -> list[Meal]:
-    """The meals the household marked "don't show meals like this", by name, one per
-    name (the same idea marked in two batches is listed once)."""
-    meals = session.exec(
-        select(Meal)
+@dataclass(frozen=True)
+class RatedMeal:
+    name: str
+    description: str | None
+    rating: MealRating
+
+
+def rated_meals(session: Session, household_id: UUID) -> list[RatedMeal]:
+    """All current saved household feedback, by name/id. Only "not for us" is
+    deduplicated by casefolded name, as the same idea marked in two batches."""
+    rows = session.exec(
+        select(Meal.name, Meal.description, col(MealPreference.rating))
+        .select_from(Meal)
         .join(MealPreference, col(MealPreference.meal_id) == Meal.id)
-        .where(
-            MealPreference.household_id == household_id,
-            MealPreference.rating == MealRating.NOT_FOR_US,
-        )
+        .where(MealPreference.household_id == household_id)
         .order_by(col(Meal.name), col(Meal.id))
     ).all()
-    by_name: dict[str, Meal] = {}
-    for meal in meals:
-        by_name.setdefault(meal.name.casefold(), meal)
-    return list(by_name.values())
+    meals: list[RatedMeal] = []
+    not_for_us_names: set[str] = set()
+    for name, description, rating in rows:
+        if rating == MealRating.NOT_FOR_US:
+            if name.casefold() in not_for_us_names:
+                continue
+            not_for_us_names.add(name.casefold())
+        meals.append(RatedMeal(name=name, description=description, rating=rating))
+    return meals

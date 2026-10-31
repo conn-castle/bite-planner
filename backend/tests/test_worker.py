@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import tarfile
 import time
@@ -479,38 +480,39 @@ def new_job(session: Session, household_id: UUID) -> Job:
     return pending
 
 
+def feedback_sections(prompt: str) -> dict[str, str]:
+    """Feedback under each rating heading, before the recipe instructions."""
+    feedback, separator, _ = prompt.partition("Write every recipe")
+    assert separator
+    assert feedback.endswith("\n\n")
+    assert "\n\n\n" not in prompt
+    return dict(re.findall(r"^### ([^\n]+)\n(.*?)(?=^### |\Z)", feedback, re.MULTILINE | re.DOTALL))
+
+
 def test_the_prompt_asks_to_avoid_meals_like_the_households_not_for_us_ones(
     session: Session, job: Job, draft: GroceryOrder, household_id: UUID
 ) -> None:
-    liver, rated_down, tofu = suggest(
+    liver, unrated, tofu = suggest(
         session, job, ("Liver and Onions", "Pan-fried liver."), ("Meatloaf", None), ("Tofu", None)
     )
-    for meal, rating in [
-        (liver, MealRating.NOT_FOR_US),
-        (rated_down, MealRating.DOWN),
-        (tofu, MealRating.NOT_FOR_US),
-    ]:
-        orders.rate_meal(session, household_id, meal.id, rating, None)
-    neighbors = Household(name="Neighbors")
-    session.add(neighbors)
-    session.commit()
-    neighbors_job = new_job(session, neighbors.id)
-    [neighbors_meal] = suggest(session, neighbors_job, ("Tacos", "Crunchy."))
-    orders.rate_meal(session, neighbors.id, neighbors_meal.id, MealRating.NOT_FOR_US, None)
+    for meal in (liver, tofu):
+        orders.rate_meal(session, household_id, meal.id, MealRating.NOT_FOR_US, None)
     # The marks outlast the draft they were made on.
     orders.discard(session, household_id, draft.id, draft.created_by)
 
     prompt = worker.generate_meals_prompt(session, new_job(session, household_id), 5)
 
-    assert (
-        'The family marked these meals "don\'t show meals like this". '
-        "Don't suggest meals like them:\n\n"
-        "- Liver and Onions: Pan-fried liver.\n"
-        "- Tofu\n\n"
-        "Write every recipe"
-    ) in prompt
-    assert "Meatloaf" not in prompt
-    assert "Tacos" not in prompt
+    sections = feedback_sections(prompt)
+    assert set(sections) == {"Not for us"}
+    assert "Don't suggest meals like them" in sections["Not for us"]
+    assert sections["Not for us"].splitlines()[-3:] == [
+        "- Liver and Onions: Pan-fried liver.",
+        "- Tofu",
+        "",
+    ]
+    assert unrated.name not in prompt
+    session.refresh(liver)
+    assert liver.job_id is None  # Feedback survives losing the job/order ownership path.
 
 
 def test_the_prompt_lists_the_same_idea_marked_twice_once(
@@ -527,11 +529,14 @@ def test_the_prompt_lists_the_same_idea_marked_twice_once(
     assert prompt.lower().count("liver and onions") == 1
 
 
-def test_the_prompt_has_no_meals_to_avoid_when_none_are_marked(
-    session: Session, job: Job, household_id: UUID
+@pytest.mark.parametrize("cleared_rating", [None, *MealRating])
+def test_the_prompt_has_no_feedback_when_meals_are_unrated_or_cleared(
+    session: Session, job: Job, household_id: UUID, cleared_rating: MealRating | None
 ) -> None:
     [meal] = suggest(session, job, ("Meatloaf", None))
-    orders.rate_meal(session, household_id, meal.id, MealRating.DOWN, None)
+    if cleared_rating is not None:
+        orders.rate_meal(session, household_id, meal.id, cleared_rating, None)
+        orders.clear_meal_rating(session, household_id, meal.id)
 
     prompt = worker.generate_meals_prompt(session, job, 5)
 
@@ -540,6 +545,141 @@ def test_the_prompt_has_no_meals_to_avoid_when_none_are_marked(
         "Write every recipe"
     )
     assert "Meatloaf" not in prompt
+    assert feedback_sections(prompt) == {}
+
+
+def test_the_prompt_uses_only_the_current_rating_when_a_rating_is_replaced(
+    session: Session, job: Job, household_id: UUID
+) -> None:
+    [meal] = suggest(session, job, ("Meatloaf", "Roasted with onions."))
+    for rating, heading in [
+        (MealRating.NOT_FOR_US, "Not for us"),
+        (MealRating.DOWN, "Thumbs down"),
+        (MealRating.UP, "Thumbs up"),
+        (MealRating.FAVORITE, "Favorite"),
+        (MealRating.NOT_FOR_US, "Not for us"),
+    ]:
+        orders.rate_meal(session, household_id, meal.id, rating, None)
+
+        prompt = worker.generate_meals_prompt(session, job, 5)
+
+        sections = feedback_sections(prompt)
+        assert set(sections) == {heading}
+        assert prompt.count("- Meatloaf: Roasted with onions.") == 1
+        assert "- Meatloaf: Roasted with onions." in sections[heading]
+
+
+def test_the_prompt_keeps_distinct_same_name_feedback_in_its_current_section(
+    session: Session, job: Job, household_id: UUID
+) -> None:
+    descriptions: list[tuple[str, MealRating, str]] = [
+        ("With mushrooms.", MealRating.DOWN, "Thumbs down"),
+        ("With carrots.", MealRating.UP, "Thumbs up"),
+        ("With beans.", MealRating.UP, "Thumbs up"),
+        ("With lentils.", MealRating.FAVORITE, "Favorite"),
+        ("With liver.", MealRating.NOT_FOR_US, "Not for us"),
+    ]
+    meals = suggest(session, job, *(("Stew", description) for description, _, _ in descriptions))
+    by_description: dict[str | None, Meal] = {meal.description: meal for meal in meals}
+    for description, rating, _ in descriptions:
+        orders.rate_meal(session, household_id, by_description[description].id, rating, None)
+
+    # Feedback is uncapped even when the requested batch is smaller than the saved set.
+    prompt = worker.generate_meals_prompt(session, job, 1)
+
+    sections = feedback_sections(prompt)
+    assert set(sections) == {heading for _, _, heading in descriptions}
+    for description, _, heading in descriptions:
+        row = f"- Stew: {description}"
+        assert prompt.count(row) == 1
+        for section_heading, section in sections.items():
+            assert (row in section) == (section_heading == heading)
+
+
+def test_a_later_generation_receives_all_saved_household_rating_meanings(
+    session: Session,
+    job: Job,
+    draft: GroceryOrder,
+    household_id: UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    liver, salmon, sausage, chili, unrated = suggest(
+        session,
+        job,
+        ("Liver and Onions", "Pan-fried liver."),
+        ("Roasted Salmon", "Lemon and dill."),
+        ("Sheet-Pan Sausage, Peppers and Gnocchi", "Roasted together."),
+        ("Weeknight Chili", None),
+        ("Zucchini Pasta", "Not rated."),
+    )
+    # A completed prior order, as in other historical-order fixtures. Its unpicked
+    # suggestion can retain a not-for-us mark alongside the three rated picks.
+    job.status = JobStatus.SUCCEEDED
+    draft.status, draft.placed_at, draft.placed_by = (
+        GroceryOrderStatus.PLACED,
+        utc_now(),
+        draft.created_by,
+    )
+    draft.delivery_date = utc_now().date() - timedelta(days=365)
+    draft.next_delivery_date = draft.delivery_date + timedelta(days=4)
+    draft.book_state = BookState.BOOKED
+    session.add_all([job, draft])
+    for meal in (salmon, sausage, chili):
+        session.add(GroceryOrderMeal(grocery_order_id=draft.id, meal_id=meal.id, servings=2))
+    session.commit()
+    feedback: list[tuple[Meal, MealRating, str]] = [
+        (liver, MealRating.NOT_FOR_US, "Not for us"),
+        (sausage, MealRating.DOWN, "Thumbs down"),
+        (salmon, MealRating.UP, "Thumbs up"),
+        (chili, MealRating.FAVORITE, "Favorite"),
+    ]
+    for meal, rating, _ in feedback:
+        orders.rate_meal(session, household_id, meal.id, rating, None)
+
+    neighbors = Household(name="Neighbors")
+    session.add(neighbors)
+    session.commit()
+    neighbors_job = new_job(session, neighbors.id)
+    neighbors_meals = suggest(
+        session, neighbors_job, *((f"Neighbors {rating.value}", None) for rating in MealRating)
+    )
+    neighbors_by_name: dict[str, Meal] = {meal.name: meal for meal in neighbors_meals}
+    for rating in MealRating:
+        orders.rate_meal(
+            session, neighbors.id, neighbors_by_name[f"Neighbors {rating.value}"].id, rating, None
+        )
+
+    pending = new_job(session, household_id)
+    assert job_meals(session, pending) == []
+    use_fake_agent(monkeypatch, meals=1)
+
+    run_job(pending)
+
+    completed = reload(session, pending)
+    assert (completed.status, completed.error) == (JobStatus.SUCCEEDED, None)
+    assert len(job_meals(session, pending)) == 1
+    prompt = (tmp_path / "jobs" / str(pending.id) / "fake-agent-prompt.md").read_text()
+    sections = feedback_sections(prompt)
+    assert set(sections) == {heading for _, _, heading in feedback}
+    for meal, _, heading in feedback:
+        row = f"- {meal.name}: {meal.description}" if meal.description else f"- {meal.name}"
+        assert prompt.count(row) == 1
+        for section_heading, section in sections.items():
+            assert (row in section) == (section_heading == heading)
+    assert "Don't suggest meals like them" in sections["Not for us"]
+    down = sections["Thumbs down"]
+    assert "disliked these dishes" in down
+    assert "Don't suggest these dishes again, even under another name" in down
+    assert "does not mean they dislike each ingredient" in down
+    assert 'similar meals are ruled out as with "not for us"' in down
+    assert "liked these meals" in sections["Thumbs up"]
+    assert "particularly liked these meals" in sections["Favorite"]
+    assert "a favorite is always liked" in sections["Favorite"]
+    for heading in ("Thumbs up", "Favorite"):
+        assert "understand the family's tastes" in sections[heading]
+    assert unrated.name not in prompt
+    assert "Neighbors" not in prompt
 
 
 # Shopping lists.
