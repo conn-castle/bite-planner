@@ -53,7 +53,7 @@ Each step does one thing.
 
 - [x] A meal can be rated thumbs up, thumbs down, or favorite, separate from "don't show meals like this". A meal has one rating at a time; a favorite is always liked (spec/README.md).
 - [x] Each rating can be toggled off again.
-- [x] Ratings belong to the household and are stored for the suggestion agent to use later.
+- [x] Each suggestion batch receives all current saved household ratings when its prompt is built; ratings saved while it runs inform the next batch. Cleared and unrated meals are absent. Thumbs down means avoid that dish again, even under another name, without treating its ingredients as disliked or ruling out similar meals as "don't show meals like this" does. Thumbs up means liked; favorite means particularly liked and always liked. Positive ratings inform the household's tastes without prescribing repeats or quotas.
 - [x] When generating suggestions, the app asks the user to rate meals from the last week that aren't rated yet.
 
 ## Order lock
@@ -207,7 +207,6 @@ reopens the warning. The warning describes resets without claiming that manual e
 - Making shopping faster, once ordering works end to end: find out where its time goes (a 24-item list took 11 minutes with Grok at extra-high reasoning; the current OpenAI runner uses GPT-6.1 Sol at high reasoning).
 - Real delivery status updates.
 - Handling gaps between orders (for now, reminders go out every day).
-- The suggestion agent using ratings.
 - Meal icons v2 (generated combinations of icons) and v3 (AI-generated images).
 - Adding free-form items to the shopping list (done in the grocery app instead).
 - Having suggestions available immediately, such as generating them ahead of time (to discuss; the ready notification may change with it).

@@ -359,12 +359,16 @@ def test_the_reminders_day_is_the_members_own(
 def test_a_time_repeated_when_the_clocks_go_back_sends_one_reminder(
     client: TestClient, due_order: date, sender: RecordingSender, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # 1:30 AM happens twice when New York's clocks go back on Nov 1 (the order is
-    # overdue by then, so a reminder is due). Scheduler fires once; either instant
-    # is the member's 1:30 on their Nov 1.
+    # New York's clocks go back on the first Sunday in November. Choose a year
+    # after the order is due so this tests an overdue reminder on either 1:30,
+    # independently of the date the suite runs.
     ok(patch_personal(client, {"notification_time": "01:30"}))
-    first = datetime(2026, 11, 1, 5, 30, tzinfo=UTC)  # 1:30 EDT
-    second = datetime(2026, 11, 1, 6, 30, tzinfo=UTC)  # 1:30 EST
+    november = date(due_order.year + 1, 11, 1)
+    transition = november + timedelta(days=(6 - november.weekday()) % 7)
+    local = datetime.combine(transition, time(1, 30), ZoneInfo(ZONE))
+    first = local.replace(fold=0).astimezone(UTC)
+    second = local.replace(fold=1).astimezone(UTC)
+    assert second - first == timedelta(hours=1)
 
     for instant in (first, second):
         reminders.remind(ReminderEvent(version=1, user_id=MOM, scheduled_time=instant))
