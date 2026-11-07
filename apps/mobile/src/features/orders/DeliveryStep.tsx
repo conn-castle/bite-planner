@@ -47,8 +47,9 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
   const state = quoteState(order.quote)
   const reading: boolean = quote.isPending || order.quote?.job.status === 'pending' || order.quote?.job.status === 'running'
   useEffect(() => {
+    if (reading) return
     if (fresh) { asked.current = false; return }
-    if (asked.current || reading || state === 'blocked') return
+    if (asked.current || state === 'blocked') return
     asked.current = true
     readQuote({ orderId: order.id, jobId: crypto.randomUUID(), session })
   }, [fresh, reading, state, readQuote, order.id, session])
@@ -95,7 +96,9 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
     return <CheckoutWait
       order={order} step="delivery" store={storeName(order)}
       failed={state === 'failed'} signedOut={order.quote?.signed_out ?? false}
-      startFailed={quote.error?.message ?? null} retrying={quote.isPending}
+      startFailed={quote.error?.message ?? (!reading && order.quote?.current === false
+        ? 'Your order changed during the check. Try again to check its delivery times and total.' : null)}
+      retrying={quote.isPending}
       onRetry={checkAgain} onBack={onBack} onClose={onClose}
     />
   }

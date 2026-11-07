@@ -73,6 +73,14 @@ describe('Delivery', () => {
     expect(html).not.toContain('aria-label="Delivery date"')
   })
 
+  it.each(['succeeded', 'failed'] as const)('offers an explicit retry after inputs changed during a check that %s', (status) => {
+    const html: string = screen({ ...quote, current: false, job: { ...quote.job, status } })
+    expect(html).toContain('Your order changed during the check.')
+    expect(html).toContain('Try again')
+    expect(html).not.toContain('role="timer"')
+    expect(html).not.toContain('aria-label="Delivery date"')
+  })
+
   it('does not promise notifications when this phone cannot receive them', () => {
     vi.mocked(useNotifiedOfJob).mockReturnValue(false)
     const html: string = screen({ ...quote, job: { ...quote.job, status: 'running' }, availability_current: false })
