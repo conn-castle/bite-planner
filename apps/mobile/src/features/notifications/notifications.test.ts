@@ -200,6 +200,13 @@ describe('a notification arriving while the app is open', () => {
     expect(refreshed).toHaveBeenCalledWith({ queryKey: queryKeys.nextOrder })
   })
 
+  it.each(['quote_ready', 'quote_failed'] as const)('refreshes the order and shows %s while outside its flow', (kind) => {
+    queryClient.setQueryData(queryKeys.order('draft'), { id: 'draft' })
+    fire('pushNotificationReceived', { title: 'Delivery check finished', data: { kind, order_id: 'draft' } })
+    expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(true)
+    expect(currentToast()).toMatchObject({ title: 'Delivery check finished', delivered: { kind, orderId: 'draft' } })
+  })
+
   it('refreshes the order whose ideas arrived, while a reminder leaves single orders fresh', () => {
     queryClient.setQueryData(queryKeys.order('draft'), { id: 'draft' })
     queryClient.setQueryData(queryKeys.order('other'), { id: 'other' })
@@ -407,6 +414,14 @@ describe('what a tap leads to', () => {
   it('reads "list ready" from a notification', () => {
     expect(push.parseDelivered({ kind: 'list_ready', order_id: 'd' })).toEqual({ kind: 'list_ready', orderId: 'd' })
     expect(push.parseDelivered({ kind: 'list_ready' })).toBeNull()
+  })
+
+  it.each(['quote_ready', 'quote_failed'] as const)('opens %s at Delivery and handles old notifications', (kind) => {
+    expect(push.parseDelivered({ kind, order_id: 'd' })).toEqual({ kind, orderId: 'd' })
+    expect(push.parseDelivered({ kind })).toBeNull()
+    expect(push.tapResult({ kind, orderId: 'd' }, next(4, draft('d', 4)), null)).toEqual({ open: true, orderId: 'd', step: 'delivery' })
+    expect(push.tapResult({ kind, orderId: 'd' }, next(4, null), 'discarded')).toMatchObject({ open: false, header: 'That draft was discarded' })
+    expect(push.tapResult({ kind, orderId: 'd' }, next(5, null), draft('d', 4, 'placed'))).toMatchObject({ open: false, header: 'Order 4 is already placed' })
   })
 
   it('says why not when the reminder is for an order placed since, or not started', () => {

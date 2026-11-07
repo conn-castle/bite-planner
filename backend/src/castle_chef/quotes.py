@@ -6,7 +6,6 @@ list's products and counts, and the household's tip rule, are the ones it read."
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from castle_chef_agent.windows import AVAILABILITY_MAX_AGE
 from sqlmodel import Session
 
 from castle_chef import delivery, products, shopping
@@ -16,12 +15,16 @@ from castle_chef.jobs import ACTIVE, add_job, fail_stale_jobs, newest_job, retri
 from castle_chef.meal_edits import require_resolved
 from castle_chef.models import GroceryOrder, Household, Job, JobKind, JobStatus
 
+# Delivery choices and estimated totals are reusable; booking checks the store
+# again before purchase. Alternative approvals retain their own short lifetime.
+QUOTE_MAX_AGE = timedelta(hours=12)
+
 
 def availability_fresh(quote: QuoteResult | None, now: datetime) -> bool:
     return (
         quote is not None
         and quote.availability is not None
-        and timedelta(0) <= now - quote.availability.observed_at <= AVAILABILITY_MAX_AGE
+        and timedelta(0) <= now - quote.availability.observed_at < QUOTE_MAX_AGE
     )
 
 
@@ -97,7 +100,7 @@ def submit_quote(
                     or (
                         newest.quote is not None
                         and newest.quote.blocked_because is not None
-                        and datetime.now(UTC) - newest.created_at <= AVAILABILITY_MAX_AGE
+                        and datetime.now(UTC) - newest.created_at < QUOTE_MAX_AGE
                     )
                 )
             )

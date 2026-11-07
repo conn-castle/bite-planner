@@ -5,6 +5,7 @@ import { haptics } from '../../lib/haptics'
 import { useNow } from '../../lib/useNow'
 import { Button } from '../../ui/Button'
 import { ChoiceCard } from '../../ui/ChoiceCard'
+import { CheckoutWait } from '../../ui/CheckoutWait'
 import { DateBar } from '../../ui/DateBar'
 import { FieldLabel } from '../../ui/FieldLabel'
 import { Group, Row } from '../../ui/Group'
@@ -18,6 +19,8 @@ import { useOrderSession } from './lock'
 import { useEditsPending, useQuoteOrder, useSetDates } from './orders'
 import styles from './Steps.module.css'
 import { stepIndex } from './steps'
+import { quoteState } from './quote'
+import { storeName } from './list'
 
 interface DeliveryStepProps {
   order: GroceryOrder
@@ -41,14 +44,17 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
   const by: ClockTime | null = order.delivery_by ?? (windows === null ? shownDeliveryBy(order, household.shown?.delivery_time) : null)
   const asked = useRef(false)
   const fresh: boolean = availabilityFresh(order, now)
+  const state = quoteState(order.quote)
   const reading: boolean = quote.isPending || order.quote?.job.status === 'pending' || order.quote?.job.status === 'running'
   useEffect(() => {
-    if (asked.current || fresh || reading) return
+    if (fresh) { asked.current = false; return }
+    if (asked.current || reading || state === 'blocked') return
     asked.current = true
     readQuote({ orderId: order.id, jobId: crypto.randomUUID(), session })
-  }, [fresh, reading, readQuote, order.id, session])
+  }, [fresh, reading, state, readQuote, order.id, session])
 
   function checkAgain() {
+    asked.current = true
     readQuote({ orderId: order.id, jobId: crypto.randomUUID(), session, refresh: true })
   }
 
@@ -85,6 +91,15 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
     (order.quote?.job.status === 'failed' ? order.quote.job.error : null) ?? order.quote?.blocked_because ??
     (expired ? 'Your saved delivery date and time have passed. Choose a new delivery; nothing has been moved.' : null)
 
+  if (reading || quote.isError || (!fresh && state !== 'blocked')) {
+    return <CheckoutWait
+      order={order} step="delivery" store={storeName(order)}
+      failed={state === 'failed'} signedOut={order.quote?.signed_out ?? false}
+      startFailed={quote.error?.message ?? null} retrying={quote.isPending}
+      onRetry={checkAgain} onBack={onBack} onClose={onClose}
+    />
+  }
+
   return (
     <FlowFrame
       step={stepIndex('delivery')} onBack={onBack} onClose={onClose} title="Delivery"
@@ -100,7 +115,6 @@ export function DeliveryStep({ order, onBack, onNext, onClose }: DeliveryStepPro
       <DateBar days={days} selected={delivery} onChoose={choose} label="Delivery date" />
       <div className={styles.groups}>
         <Group title="Delivery times" footer="Availability can change before booking. Nothing later is ordered without your approval.">
-          {reading && <Row label="Checking Instacart’s times…" />}
           {delivery && windows === null && <>
             <Row label="This day isn't offered yet" sub="You can plan ahead. Availability will be checked when it books." />
             {by && <Row label="Arrive by" detail={<TimeField value={by} label="Arrive by" onChange={chooseTime} />} />}

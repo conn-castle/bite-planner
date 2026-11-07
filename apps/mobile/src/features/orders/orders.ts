@@ -478,7 +478,8 @@ export function registerOrderMutations(queryClient: QueryClient) {
 
   // Fills the cart and reads checkout for the order as it is now (after the
   // changes before it); a quote for the same products already read or being read
-  // is kept. Only while the final review that asked for it is open.
+  // is kept. The request isn't replayed after relaunch; an accepted job keeps
+  // working when the member closes the flow.
   queryClient.setMutationDefaults(QUOTE, { ...startsJob('quote', 'orders.quote_started'), meta: NOT_PERSISTED })
 
   queryClient.setMutationDefaults(
