@@ -642,12 +642,56 @@ def _day_named(text: str, day: date) -> bool:
     return re.search(rf"\b{day:%b}\w*\.?\s+{day.day}\b", text, re.I) is not None
 
 
+_MONTHS = {
+    name: number
+    for number, names in enumerate(
+        (
+            ("jan", "january"),
+            ("feb", "february"),
+            ("mar", "march"),
+            ("apr", "april"),
+            ("may",),
+            ("jun", "june"),
+            ("jul", "july"),
+            ("aug", "august"),
+            ("sep", "sept", "september"),
+            ("oct", "october"),
+            ("nov", "november"),
+            ("dec", "december"),
+        ),
+        start=1,
+    )
+    for name in names
+}
+_DAY_MENTION = re.compile(
+    r"\b(?:(today|tomorrow)\b|("
+    + "|".join(sorted(_MONTHS, key=len, reverse=True))
+    + r")\b\.?\s+(\d{1,2})\b)",
+    re.I,
+)
+
+
+def _days_mentioned(text: str, today: date) -> list[date | None]:
+    """Every delivery day the text mentions (Today, Tomorrow, "Nov 7"), at the
+    store; None for a date that doesn't exist ("Feb 30")."""
+    days: list[date | None] = []
+    for relative, month, number in _DAY_MENTION.findall(text):
+        if relative:
+            days.append(today + timedelta(days=relative.lower() == "tomorrow"))
+            continue
+        try:
+            named = date(today.year, _MONTHS[month.lower()], int(number))
+            days.append(named if named >= today else named.replace(year=today.year + 1))
+        except ValueError:
+            days.append(None)
+    return days
+
+
 def _delivery_matches(text: str, day: date, zone: str) -> bool:
-    if _names_a_day(text):
-        return _day_named(text, day)
-    if re.search(r"\b(today|tomorrow)\b", text, re.I):
-        return delivery_day(text, datetime.now(ZoneInfo(zone)).date()) == day
-    return False
+    """Whether the text names the day, and no other: every Today, Tomorrow, or
+    date in it must be that day."""
+    mentioned = _days_mentioned(text, datetime.now(ZoneInfo(zone)).date())
+    return bool(mentioned) and all(named == day for named in mentioned)
 
 
 def delivery_day(text: str, today: date) -> date:
@@ -844,46 +888,87 @@ async def place_order(job_dir: Path, opened: Browser, ref: str) -> str:
     await opened._settled_tree()
     return (
         "Place order was pressed. Now find Instacart's confirmation, and call `confirmed` "
-        "with the refs of its order number, delivery window, and total; if there's none, "
+        "with the refs of its order number, delivery window, delivery day, and the amount "
+        "the payment method was authorized for; if there's none, "
         "look in your orders for this one, and if it isn't there either, call `not_confirmed`.\n"
         + await opened.snapshot()
     )
 
 
+_ORDER_NUMBER = re.compile(
+    r"\border\b\s*(?:id|number|no\.?)?\s*[:#]?\s*#?\s*([A-Z0-9-]*\d{5,}[A-Z0-9-]*)\b", re.I
+)
+_AUTHORIZED = re.compile(r"\bauthorized for\s+(\$[\d,]+(?:\.\d{2})?)", re.I)
+
+
 async def record_confirmation(
-    job_dir: Path, opened: Browser, number: str, window: str, total: str
+    job_dir: Path, opened: Browser, number: str, window: str, day: str, total: str
 ) -> Confirmation:
     """Read what Instacart confirmed from the elements the agent points at: this
-    order's, showing its day (including Today/Tomorrow), window and reported total.
-    A time-only entry cannot identify the delivery date of this purchase."""
+    order's number, its window, the element naming its delivery day, and the
+    amount the payment method was authorized for. As Instacart showed them
+    (2026-10-29 and 2026-11-07): a window names its day ("Arriving tomorrow
+    between 12pm - 2pm") except a same-day one ("Arriving between 8pm - 10pm"),
+    whose day is in the delivery details with the window's end ("Today by
+    10pm"); the order's Total is a later estimate ($121.04), while the payment
+    method "was temporarily authorized for $113.02", checkout's total. A
+    time-only entry never confirms the date, and every day named must be the
+    booked one."""
     state = load_state(job_dir)
     book = _book(opened)
     if not state.clicked or state.checkout is None:
         raise CheckoutRefused("Nothing was ordered: there's no confirmation to record.")
     await opened._stay_on_site()
-    if len({number, window, total}) != 3:
-        raise CheckoutRefused("Each part is a different element: point at each one once.")
+    if len({number, window, total}) != 3 or day in (number, total):
+        raise CheckoutRefused(
+            "Each part is a different element (the day may be the window's): "
+            "point at each one once."
+        )
     shown = " ".join((await opened.element_text(number)).split())
-    found = re.findall(r"\b[A-Z0-9-]*\d{5,}[A-Z0-9-]*\b", shown, re.I)
-    if not found:
-        raise CheckoutRefused(f"{shown[:60]!r} shows no order number: point at the one shown.")
+    found = sorted(set(_ORDER_NUMBER.findall(shown)))
+    if len(found) != 1:
+        raise CheckoutRefused(
+            f"{shown[:60]!r} shows no single order number: point at the order ID shown."
+        )
     when = " ".join((await opened.element_text(window)).split())
     booked = windows.parse(when)
     if booked is None:
         raise CheckoutRefused("That element shows no delivery window: point at the one booked.")
-    charged = money(await opened.element_text(total))
+    named = when if day == window else " ".join((await opened.element_text(day)).split())
+    if _DAY_MENTION.search(named) is None:
+        raise CheckoutRefused(
+            f"{named[:60]!r} names no delivery day: point at the element showing it "
+            "(Today, Tomorrow, or the date), such as the order's delivery details."
+        )
+    if day != window and windows.deadline(named) != booked.end:
+        raise CheckoutRefused(
+            f"{named[:60]!r} isn't this window's delivery day: point at the delivery "
+            f"details showing the day and the window's end (\"Today by "
+            f'{windows.time_label(booked.end)}"), or at a window that shows its day.'
+        )
+    authorized = {money(amount) for amount in _AUTHORIZED.findall(await opened.element_text(total))}
+    if len(authorized) != 1:
+        raise CheckoutRefused(
+            "That isn't the amount Instacart authorized: point at its statement that the "
+            "payment method was authorized for the order's amount, not the order's Total "
+            "(Instacart re-estimates that after placing)."
+        )
+    charged = authorized.pop()
+    zone = opened.job.time_zone
     if (
         booked != state.window
-        or not _delivery_matches(when, book.day, opened.job.time_zone)
+        or not _delivery_matches(named, book.day, zone)
+        or (_DAY_MENTION.search(when) and not _delivery_matches(when, book.day, zone))
         or charged != state.checkout.total_cents
     ):
         raise CheckoutRefused(
-            "That isn't this order: its window, day, or total isn't the one just placed "
-            f"({book.day:%a, %b} {book.day.day}, {windows.label(state.window or booked)}, "
+            "That isn't this order: its window, day, or authorized amount isn't the one just "
+            f"placed ({book.day:%a, %b} {book.day.day}, "
+            f"{windows.label(state.window or booked)}, "
             f"{cents_text(state.checkout.total_cents)}). If this order's confirmation isn't "
             "shown anywhere, call `not_confirmed`."
         )
-    confirmation = Confirmation(order_number=found[-1], window=booked, total_cents=charged)
+    confirmation = Confirmation(order_number=found[0], window=booked, total_cents=charged)
     with _changing(job_dir) as state:
         state.confirmation = confirmation
     return confirmation

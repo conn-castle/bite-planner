@@ -358,8 +358,9 @@ def test_place_order_presses_it_once_the_worker_says_go_then_the_confirmation_is
         said = await checkout.place_order(job_dir, opened, ref(page, 'button "Place order"'))
         asked = await answering
         page = await opened.snapshot()
+        when = ref(page, "Arriving")
         confirmed = await checkout.record_confirmation(
-            job_dir, opened, ref(page, '"Order #'), ref(page, "Arrives"), ref(page, "Total")
+            job_dir, opened, ref(page, '"Order ID'), when, when, ref(page, "Your payment method")
         )
         return said, asked, confirmed.order_number
 
@@ -471,7 +472,7 @@ def test_no_confirmation_is_recorded_before_place_order_was_pressed(job_dir: Pat
         page = await reported(opened)
         total = ref(page, "Total")
         for attempt in (
-            checkout.record_confirmation(job_dir, opened, total, total, total),
+            checkout.record_confirmation(job_dir, opened, total, total, total, total),
             checkout.mark_not_confirmed(job_dir),
         ):
             try:
@@ -557,9 +558,15 @@ def test_a_confirmation_that_isnt_this_orders_isnt_recorded(job_dir: Path) -> No
         state.checkout = state.checkout.model_copy(update={"total_cents": 9999})
         (job_dir / STATE_FILE).write_text(state.model_dump_json())
         page = await opened.snapshot()
+        when = ref(page, "Arriving")
         with pytest.raises(CheckoutRefused) as refused:
             await checkout.record_confirmation(
-                job_dir, opened, ref(page, '"Order #'), ref(page, "Arrives"), ref(page, "Total")
+                job_dir,
+                opened,
+                ref(page, '"Order ID'),
+                when,
+                when,
+                ref(page, "Your payment method"),
             )
         return str(refused.value)
 
@@ -570,29 +577,137 @@ def test_a_confirmation_that_isnt_this_orders_isnt_recorded(job_dir: Path) -> No
     assert load_state(job_dir).confirmation is None
 
 
-@pytest.mark.parametrize("day", [None, DAY + timedelta(days=1)])
-def test_matching_number_total_and_window_without_the_approved_day_are_not_confirmation(
+OTHER_DAY: str = tab_name(DAY + timedelta(days=1))
+
+
+@pytest.mark.parametrize(
+    ("when", "delivery", "refused"),
+    [
+        # The window alone, time-only, names no day.
+        ("Arriving between 2pm - 4pm", None, "names no delivery day"),
+        (f"Arriving {OTHER_DAY} between 2pm - 4pm", None, "window, day, or"),
+        # Today and another day in one element.
+        (f"Arriving {tab_name(DAY)} between 2pm - 4pm, or tomorrow", None, "window, day, or"),
+        ("Arriving between 2pm - 4pm", f"{OTHER_DAY} by 4pm", "window, day, or"),
+        (f"Arriving {OTHER_DAY} between 2pm - 4pm", f"{tab_name(DAY)} by 4pm", "window, day, or"),
+        # A day that isn't this window's delivery: the date it was placed, another end.
+        ("Arriving between 2pm - 4pm", f"Placed {tab_name(DAY)}", "isn't this window's"),
+        ("Arriving between 2pm - 4pm", f"{tab_name(DAY)} by 6pm", "isn't this window's"),
+        # "Maybe 7" isn't May 7.
+        ("Arriving between 2pm - 4pm", "Maybe 7 by 4pm", "names no delivery day"),
+    ],
+)
+def test_a_confirmation_must_show_the_booked_day_for_its_window_and_no_other(
     job_dir: Path,
-    day: date | None,
+    when: str,
+    delivery: str | None,
+    refused: str,
 ) -> None:
     async def steps(opened: Browser) -> None:
         page = await reported(opened)
         answering = asyncio.create_task(worker_answers(job_dir, ClickAnswer.GO))
         await checkout.place_order(job_dir, opened, ref(page, 'button "Place order"'))
         await answering
-        when = f"Arrives {tab_name(day)}, 2pm–4pm" if day else "Arrives 2pm–4pm"
-        await opened.page.locator("#when").evaluate(
-            "(element, text) => element.textContent = text", when
-        )
+        for element, text in (("#when", when), ("#delivery", delivery or "")):
+            await opened.page.locator(element).evaluate(
+                "(element, text) => element.textContent = text", text
+            )
         page = await opened.snapshot()
-        with pytest.raises(CheckoutRefused, match="window, day, or total"):
+        window = ref(page, "Arriving")
+        day = ref(page, re.escape(delivery)) if delivery else window
+        with pytest.raises(CheckoutRefused, match=refused):
             await checkout.record_confirmation(
                 job_dir,
                 opened,
-                ref(page, '"Order #'),
-                ref(page, "Arrives"),
-                ref(page, "Total"),
+                ref(page, '"Order ID'),
+                window,
+                day,
+                ref(page, "Your payment method"),
             )
 
     in_browser(job_dir, steps)
     assert load_state(job_dir).clicked and load_state(job_dir).confirmation is None
+
+
+async def placed_for(opened: Browser, tab: str) -> str:
+    """Checkout booked on the day's tab ("Today", "Mon, Nov 9"), reported, and
+    Place order pressed: the order's page."""
+    page = await schedule_dialog(opened)
+    page = await opened.click(ref(page, f'tab "{tab}'))
+    offered = re.findall(r'button "[^"\n]*(?:am|pm|Noon)[^"\n]*" \[ref=(\w+)\]', page)
+    said = await checkout.choose_window(opened.job_dir, opened, ref(page, f'tab "{tab}'), offered)
+    page = await opened.click(said.split("click ")[1].split(",")[0])
+    page = await opened.click(ref(page, 'button "Other"'))
+    page = await opened.type(ref(page, 'textbox "Other amount"'), "1.96")
+    page = await opened.click(ref(page, 'button "Save Tip"'))
+    await checkout.report(opened.job_dir, opened, report_refs(page, ref(page, f'button "{tab}, ')))
+    answering = asyncio.create_task(worker_answers(opened.job_dir, ClickAnswer.GO))
+    await checkout.place_order(opened.job_dir, opened, ref(page, 'button "Place order"'))
+    await answering
+    return await opened.snapshot()
+
+
+def test_a_same_day_order_is_confirmed_by_its_window_and_the_day_in_its_delivery_details(
+    tmp_path: Path,
+    instacart_site: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """As Instacart showed it on 2026-11-07: "Arriving between 8pm - 10pm" names no
+    day, the delivery details say "Today by 10pm", and the order's Total is a
+    later estimate; the amount authorized is checkout's total."""
+    morning = datetime.combine(DAY, time(9), ZoneInfo("America/New_York"))
+
+    class Morning(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> Self:
+            return cls.fromtimestamp(morning.timestamp(), tz)
+
+    monkeypatch.setattr(checkout, "datetime", Morning)
+    directory = make_job_dir(tmp_path, instacart_site, day=DAY, by=time(16))
+
+    async def steps(opened: Browser) -> tuple[str, list[str]]:
+        await opened.page.clock.install(time=morning)
+        page = await placed_for(opened, "Today")
+        number, when = ref(page, '"Order ID'), ref(page, "Arriving")
+        refused = []
+        for day, total in (
+            (when, ref(page, "Your payment method")),  # the window alone names no day
+            (ref(page, "Today by"), ref(page, "Total")),  # the order's later estimate
+        ):
+            with pytest.raises(CheckoutRefused) as error:
+                await checkout.record_confirmation(directory, opened, number, when, day, total)
+            refused.append(str(error.value))
+        confirmed = await checkout.record_confirmation(
+            directory, opened, number, when, ref(page, "Today by"), ref(page, "Your payment")
+        )
+        return confirmed.order_number, refused
+
+    number, refused = in_browser(directory, steps)
+
+    assert number == "18234567"
+    assert "names no delivery day" in refused[0]
+    assert refused[1].startswith("That isn't the amount Instacart authorized")
+    state = load_state(directory)
+    assert state.confirmation is not None
+    assert state.confirmation.window == Window(start=time(14), end=time(16))
+    assert state.confirmation.total_cents == 1959 + 249 + 196
+
+
+def test_a_next_day_order_is_confirmed_by_its_window_naming_tomorrow(
+    tmp_path: Path, instacart_site: str
+) -> None:
+    """As Instacart showed it on 2026-10-29: "Arriving tomorrow between 12pm - 2pm"."""
+    directory = make_job_dir(tmp_path, instacart_site, day=TODAY + timedelta(days=1))
+
+    async def steps(opened: Browser) -> str:
+        page = await placed_for(opened, tab_name(TODAY + timedelta(days=1)))
+        when = ref(page, "Arriving tomorrow")
+        confirmed = await checkout.record_confirmation(
+            directory, opened, ref(page, '"Order ID'), when, when, ref(page, "Your payment")
+        )
+        return confirmed.order_number
+
+    assert in_browser(directory, steps) == "18234567"
+    state = load_state(directory)
+    assert state.confirmation is not None
+    assert state.confirmation.window == Window(start=time(14), end=time(16))
