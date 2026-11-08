@@ -1,19 +1,38 @@
 <!doctype html>
 <html lang="en">
-<!-- Test stand-in for Instacart's confirmation. Production observed 2026-10-18:
-     "Arriving tomorrow between 1pm - 3pm", an order ID, and the total. -->
-<head><meta charset="utf-8"><title>Order placed</title></head>
+<!-- Test stand-in for Instacart's order page after Place order, as production
+     showed it on 2026-10-29 and 2026-11-07: the status names the day except
+     for same-day delivery ("Arriving tomorrow between 12pm - 2pm", "Arriving
+     between 8pm - 10pm"); the delivery details give the day and the window's
+     end ("Today by 10pm"); the order's Total is a later estimate ($121.04,
+     $8.02 over), while the payment method "was temporarily authorized for
+     $113.02", checkout's total. A later day's wording wasn't observed. -->
+<head><meta charset="utf-8"><title>Your order</title></head>
 <body>
 <main>
-  <h1>Thanks! Your order is placed</h1>
-  <p id="number">Order #18234567</p>
-  <p id="when"></p>
-  <p id="total"></p>
+  <p role="status" id="when"></p>
+  <h2>Delivery details</h2>
+  <p id="delivery"></p>
+  <p id="number">Order ID: 18234567</p>
+  <h2>Order summary</h2>
+  <ul>
+    <li id="total"></li>
+  </ul>
+  <p id="authorized"></p>
 </main>
 <script>
   const params = new URLSearchParams(location.search)
-  document.getElementById('when').textContent = 'Arrives ' + params.get('when')
-  document.getElementById('total').textContent = params.get('total')
+  const offset = Number(params.get('offset')), date = params.get('date')
+  const times = params.get('window').replace('–', ' - ')
+  const charged = params.get('total').replace('Total ', '')
+  const day = ['', 'tomorrow '][offset] ?? `${date} `
+  document.getElementById('when').textContent = `Arriving ${day}between ${times}`
+  const named = ['Today', 'Tomorrow'][offset] ?? date
+  document.getElementById('delivery').textContent = `${named} by ${times.split(' - ').pop()}`
+  const estimate = Math.round(parseFloat(charged.slice(1)) * 100) + 802
+  document.getElementById('total').textContent = 'Total $' + (estimate / 100).toFixed(2)
+  document.getElementById('authorized').textContent =
+    `Your payment method was temporarily authorized for ${charged}. Your statement will reflect a final charge within 7 business days of order completion.`
 </script>
 </body>
 </html>

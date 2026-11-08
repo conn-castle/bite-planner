@@ -83,7 +83,9 @@
   }
   function placed() {
     const params = new URLSearchParams({
-      when: document.getElementById('schedule').textContent.replace(/ More times.*/, ''),
+      offset: day,
+      date: dayName(day),
+      window: document.getElementById('schedule').textContent.replace(/ More times.*/, '').split(', ').pop(),
       total: document.getElementById('total').textContent,
     })
     location.href = '/store/orders/confirmation?' + params

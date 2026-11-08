@@ -496,11 +496,24 @@ def checkout_server(job_dir: Path) -> MCPServer:
         async def confirmed(
             number: Annotated[str, Field(description="The ref of Instacart's order number.")],
             window: Annotated[str, Field(description="The ref of the delivery window booked.")],
-            total: Annotated[str, Field(description="The ref of the order's total.")],
+            day: Annotated[
+                str,
+                Field(
+                    description="The ref of the element naming the delivery day (Today, "
+                    "Tomorrow, or the date): the window's own ref when it shows the day."
+                ),
+            ],
+            total: Annotated[
+                str,
+                Field(
+                    description="The ref of the amount the payment method was authorized "
+                    "for (not the order's Total, which Instacart re-estimates)."
+                ),
+            ],
         ) -> str:
             """Record what Instacart confirmed after Place order. Then you're done."""
             read = await act(
-                checkout.record_confirmation(job_dir, opened[0], number, window, total)
+                checkout.record_confirmation(job_dir, opened[0], number, window, day, total)
             )
             return f"Recorded order {read.order_number}. You're done."
 

@@ -119,6 +119,18 @@ def _clock(hour: str, minute: str, half: str | None, word: str) -> time | None:
     return time(hours, int(minute or 0))
 
 
+_DEADLINE = re.compile(rf"\bby\s+{_TIME}", re.I)
+
+
+def deadline(text: str) -> time | None:
+    """The first delivery deadline written in the text ("Today by 10pm"), or None."""
+    for match in _DEADLINE.finditer(text):
+        found = _clock(*(group or "" for group in match.groups()))
+        if found is not None:
+            return found
+    return None
+
+
 def parse(text: str) -> Window | None:
     """The first delivery window written in the text ("7am–9am $0", "10am–Noon",
     "Noon–2pm", "2–4pm"), or None."""

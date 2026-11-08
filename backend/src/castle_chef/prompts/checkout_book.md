@@ -37,14 +37,21 @@ presses Place order: only `place_order` does, once.
 5. When it says "Done", call `place_order` with the ref of the Place order
    button, and do what it says next. After the order is placed, find
    Instacart's confirmation and call `confirmed` with the refs of its order
-   number, delivery window, and total. If no confirmation shows, look in the
-   account's orders (its menu's "Your orders") for this order (its day,
-   window, and total); if it's there, call `confirmed` with its refs; if not,
-   call `not_confirmed`.
+   number, delivery window, delivery day, and the amount the payment method
+   was authorized for. If no confirmation shows, look in the account's orders
+   (its menu's "Your orders") for this order: open it and check its delivery
+   day, window, and authorized amount. If it's there, call `confirmed` with
+   its refs; if not, call `not_confirmed`.
 
-For confirmation, point at a delivery element that includes the day (or
-Today/Tomorrow) and window together, or their containing element. A time-only
-entry cannot confirm which delivery date was purchased.
+For confirmation, the day is an element naming it (Today, Tomorrow, or the
+date). When the window shows its day ("Arriving tomorrow between 12pm -
+2pm"), give that same ref for both. A same-day window leaves the day out
+("Arriving between 8pm - 10pm"): then point the day at the order's delivery
+details, which show the day with the window's end ("Today by 10pm"). A
+time-only entry never confirms the date. The amount is in Instacart's
+statement that the payment method "was temporarily authorized for" the
+order's amount, not the order's Total, which Instacart re-estimates after
+placing.
 
 If Instacart asks you to sign in before you've placed the order, call
 `signed_out` with the ref of its sign-in control and stop.

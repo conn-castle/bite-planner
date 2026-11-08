@@ -191,9 +191,10 @@ async def use_tools() -> None:
             await call(
                 "confirmed",
                 {
-                    "number": ref(page, '"Order #'),
-                    "window": ref(page, "Arrives"),
-                    "total": ref(page, "Total"),
+                    "number": ref(page, '"Order ID'),
+                    "window": ref(page, "Arriving"),
+                    "day": ref(page, "Arriving"),
+                    "total": ref(page, "Your payment method"),
                 },
             )
         elif "at checkout on Instacart" in prompt and meal_count == "0":
