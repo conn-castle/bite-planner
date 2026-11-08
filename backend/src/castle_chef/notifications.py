@@ -8,10 +8,19 @@ from uuid import UUID
 from castle_chef_agent import windows
 from sqlmodel import Session, col, func, select
 
-from castle_chef import orders, push
+from castle_chef import orders, push, quotes
 from castle_chef.booking import DRY_RUN
 from castle_chef.db import get_session
-from castle_chef.models import AppUser, BookState, GroceryOrder, Job, Meal, ShoppingListItem
+from castle_chef.models import (
+    AppUser,
+    BookState,
+    GroceryOrder,
+    GroceryOrderStatus,
+    Job,
+    JobStatus,
+    Meal,
+    ShoppingListItem,
+)
 from castle_chef.push import Notification, NotificationKind
 from castle_chef.settings import get_settings
 
@@ -21,6 +30,7 @@ log = logging.getLogger(__name__)
 REMINDER_EXPIRY = timedelta(hours=12)
 IDEAS_READY_EXPIRY = timedelta(hours=6)
 LIST_READY_EXPIRY = timedelta(hours=6)
+QUOTE_READY_EXPIRY = timedelta(hours=6)
 BOOKING_EXPIRY = timedelta(hours=24)
 
 
@@ -121,6 +131,49 @@ def list_failed(session: Session, build: Job) -> Notification:
         expires_in=LIST_READY_EXPIRY,
         order_id=order.id,
     )
+
+
+def notify_quote(job_id: UUID) -> None:
+    """Tell the requester the current draft's checkout check has finished."""
+    try:
+        with get_session() as session:
+            job = session.get(Job, job_id)
+            order = session.get(GroceryOrder, job.grocery_order_id) if job else None
+            current = quotes.current(session, order) if order else None
+            if (
+                job is None
+                or order is None
+                or order.status != GroceryOrderStatus.DRAFT
+                or current is None
+                or current.id != job.id
+                or job.status not in (JobStatus.SUCCEEDED, JobStatus.FAILED)
+            ):
+                return
+            number = orders.number(session, order)
+            failed = job.status == JobStatus.FAILED
+            blocked = job.quote.blocked_because if job.quote else None
+            notification = Notification(
+                kind=NotificationKind.QUOTE_FAILED if failed else NotificationKind.QUOTE_READY,
+                title="Couldn't check delivery times"
+                if failed
+                else (
+                    "Your checkout needs attention" if blocked else "Your delivery times are ready"
+                ),
+                body=f"Order {number}'s check stopped. Open it to try again."
+                if failed
+                else (
+                    f"Order {number}: {blocked} Open it to review."
+                    if blocked
+                    else f"Choose a delivery for Order {number}. Its estimated total is ready too."
+                ),
+                expires_in=QUOTE_READY_EXPIRY,
+                collapse_id=f"quote-{order.id}",
+                order_id=order.id,
+            )
+            requester = job.requested_by
+        push.notify(requester, notification)
+    except Exception:
+        log.exception("job.notify_failed", extra={"job_id": str(job_id)})
 
 
 def _money(cents: int) -> str:

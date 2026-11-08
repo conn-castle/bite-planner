@@ -978,7 +978,7 @@ def quote_out(
         availability=result.availability if result else None,
         availability_current=quotes.availability_fresh(result, booking.store_now()),
         availability_valid_until=(
-            result.availability.observed_at + windows.AVAILABILITY_MAX_AGE
+            result.availability.observed_at + quotes.QUOTE_MAX_AGE
             if result and result.availability
             else None
         ),

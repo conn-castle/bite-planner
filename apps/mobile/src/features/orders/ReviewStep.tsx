@@ -1,20 +1,17 @@
-import { useCallback, useContext, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { Checkout, ClockTime, GroceryOrder, ISODate } from '../../lib/api/types'
 import { addDays, formatClockTime, formatDate } from '../../lib/dates'
-import { elapsed, plural } from '../../lib/format'
+import { plural } from '../../lib/format'
 import { haptics } from '../../lib/haptics'
-import { logger } from '../../lib/log'
 import { formatMoney } from '../../lib/products'
 import { useNow } from '../../lib/useNow'
-import { AgentWork } from '../../ui/AgentWork'
-import { PlateArt } from '../../ui/art'
 import { Button } from '../../ui/Button'
+import { CheckoutWait } from '../../ui/CheckoutWait'
 import { Chip } from '../../ui/Chip'
 import { Group, Row } from '../../ui/Group'
 import { Icon } from '../../ui/Icon'
 import { Notice } from '../../ui/Notice'
 import { OrderCard, OrderCardBody } from '../../ui/OrderCard'
-import { RetryNotice } from '../../ui/RetryNotice'
 import { Stats } from '../../ui/Stats'
 import { MealRow } from '../meals/MealRow'
 import { recipeCacheContext } from '../meals/servings'
@@ -22,7 +19,6 @@ import { useHousehold } from '../settings/settings'
 import { pickedMeals } from './batches'
 import { coveredDays, dayRange, deliveryAvailable, deliveryExpired } from './dates'
 import { FlowFrame, FooterSummary } from './FlowFrame'
-import { FlowNotice } from './flowNotice'
 import { listCounts, productTotals, storeName } from './list'
 import { useOrderSession } from './lock'
 import { useEditsPending, usePlaceOrder, useQuoteOrder } from './orders'
@@ -103,7 +99,8 @@ export function ReviewStep({ order, delivery, by, next, onOpenMeal, onChange, on
     )
   }
   return (
-    <QuoteWait
+    <CheckoutWait
+      step="review"
       order={order}
       store={store}
       failed={state === 'failed'}
@@ -114,80 +111,6 @@ export function ReviewStep({ order, delivery, by, next, onOpenMeal, onChange, on
       onBack={onBack}
       onClose={onClose}
     />
-  )
-}
-
-interface QuoteWaitProps {
-  order: GroceryOrder
-  store: string
-  failed: boolean
-  /** It failed because Castle Chef is signed out of Instacart's website. */
-  signedOut: boolean
-  startFailed: string | null
-  retrying: boolean
-  onRetry: () => void
-  onBack: () => void
-  onClose: () => void
-}
-
-/** While the cart is filled and checkout read, or why it wasn't. */
-function QuoteWait({ order, store, failed, signedOut, startFailed, retrying, onRetry, onBack, onClose }: QuoteWaitProps) {
-  const now = useNow(1000)
-  const job = order.quote?.current ? order.quote.job : undefined
-  const reading = !failed && startFailed === null
-  // One problem on screen: the flow's own (the order couldn't be refreshed) comes first.
-  const flowProblem = useContext(FlowNotice)
-
-  // What went wrong is for the logs (the screen says it plainly): once per failed quote.
-  const failedId = failed ? job?.id : undefined
-  const failedError = failed ? (job?.error ?? null) : null
-  useEffect(() => {
-    if (failedId !== undefined) logger.error('orders.quote_failed', { orderId: order.id, jobId: failedId, error: failedError })
-  }, [failedId, failedError, order.id])
-
-  return (
-    <FlowFrame
-      step={stepIndex('review')}
-      onBack={onBack}
-      onClose={onClose}
-      footer={
-        <>
-          <FooterSummary
-            title="You can close this"
-            detail="The draft is saved, and its total will be here when you come back."
-          />
-          <Button variant="secondary" large onClick={onClose}>
-            Close
-          </Button>
-        </>
-      }
-    >
-      <AgentWork
-        art={<PlateArt />}
-        title={`Getting your total from ${store}`}
-        took={reading ? (job ? elapsed(new Date(job.created_at), now) : 'Starting') : null}
-        lede={`Filling your ${store} cart and reading checkout. This takes about a minute; anything already in your cart goes back afterwards.`}
-      >
-        {!flowProblem && !startFailed && failed && (
-          <div className={styles.problem}>
-            <RetryNotice
-              message={
-                signedOut
-                  ? `Castle Chef is signed out of Instacart, so it couldn't read your total. Sign it in again (make instacart-login), then try again. Your order is saved.`
-                  : `We couldn't get your total from ${store} this time. Your order is saved.`
-              }
-              onRetry={onRetry}
-              busy={retrying}
-            />
-          </div>
-        )}
-        {!flowProblem && startFailed && (
-          <div className={styles.problem}>
-            <RetryNotice message={`Couldn't start it: ${startFailed}`} onRetry={onRetry} busy={retrying} />
-          </div>
-        )}
-      </AgentWork>
-    </FlowFrame>
   )
 }
 

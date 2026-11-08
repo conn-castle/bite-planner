@@ -14,8 +14,8 @@ from castle_chef import booking
 from castle_chef.db import for_update, get_session
 from castle_chef.dispatch import JOB_ID_ENV, JobMessage
 from castle_chef.jobs import ACTIVE, fail_shops_of
-from castle_chef.models import Job, JobStatus, utc_now
-from castle_chef.notifications import notify_booking
+from castle_chef.models import Job, JobKind, JobStatus, utc_now
+from castle_chef.notifications import notify_booking, notify_quote
 from castle_chef.settings import get_settings
 from castle_chef.worker_tasks import QueueBatch, TaskStopped, WorkerStop
 
@@ -51,10 +51,13 @@ def _dead_lettered(message: JobMessage) -> None:
         settle_failed = (
             job is not None and job.status == JobStatus.FAILED and job.worker_task_arn is None
         )
+        quote_failed = changed and job is not None and job.kind == JobKind.QUOTE
         session.commit()
     log.error("job.never_started", extra={"job_id": str(message.job_id), "marked_failed": changed})
     if settle_failed:
         _booking_stopped(message.job_id, "Booking couldn't be started.")
+    if quote_failed:
+        notify_quote(message.job_id)
 
 
 def _task_stopped(event: TaskStopped) -> None:
@@ -117,6 +120,7 @@ def _task_stopped(event: TaskStopped) -> None:
         if not owned and not unclaimed:
             return
         changed = (owned or unclaimed) and job.status in ACTIVE
+        quote_failed = changed and job.kind == JobKind.QUOTE
         if changed:
             job.status, job.error, job.finished_at = JobStatus.FAILED, error, utc_now()
             session.add(job)
@@ -132,6 +136,8 @@ def _task_stopped(event: TaskStopped) -> None:
     # Also retried when an earlier delivery committed job failure but failed
     # before settling its order. The order lock makes this idempotent.
     _booking_stopped(job_id, "Booking stopped before it finished.")
+    if quote_failed:
+        notify_quote(job_id)
 
 
 def _booking_stopped(job_id: UUID, error: str) -> None:

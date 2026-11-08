@@ -93,7 +93,13 @@ from castle_chef.models import (
     ProductGone,
     ShoppingListItem,
 )
-from castle_chef.notifications import ideas_ready, list_failed, list_ready, notify_booking
+from castle_chef.notifications import (
+    ideas_ready,
+    list_failed,
+    list_ready,
+    notify_booking,
+    notify_quote,
+)
 from castle_chef.products import InvalidProducts
 from castle_chef.records import keeping_record
 from castle_chef.settings import REPO_ROOT, current_release, get_settings
@@ -402,8 +408,9 @@ def _notify_succeeded(job: Job) -> None:
     """Say a job that succeeded is done, to whoever waits for it."""
     if job.kind == JobKind.BOOK:
         notify_booking(job.grocery_order_id)
-    # A quote's member waits for it on screen (the final review): nothing to send.
-    elif job.kind != JobKind.QUOTE:
+    elif job.kind == JobKind.QUOTE:
+        notify_quote(job.id)
+    else:
         _notify_requester(job.id)
 
 
@@ -436,6 +443,9 @@ def _notify_failed(job: Job, error: str) -> None:
     list for the order's picks (a failed batch or build shows in the app); a
     failed booking settles its order (not booked, or check Instacart once it was
     clicked) and says so. A failure here is logged as an error."""
+    if job.kind == JobKind.QUOTE:
+        notify_quote(job.id)
+        return
     if job.kind == JobKind.BOOK:
         try:
             with get_session() as session:

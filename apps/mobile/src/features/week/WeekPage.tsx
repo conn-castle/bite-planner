@@ -80,8 +80,8 @@ export function WeekPage() {
   // The order the flow opens: a notification's, or (undefined) the household's draft, made if there's none.
   const [flowOrderId, setFlowOrderId] = useState<string>()
   // Where a notification's flow opens: its shopping list, for "list ready".
-  const [flowStartAt, setFlowStartAt] = useState<'list'>()
-  function openFlow(orderId?: string, startAt?: 'list') {
+  const [flowStartAt, setFlowStartAt] = useState<'list' | 'delivery'>()
+  function openFlow(orderId?: string, startAt?: 'list' | 'delivery') {
     setFlowOrderId(orderId)
     setFlowStartAt(startAt)
     setFlowOpen(true)
@@ -123,8 +123,8 @@ export function WeekPage() {
           if (early && result.open) return
           logger.info('push.tap_opened', { kind: about.kind, open: result.open, early, ms: since(tapped.at) })
           if (result.open) {
-            // The list the tap is about may be newer than the copy cached.
-            if (result.step === 'list') void queryClient.invalidateQueries({ queryKey: queryKeys.order(result.orderId) })
+            // The list or delivery times may be newer than the copy cached.
+            if (result.step) void queryClient.invalidateQueries({ queryKey: queryKeys.order(result.orderId) })
             openFlow(result.orderId, result.step)
             return
           }

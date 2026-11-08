@@ -38,6 +38,8 @@ class NotificationKind(StrEnum):
     IDEAS_READY = "ideas_ready"
     LIST_READY = "list_ready"
     LIST_FAILED = "list_failed"  # shopping the list failed
+    QUOTE_READY = "quote_ready"
+    QUOTE_FAILED = "quote_failed"
     BOOKING = "booking"  # how booking an approved order went
     TEST = "test"  # `castle-chef household notify-test`
 

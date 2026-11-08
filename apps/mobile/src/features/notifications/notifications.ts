@@ -51,7 +51,7 @@ export function useYourReminder(): { time: string | null; off: boolean } {
 }
 
 /**
- * Whether "your meal ideas are ready" (or "your shopping list is ready") will
+ * Whether a job completion notification will
  * reach this phone for a job: the signed-in member started it (it goes only to
  * them) and has notifications on.
  */
@@ -190,6 +190,8 @@ export type Delivered =
   | { kind: 'list_ready'; orderId: string }
   // Shopping the list failed: its step says why and offers Try again.
   | { kind: 'list_failed'; orderId: string }
+  | { kind: 'quote_ready'; orderId: string }
+  | { kind: 'quote_failed'; orderId: string }
   // How booking an approved order went: a tap opens that order.
   | { kind: 'booking'; orderId: string }
   | { kind: 'test' }
@@ -209,6 +211,8 @@ export function parseDelivered(data: unknown): Delivered | null {
     (data.kind === 'ideas_ready' ||
       data.kind === 'list_ready' ||
       data.kind === 'list_failed' ||
+      data.kind === 'quote_ready' ||
+      data.kind === 'quote_failed' ||
       data.kind === 'booking') &&
     typeof data.order_id === 'string'
   ) {
@@ -226,7 +230,7 @@ export function parseDelivered(data: unknown): Delivered | null {
  * about, when it's no longer the draft ('discarded' once it's gone).
  */
 export type TapResult =
-  | { open: true; orderId: string; step?: 'list' }
+  | { open: true; orderId: string; step?: 'list' | 'delivery' }
   | { open: false; header: string; message: string }
 
 export function tapResult(
@@ -254,8 +258,10 @@ export function tapResult(
       : { open: false, header: `Order ${number} isn't open`, message: "Home shows what's next." }
   }
   const aboutList = tapped.kind === 'list_ready' || tapped.kind === 'list_failed'
-  const what = aboutList ? 'shopping list' : 'meal ideas'
+  const aboutQuote = tapped.kind === 'quote_ready' || tapped.kind === 'quote_failed'
+  const what = aboutList ? 'shopping list' : aboutQuote ? 'delivery times' : 'meal ideas'
   if (next.draft?.id === tapped.orderId) {
+    if (aboutQuote) return { open: true, orderId: tapped.orderId, step: 'delivery' }
     return aboutList ? { open: true, orderId: tapped.orderId, step: 'list' } : { open: true, orderId: tapped.orderId }
   }
   if (tappedOrder === 'discarded') {
@@ -411,7 +417,7 @@ export function tapToast(shown: Toast) {
 }
 
 // How many order flows are open (Home's, and one per order page): while any is,
-// "ideas ready" and "list ready" need no toast (they're showing).
+// Job completion notifications need no toast (the flow is showing them).
 let openFlows = 0
 
 /** An order flow has opened; call what it returns as it closes. */
@@ -432,6 +438,8 @@ function received(notification: PushNotificationSchema, queryClient: QueryClient
     delivered?.kind === 'ideas_ready' ||
     delivered?.kind === 'list_ready' ||
     delivered?.kind === 'list_failed' ||
+    delivered?.kind === 'quote_ready' ||
+    delivered?.kind === 'quote_failed' ||
     delivered?.kind === 'booking'
   if (delivered && aboutAnOrder) {
     void queryClient.invalidateQueries({ queryKey: queryKeys.order(delivered.orderId) })

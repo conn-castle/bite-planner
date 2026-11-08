@@ -1,20 +1,30 @@
 """Delivery approval through HTTP, including stale choices and uncertain purchases."""
 
 from datetime import UTC, datetime, time, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 from castle_chef_agent.checkout import ClickRequest
-from castle_chef_agent.windows import DeliveryProposal, Window
+from castle_chef_agent.windows import Availability, AvailableDay, DeliveryProposal, Window
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from castle_chef import booking, orders
-from castle_chef.checkout import BookIssue
+from castle_chef import booking, orders, worker
+from castle_chef.checkout import BookIssue, CheckoutError, Quote
 from castle_chef.jobs import claim_job, finish_job
-from castle_chef.models import BookState, DeliveryDecision, DeliveryDecisionKind, GroceryOrder, Job
+from castle_chef.models import (
+    BookState,
+    DeliveryDecision,
+    DeliveryDecisionKind,
+    GroceryOrder,
+    Household,
+    Job,
+)
+from castle_chef.push import NotificationKind
 from tests.test_api import (
+    CHECKOUT,
     DAD,
     MOM,
     NEIGHBOR,
@@ -23,6 +33,7 @@ from tests.test_api import (
     as_user,
     change,
     detail,
+    finish_quote,
     get_order,
     ok,
     open_draft,
@@ -32,7 +43,9 @@ from tests.test_api import (
     put_dates,
     ready_list,
     ready_quote,
+    request_quote,
     run_at_once,
+    shopped_draft,
     tomorrow,
     with_suggestions,
 )
@@ -41,6 +54,8 @@ from tests.test_api import dispatcher as dispatcher
 from tests.test_api import households as households
 from tests.test_failures import TASK, task_stopped
 from tests.test_failures import events as events
+from tests.test_notifications import RecordingSender, register
+from tests.test_notifications import sender as sender
 
 
 def time_proposal(client: TestClient, session: Session) -> tuple[str, DeliveryProposal]:
@@ -123,6 +138,124 @@ def test_a_passed_same_day_deadline_cannot_be_saved(client: TestClient) -> None:
         422,
     )
     assert get_order(client, order_id)["delivery_date"] is None
+
+
+@pytest.mark.parametrize("hours,status", [(2, 200), (11, 200), (12, 201), (13, 201)])
+def test_delivery_choices_are_reused_for_twelve_hours(
+    client: TestClient,
+    session: Session,
+    hours: int,
+    status: int,
+) -> None:
+    order_id, _ = shopped_draft(client)
+    first = ok(request_quote(client, order_id), 201)
+    finish_quote(first["id"])
+    job = session.get_one(Job, UUID(first["id"]))
+    assert job.quote is not None and job.quote.availability is not None
+    observed = datetime.now(UTC) - timedelta(hours=hours)
+    job.quote = job.quote.model_copy(
+        update={"availability": job.quote.availability.model_copy(update={"observed_at": observed})}
+    )
+    session.add(job)
+    session.commit()
+    shown = get_order(client, order_id)["quote"]
+    assert shown["availability_current"] is (status == 200)
+    assert datetime.fromisoformat(shown["availability_valid_until"]) == observed + timedelta(
+        hours=12
+    )
+    again = ok(request_quote(client, order_id), status)
+    assert (again["id"] == first["id"]) is (status == 200)
+
+
+def test_an_hours_old_delivery_choice_can_be_approved_and_booked(
+    client: TestClient,
+    session: Session,
+) -> None:
+    order_id, _ = shopped_draft(client)
+    delivery = tomorrow()
+    ok(put_dates(client, order_id, delivery, delivery + timedelta(days=3), by="18:00"))
+    quote_id = ready_quote(client, order_id)
+    job = session.get_one(Job, UUID(quote_id))
+    assert job.quote is not None and job.quote.availability is not None
+    job.quote = job.quote.model_copy(
+        update={
+            "availability": job.quote.availability.model_copy(
+                update={"observed_at": datetime.now(UTC) - timedelta(hours=2)}
+            )
+        }
+    )
+    session.add(job)
+    session.commit()
+    approved = ok(place(client, order_id))
+    assert approved["book_state"] == "booking"
+
+
+def test_a_stopped_quote_notifies_the_waiting_member(
+    client: TestClient,
+    session: Session,
+    events: TestClient,
+    sender: RecordingSender,
+) -> None:
+    order_id, _ = shopped_draft(client)
+    token = "ab" * 32
+    assert register(client, token).status_code == 204
+    job = ok(request_quote(client, order_id), 201)
+    ok(events.post("/events", json=task_stopped(job["id"], 1)))
+    [(phone, notification)] = sender.sent
+    assert phone == token
+    assert notification.kind == NotificationKind.QUOTE_FAILED
+    assert notification.order_id == UUID(order_id)
+
+
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("changed", [False, True])
+def test_a_delivery_check_notifies_its_requester_when_the_worker_finishes(
+    client: TestClient,
+    sender: RecordingSender,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failed: bool,
+    changed: bool,
+    session: Session,
+) -> None:
+    order_id, _ = shopped_draft(client)
+    token = "ab" * 32
+    assert register(client, token).status_code == 204
+    job = ok(request_quote(client, order_id), 201)
+
+    def check(job: Job, job_dir: Path) -> Quote:
+        if changed:
+            order = session.get_one(GroceryOrder, job.grocery_order_id)
+            household = session.get_one(Household, order.household_id)
+            household.tip_percent += 1
+            session.add(household)
+            session.commit()
+        if failed:
+            raise CheckoutError("Instacart is unavailable.")
+        return Quote(
+            checkout=CHECKOUT,
+            availability=Availability(
+                observed_at=datetime.now(UTC),
+                time_zone=ZONE,
+                days=[AvailableDay(day=tomorrow(), windows=[Window(start=time(16), end=time(18))])],
+            ),
+        )
+
+    monkeypatch.setattr(worker, "process_quote", check)
+    monkeypatch.setenv("CASTLE_CHEF_JOBS_DIR", str(tmp_path / "jobs"))
+    from castle_chef.settings import get_settings
+
+    get_settings.cache_clear()
+    worker.run_job(UUID(job["id"]))
+    if changed:
+        assert sender.sent == []
+        return
+    [(phone, notification)] = sender.sent
+    assert phone == token
+    assert notification.order_id == UUID(order_id)
+    assert notification.kind == (
+        NotificationKind.QUOTE_FAILED if failed else NotificationKind.QUOTE_READY
+    )
 
 
 def test_simultaneous_approval_of_one_proposal_starts_one_purchase_job(
