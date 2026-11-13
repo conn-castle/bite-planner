@@ -515,7 +515,7 @@ def apns(apns_key: str, answer: httpx2.Response) -> tuple[ApnsSender, list[httpx
         requests.append(request)
         return answer
 
-    sender = ApnsSender(apns_key, "KEY1234567")
+    sender = ApnsSender(apns_key, "KEY1234567", "EXAMP12345")
     sender._client = httpx2.Client(base_url=push.APNS_URL, transport=httpx2.MockTransport(handle))
     return sender, requests
 
@@ -581,10 +581,29 @@ def test_the_apns_sender_is_built_from_the_base64_key(
     monkeypatch.setenv("CASTLE_CHEF_PUSH", "apns")
     monkeypatch.setenv("CASTLE_CHEF_APNS_KEY", base64.b64encode(apns_key.encode()).decode())
     monkeypatch.setenv("CASTLE_CHEF_APNS_KEY_ID", "KEY1234567")
+    monkeypatch.setenv("CASTLE_CHEF_APNS_TEAM_ID", "EXAMP12345")
     push.get_sender.cache_clear()
     try:
         sender = push.get_sender()
         assert isinstance(sender, ApnsSender)
+    finally:
+        push.get_sender.cache_clear()
+
+
+@pytest.mark.parametrize("missing", ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID"])
+def test_apns_requires_all_configured_signing_fields(
+    apns_key: str, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    monkeypatch.setenv("CASTLE_CHEF_PUSH", "apns")
+    monkeypatch.setenv("CASTLE_CHEF_APNS_KEY", base64.b64encode(apns_key.encode()).decode())
+    monkeypatch.setenv("CASTLE_CHEF_APNS_KEY_ID", "KEY1234567")
+    monkeypatch.setenv("CASTLE_CHEF_APNS_TEAM_ID", "EXAMP12345")
+    monkeypatch.delenv("CASTLE_CHEF_" + missing)
+    get_settings.cache_clear()
+    push.get_sender.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="CASTLE_CHEF_" + missing):
+            push.get_sender()
     finally:
         push.get_sender.cache_clear()
 

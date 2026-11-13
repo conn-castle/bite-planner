@@ -83,6 +83,7 @@ def test_worker_is_locked_down_and_pinned(runtime: Template) -> None:
         "DATABASE_URL",
         "CASTLE_CHEF_APNS_KEY",
         "CASTLE_CHEF_APNS_KEY_ID",
+        "CASTLE_CHEF_APNS_TEAM_ID",
         "CASTLE_CHEF_INSTACART_BOOKING",
         "OPENAI_API_KEY",
     ]
@@ -341,6 +342,7 @@ def test_a_stopped_booking_tells_whoever_approved_the_order(runtime: Template) -
         "DATABASE_URL": "/castle-chef/test/database-url-pooled",
         "CASTLE_CHEF_APNS_KEY": "/castle-chef/shared/apns-key-base64",
         "CASTLE_CHEF_APNS_KEY_ID": "/castle-chef/shared/apns-key-id",
+        "CASTLE_CHEF_APNS_TEAM_ID": "/castle-chef/shared/apple-team-id",
     }
 
 
@@ -422,6 +424,7 @@ def test_each_members_schedule_invokes_the_reminders_function_only(runtime: Temp
         "DATABASE_URL": "/castle-chef/test/database-url-pooled",
         "CASTLE_CHEF_APNS_KEY": "/castle-chef/shared/apns-key-base64",
         "CASTLE_CHEF_APNS_KEY_ID": "/castle-chef/shared/apns-key-id",
+        "CASTLE_CHEF_APNS_TEAM_ID": "/castle-chef/shared/apple-team-id",
     }
     assert variables["CASTLE_CHEF_PUSH"] == "apns"
     assert variables["AWS_LWA_PASS_THROUGH_PATH"] == "/events"
@@ -534,6 +537,12 @@ def test_each_stage_deploys_its_own_runtime_stack(tmp_path: Path) -> None:
             cwd=infra,
             env=os.environ
             | {
+                "AWS_ACCOUNT_ID": "123456789012",
+                "AWS_REGION": "us-east-1",
+                "CASTLE_CHEF_GITHUB_SUBJECT": "repo:example-owner@1/example-repo@2",
+                "CASTLE_CHEF_ALARM_EMAIL": "operator@example.com",
+                "NEON_AUTH_URL_DEV": "https://dev-auth.example.test/neondb/auth",
+                "NEON_AUTH_URL_PROD": "https://auth.example.test/neondb/auth",
                 "CDK_OUTDIR": str(outdir),
                 "CDK_CONTEXT_JSON": json.dumps(
                     context
@@ -554,23 +563,45 @@ def test_each_stage_deploys_its_own_runtime_stack(tmp_path: Path) -> None:
             if artifact["type"] == "aws:cloudformation:stack" and name != "CastleChefRepositories"
         ]
         runtime_stacks.add(stack)
+        template = json.loads(
+            (outdir / manifest["artifacts"][stack]["properties"]["templateFile"]).read_text()
+        )
+        urls = {
+            resource["Properties"]["Environment"]["Variables"]["CASTLE_CHEF_NEON_AUTH_URL"]
+            for resource in template["Resources"].values()
+            if resource["Type"] == "AWS::Lambda::Function"
+            and "CASTLE_CHEF_NEON_AUTH_URL"
+            in resource["Properties"].get("Environment", {}).get("Variables", {})
+        }
+        assert urls == {f"https://{'dev-' if stage == 'dev' else ''}auth.example.test/neondb/auth"}
     assert len(runtime_stacks) == len(context["stages"])
 
 
-def test_each_stage_verifies_sign_ins_from_the_apps_neon_auth() -> None:
-    # The app built for each stage signs in with this Neon Auth; the API verifies
-    # tokens against the stage's. Different ones would refuse every request.
-    stages = json.loads((REPOSITORY / "infra" / "cdk.json").read_text())["context"]["stages"]
-    app_env_files = {"dev": ".env.development", "prod": ".env.production"}
-    assert set(stages) == set(app_env_files)
-    for stage, env_file in app_env_files.items():
-        lines = (REPOSITORY / "apps" / "mobile" / env_file).read_text().splitlines()
-        [app_url] = [
-            line.removeprefix("VITE_NEON_AUTH_URL=")
-            for line in lines
-            if line.startswith("VITE_NEON_AUTH_URL=")
-        ]
-        assert stages[stage]["neonAuthUrl"] == app_url
+def test_deploy_without_private_configuration_fails_before_synthesizing(tmp_path: Path) -> None:
+    infra = Path(__file__).parents[1]
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name
+        not in (
+            "AWS_ACCOUNT_ID",
+            "AWS_REGION",
+            "CASTLE_CHEF_GITHUB_SUBJECT",
+            "CASTLE_CHEF_ALARM_EMAIL",
+            "NEON_AUTH_URL_DEV",
+            "NEON_AUTH_URL_PROD",
+        )
+    }
+    result = subprocess.run(
+        [sys.executable, "app.py"],
+        cwd=infra,
+        env=env | {"CDK_OUTDIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "Missing AWS_ACCOUNT_ID" in result.stderr
+    assert not list(tmp_path.glob("*.template.json"))
 
 
 def test_development_images_never_expire_releases(repositories: Template) -> None:

@@ -39,7 +39,7 @@ need_image() {
 openai_key() {
   OPENAI_API_KEY=$(aws ssm get-parameter \
     --name /castle-chef/shared/openai-api-key --with-decryption \
-    --query Parameter.Value --output text --profile conn --region us-east-1)
+    --query Parameter.Value --output text --region "${AWS_REGION:?Run make env and export the deployment environment}")
   export OPENAI_API_KEY
 }
 
@@ -47,22 +47,29 @@ openai_key() {
 # the container through this environment, never an argument.
 database_url() {
   [[ -f backend/.env ]] || { echo "Missing backend/.env: run make env" >&2; exit 1; }
-  DATABASE_URL=$(sed -n 's/^DATABASE_URL=//p' backend/.env)
+  DATABASE_URL=$(uv run --directory backend python -c '
+import sys
+from dotenv import dotenv_values
+value: str | None = dotenv_values(".env").get("DATABASE_URL")
+if not value:
+    raise SystemExit("Missing DATABASE_URL in backend/.env: run make env")
+sys.stdout.write(value)
+')
   export DATABASE_URL
 }
 
 # Checkout reads the household's Instacart session from SSM (the task role does in
-# AWS): short-lived credentials from the `conn` profile, passed by environment only.
+# AWS): short-lived credentials from the configured profile, passed by environment only.
 aws_credentials() {
   local exported
-  aws_args=(--env AWS_DEFAULT_REGION=us-east-1
+  aws_args=(--env "AWS_DEFAULT_REGION=${AWS_REGION:?Run make env and export the deployment environment}"
     --env CASTLE_CHEF_INSTACART_SESSION_PARAMETER=/castle-chef/shared/instacart-session)
-  if exported=$(aws configure export-credentials --profile conn --format env 2>/dev/null); then
+  if exported=$(aws configure export-credentials --format env 2>/dev/null); then
     eval "$exported"
     aws_args+=(--env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY --env AWS_SESSION_TOKEN)
   else
     # The job then fails reading the session, saying so.
-    echo "No AWS sign-in (aws sso login --profile conn --use-device-code): a job that opens Instacart's checkout will fail." >&2
+    echo "No AWS sign-in (use aws sso login --use-device-code with the configured AWS_PROFILE): a job that opens Instacart's checkout will fail." >&2
   fi
 }
 

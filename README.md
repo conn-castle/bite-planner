@@ -162,7 +162,7 @@ Recipe editing is the one prompt that includes the member's free text: a bounded
 
 ### Logs
 
-Everything logs structured JSON, one object per line: `{"ts", "level", "logger", "event", ...fields}`, uvicorn's own lines too (a crash's traceback is one line's `exception`). On AWS each part has a CloudWatch log group, kept 90 days: the API's (with the app's), the worker's, the failure handler's, and Reminders' (`aws logs tail <group> --follow --profile conn`, or Logs Insights; finding a problem: [AWS](docs/operations/aws.md#finding-a-problem)). Each job's record (what its agent was given and did) is kept in S3 as long ([Job records](docs/operations/aws.md#job-records)). Locally, the API and CLI log to stderr and `~/.local/state/castle-chef/logs/castle-chef.jsonl` (rotated at 10 MB, 5 files). A job's worker runs in the worker image and logs to its container's output: `make worker-job` shows it, and saves it with the job's files as `~/.local/state/castle-chef/docker-jobs/<job-id>/worker.log`.
+Everything logs structured JSON, one object per line: `{"ts", "level", "logger", "event", ...fields}`, uvicorn's own lines too (a crash's traceback is one line's `exception`). On AWS each part has a CloudWatch log group, kept 90 days: the API's (with the app's), the worker's, the failure handler's, and Reminders' (`aws logs tail <group> --follow --profile "$AWS_PROFILE"`, or Logs Insights; finding a problem: [AWS](docs/operations/aws.md#finding-a-problem)). Each job's record (what its agent was given and did) is kept in S3 as long ([Job records](docs/operations/aws.md#job-records)). Locally, the API and CLI log to stderr and `~/.local/state/castle-chef/logs/castle-chef.jsonl` (rotated at 10 MB, 5 files). A job's worker runs in the worker image and logs to its container's output: `make worker-job` shows it, and saves it with the job's files as `~/.local/state/castle-chef/docker-jobs/<job-id>/worker.log`.
 
 - API: `api.started` (release, commit) once per cold start, also in the failure handler's and Reminders' logs (they run the same app); `http.request` for every request (method, route template, status, ms, the member's `user_id`, and for a refusal its `detail`, as the app was told); `http.failed` (error, with the traceback) for one that failed unexpectedly.
 - Worker: `worker.started` (release, commit), `job.claimed`, `agent.started`, `agent.finished` (seconds, turns, model, token usage), `job.succeeded`, `job.failed`, `job.record_saved`, `schema.behind`; bookings: `booking.started`, `booking.clicking`, `booking.click_answered`, `booking.settled` (state, issue, and what Instacart confirmed: order number, window, total, swaps).
@@ -178,7 +178,7 @@ tail -f ~/.local/state/castle-chef/logs/castle-chef.jsonl | jq -c '{ts, event, j
 
 ## AWS
 
-AWS (the stacks, signing in, notifications, alarms, the agent and Instacart logins, deploying by hand) and every secret (SSM is the source of truth) are in [docs/operations/aws.md](docs/operations/aws.md). Local sign-in always uses a device code: `aws sso login --profile conn --use-device-code`.
+AWS (the stacks, signing in, notifications, alarms, the agent and Instacart logins, deploying by hand) and every secret (SSM is the source of truth) are in [docs/operations/aws.md](docs/operations/aws.md). Local sign-in always uses a device code: `aws sso login --profile "$AWS_PROFILE" --use-device-code`.
 
 ## App
 
@@ -196,7 +196,11 @@ The UI is [Ionic React](https://ionicframework.com/docs/react) 9 (iOS mode on ev
 
 The look is light only: white surfaces, ink text, one warm accent, the system font for text (SF Pro; Inter where it is missing) and SF Pro Rounded for titles, a floating glass tab bar, and headers that turn to glass once content scrolls under them. Inter is bundled (`@fontsource`), so no font loads from the network. Component styles are CSS modules next to their components and use only the tokens. Native plugins: Haptics (on meaningful actions only), Status Bar (dark text), Splash Screen (hidden once the first screen renders), and Keyboard; after adding a plugin, `pnpm exec cap sync ios` updates `ios/App/CapApp-SPM/Package.swift`.
 
-Public URLs (not secrets): `.env.development` (Neon `dev`'s auth, and the API at `/api`, which the dev server proxies to `localhost:8000`) is used by `pnpm dev`; `.env.production` (Neon `main`'s auth and the prod API's Function URL, which stays the same across deploys) by `pnpm build`, so by TestFlight **and by any local iOS build**; `.env` holds what both share. Settings shows the app version and the release (`YYYY.M.D.N`, or `dev` for local builds). Each release drops the persisted cache (its buster is the release), so the first launch after an update starts from an empty cache and drops requests queued offline; local builds are all `dev`, so one installed over another keeps the cache (delete the app to start clean).
+Choose your standard AWS CLI profile with `export AWS_PROFILE=<profile>` before cloud commands. Deployment-specific values live in AWS SSM and are generated into ignored local environment files by `AWS_PROFILE=<profile> AWS_REGION=<region> make env`. This writes `.env.deployment.local`, `backend/.env`, and the mobile `.env.development.local` / `.env.production.local` files with mode 600. The tracked `.example` files and `.env.test` contain synthetic settings only. Production builds require all client settings and fail if any are absent. API/auth URLs remain visible in the built app and network requests; keeping them out of Git is a repository privacy measure.
+
+Export `.env.deployment.local` before invoking CDK or fastlane directly. `make` reads and exports it automatically. `AWS_PROFILE=<profile> AWS_REGION=<region> uv run --project backend python -m castle_chef.configure github --repo <owner/repository>` synchronizes encrypted GitHub secret copies from SSM without printing their values. The infrastructure source retains generic deployment and parameter naming conventions.
+
+Settings shows the app version and the release (`YYYY.M.D.N`, or `dev` for local builds). Each release drops the persisted cache (its buster is the release), so the first launch after an update starts from an empty cache and drops requests queued offline; local builds are all `dev`, so one installed over another keeps the cache (delete the app to start clean).
 
 The dev server listens on the local network over HTTPS with a self-signed certificate (browsers warn once; accept it). It also proxies Neon Auth at `/neon-auth` so the session cookie is first-party in any browser, including Safari on a phone, and sends the trusted origin Neon Auth requires (`vite.config.ts`). If other devices can't connect, allow the port through the firewall: `sudo ufw allow from 192.168.1.0/24 to any port 5173 proto tcp`.
 
@@ -212,16 +216,16 @@ Data handling (`src/lib/query/queryClient.ts` and each feature's queries):
 - Every request sends the phone's time zone (`Time-Zone` header); the API uses it for "today".
 - Render errors show a recovery screen and are logged.
 
-On iOS, Neon Auth requests go through Capacitor's native HTTP with the trusted origin `https://app.example.test`, because the WebView's `capacitor://localhost` origin can't be trusted and its cookies would be third-party. See `src/lib/auth/neonAuth.ts`, the Neon Auth implementation of `src/lib/auth/auth.ts` (the app's only dependency on the auth provider). `src/lib/api/client.ts` calls the API with a fresh token per request.
+On iOS, Neon Auth requests go through Capacitor's native HTTP with the configured trusted origin, because the WebView's `capacitor://localhost` origin can't be trusted and its cookies would be third-party. See `src/lib/auth/neonAuth.ts`, the Neon Auth implementation of `src/lib/auth/auth.ts` (the app's only dependency on the auth provider). `src/lib/api/client.ts` calls the API with a fresh token per request.
 
 ### TestFlight
 
-The release workflow builds on a macOS runner and uploads with fastlane (`apps/mobile/fastlane/`) when `apps/mobile/` changed since the last upload ([Releases](#releases)). It signs with the App Store certificate and profile that fastlane match keeps, encrypted, in `nicholasjconn/conn-castle-apple-certs` (shared with other apps; read with a one-hour token from the Castle Chef Bot app).
+The release workflow builds on a macOS runner and uploads with fastlane (`apps/mobile/fastlane/`) when `apps/mobile/` changed since the last upload ([Releases](#releases)). It signs with the App Store certificate and profile that fastlane match keeps, encrypted, in `${APPLE_SIGNING_OWNER}/${APPLE_SIGNING_REPOSITORY}` (shared with other apps; read with a one-hour token from the Castle Chef Bot app).
 
-Set up (team `EXAMP12345`):
+Set up (Apple team provided by `APPLE_TEAM_ID`):
 
 - Bundle id `com.conncastle.castlechef` ("Castle Chef"), registered through the App Store Connect API.
-- Distribution certificate `EXAMP12345` (expires 2027-09-24) and the profile `match AppStore com.conncastle.castlechef`, created by the `certificates` lane. The app ID has Push Notifications on, and the profile includes it (`aps-environment` production; regenerated 2026-09-26). To renew, or after the app ID gains a capability (which invalidates the profile), run the lane with write access to the certificates repository, as Nick (it's done with him, not by automation): on a Mac, `cd apps/mobile && bundle exec fastlane certificates` with the `APP_STORE_CONNECT_*` and `MATCH_PASSWORD` values from SSM, `MATCH_GIT_BASIC_AUTHORIZATION` (base64 of `nicholasjconn:$(gh auth token)`), and `MATCH_FORCE=true` (to recreate a profile after a capability change) in the environment. On Linux it also works in a `ruby` container, provided `FastlaneCore::ProvisioningProfile.install` is stubbed out (it needs Xcode) and git has an author identity.
+- Distribution certificate `<distribution certificate ID>` (expires 2027-09-24) and the profile `match AppStore com.conncastle.castlechef`, created by the `certificates` lane. The app ID has Push Notifications on, and the profile includes it (`aps-environment` production; regenerated 2026-09-26). To renew, or after the app ID gains a capability (which invalidates the profile), run the lane with write access to the certificates repository, as Nick (it's done with him, not by automation): on a Mac, `cd apps/mobile && bundle exec fastlane certificates` with the `APP_STORE_CONNECT_*` and `MATCH_PASSWORD` values from SSM, `MATCH_GIT_BASIC_AUTHORIZATION` (base64 of `nicholasjconn:$(gh auth token)`), and `MATCH_FORCE=true` (to recreate a profile after a capability change) in the environment. On Linux it also works in a `ruby` container, provided `FastlaneCore::ProvisioningProfile.install` is stubbed out (it needs Xcode) and git has an author identity.
 - The app record in App Store Connect (**My Apps → + → New App**: iOS, name "Castle Chef", bundle id `com.conncastle.castlechef`, SKU `castle-chef`); Apple's API can't create it.
 - Repository secrets `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY_BASE64` (base64 of the `.p8`), `MATCH_PASSWORD`, `CASTLE_CHEF_APP_CLIENT_ID`, and `CASTLE_CHEF_APP_PRIVATE_KEY`, copied from SSM ([Secrets](docs/operations/aws.md#secrets)).
 
@@ -265,15 +269,15 @@ Prepared list recipes (`d9a71b0e962f`) are also a pre-release contract boundary:
 
 ## Development
 
-Development uses the Neon branch `dev` (`example-development-branch`), a copy of `main` with its own Neon Auth (users and keys copied when the branch was made, then independent). Test in the browser with [local development](#local-development); iOS-only behavior (native sign-in in `src/lib/auth/neonAuth.ts`, the persisted cache across relaunches) still needs a TestFlight build.
+Development uses the Neon branch `dev` (`${NEON_DEV_BRANCH_ID}`), a copy of `main` with its own Neon Auth (users and keys copied when the branch was made, then independent). Test in the browser with [local development](#local-development); iOS-only behavior (native sign-in in `src/lib/auth/neonAuth.ts`, the persisted cache across relaunches) still needs a TestFlight build.
 
-`make env` writes `backend/.env` for `dev`: `DATABASE_URL` from SSM `/castle-chef/development/database-url` ([Secrets](docs/operations/aws.md#secrets)), `CASTLE_CHEF_NEON_AUTH_URL` (from `apps/mobile/.env.development`), and `CASTLE_CHEF_JOB_DISPATCH=local`. The Neon project and `dev` branch ids stay in the `Makefile`, for `make dev-reset`.
+`make env` generates private backend, frontend and deployment environment files from SSM ([Private deployment configuration](docs/operations/aws.md#private-deployment-configuration)). The backend uses the development database/auth and local job dispatch; `make dev-reset` reads the project and branch identifiers from the ignored deployment environment file.
 
 `make dev-reset` (it asks first) replaces `dev` with a copy of production as it is now, then applies this checkout's migrations. It discards everything on `dev`, including its Neon Auth state (users and sessions become production's, so sign in again). Connection details stay the same, so `backend/.env` still works. The copy is the family's real data: keep it on this machine.
 
 ## Neon
 
-Project `castle-chef` (`example-project`), database `neondb`, branches `main` (production) and `dev` ([Development](#development)), each with its own Neon Auth.
+Project `castle-chef` (`${NEON_PROJECT_ID}`), database `neondb`, branches `main` (production) and `dev` ([Development](#development)), each with its own Neon Auth.
 
 Security model:
 
@@ -282,12 +286,12 @@ Security model:
 - Households are separate: every order, job, and meal belongs to a household through its order, members see only their household's, and another household's is 404 like a missing one. `GET /v1/me` reports the caller's `household` (`id`, `name`, or null).
 - The API enforces the ordering rules: one draft per household, one batch of suggestions at a time per draft, client-generated job ids that can't be reused for another order or by someone else, picks only from the draft's suggestions, valid dates, and no changes once placed.
 - The API and worker use the owner role through Neon's pooled endpoint; the agent has no database access. Local tools use the direct endpoint.
-- Trusted auth origin: `https://app.example.test`, presented by the iOS app and the dev server's auth proxy. Keep this domain under your control. Localhost is not trusted.
-- The app doesn't use the Neon Data API. Its grants, row-level security, policies, and `client_log_batch` were removed before the schema started over (2026-09-24), and no migration since grants anything, so its roles (`authenticated`, `anonymous`, which Neon keeps while Neon Auth is on) can't read or write any table (`tests/test_data_api_access.py`), and the Data API itself is deleted per branch with `neonctl data-api delete --project-id example-project --branch <branch> --database neondb` (done on `dev` and `main`).
+- Trusted auth origin: `${VITE_NEON_AUTH_TRUSTED_ORIGIN}`, presented by the iOS app and the dev server's auth proxy. Keep this domain under your control. Localhost is not trusted.
+- The app doesn't use the Neon Data API. Its grants, row-level security, policies, and `client_log_batch` were removed before the schema started over (2026-09-24), and no migration since grants anything, so its roles (`authenticated`, `anonymous`, which Neon keeps while Neon Auth is on) can't read or write any table (`tests/test_data_api_access.py`), and the Data API itself is deleted per branch with `neonctl data-api delete --project-id ${NEON_PROJECT_ID} --branch <branch> --database neondb` (done on `dev` and `main`).
 
 ### Households (invite-only)
 
-Each account belongs to at most one household and sees only that household's orders and meals. The family is `Conn Castle`. Keep testing in a household of its own so its accounts and orders never show up in the family's: on `dev` that is `Test Kitchen`, with the account `operator@example.com` (its codes arrive in the owner's Gmail). `make dev-reset` replaces `dev` with production, which has neither; create them again with the commands below.
+Each account belongs to at most one household and sees only that household's orders and meals. The family is `Conn Castle`. Keep testing in a household of its own so its accounts and orders never show up in the family's. Use a separately invited test account; its contact details belong in private operator records. `make dev-reset` replaces `dev` with production, which has neither; create them again with the commands below.
 
 From your checkout these act on `dev` (`backend/.env`). For production, run them with `main`'s credentials from SSM (nothing is written to disk):
 
@@ -301,7 +305,7 @@ uv run castle-chef household members "Conn Castle"      # its members, then its 
 uv run castle-chef household remove mom@example.com     # end their membership (the account stays)
 
 # Production: prefix each command with `prod`
-prod() { DATABASE_URL="$(aws ssm get-parameter --profile conn --region us-east-1 --with-decryption \
+prod() { DATABASE_URL="$(aws ssm get-parameter --profile "$AWS_PROFILE" --region us-east-1 --with-decryption \
   --name /castle-chef/production/database-url --query Parameter.Value --output text)" "$@"; }
 prod uv run castle-chef household list
 ```

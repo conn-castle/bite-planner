@@ -3,8 +3,7 @@
 SHELL := bash
 .SHELLFLAGS := -euo pipefail -c
 
-export NEON_PROJECT_ID := example-project
-export NEON_DEV_BRANCH_ID := example-development-branch
+-include .env.deployment.local
 LOCAL_DB := postgresql://postgres:postgres@localhost:54329/castle_chef
 # Commands that use Neon dev read DATABASE_URL from backend/.env; one left in the shell
 # (e.g. production's) must not redirect them.
@@ -42,6 +41,7 @@ review: ## Review the app's UI over private Tailscale HTTPS, with comments (Neon
 
 dev-reset: ## Replace Neon dev with a copy of production, then migrate it
 	@[[ -f backend/.env ]] || { echo "Missing backend/.env: run make env" >&2; exit 1; }
+	@test -n "$(NEON_PROJECT_ID)" -a -n "$(NEON_DEV_BRANCH_ID)" || { echo "Missing private Neon configuration: run make env" >&2; exit 1; }
 	@read -rp "Discard everything on Neon dev and replace it with production's data? [y/N] " answer && [[ $$answer == [yY] ]]
 	neonctl branches reset $(NEON_DEV_BRANCH_ID) --parent --project-id $(NEON_PROJECT_ID)
 	cd backend && uv run alembic upgrade head
@@ -66,7 +66,7 @@ worker-image: ## Build the worker image (Fargate's) from the working tree
 	scripts/worker-docker.sh build
 
 instacart-login: ## Sign Castle Chef in to Instacart's website for checkout (a browser opens here; saved to SSM)
-	cd backend && AWS_PROFILE=conn AWS_REGION=us-east-1 \
+	cd backend && \
 	  CASTLE_CHEF_INSTACART_SESSION_PARAMETER=/castle-chef/shared/instacart-session \
 	  uv run castle-chef instacart sign-in
 
@@ -91,7 +91,10 @@ format: ## Format Python code
 	cd backend && uv run ruff format .
 	cd infra && uv run ruff format .
 
-check: deps lint test build ## What CI checks
+check: deps lint test ## What CI checks, without production deployment configuration
+	$(MAKE) build VITE_NEON_AUTH_URL=https://auth.example.test/neondb/auth \
+	VITE_NEON_AUTH_TRUSTED_ORIGIN=https://app.example.test \
+	VITE_API_URL=https://api.example.test
 
 build: ## Build the app for production (talks to production)
 	cd apps/mobile && pnpm build

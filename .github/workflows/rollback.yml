@@ -29,11 +29,16 @@ permissions:
   contents: read
 
 env:
-  NEON_PROJECT_ID: example-project
+  NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
   NEONCTL_VERSION: 4.17.4
-  AWS_REGION: us-east-1
-  DEPLOY_ROLE: arn:aws:iam::123456789012:role/castle-chef-github-deploy
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  DEPLOY_ROLE: ${{ secrets.DEPLOY_ROLE }}
   STACK: CastleChef
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  CASTLE_CHEF_GITHUB_SUBJECT: ${{ secrets.CASTLE_CHEF_GITHUB_SUBJECT }}
+  CASTLE_CHEF_ALARM_EMAIL: ${{ secrets.CASTLE_CHEF_ALARM_EMAIL }}
+  NEON_AUTH_URL_DEV: ${{ secrets.NEON_AUTH_URL_DEV }}
+  NEON_AUTH_URL_PROD: ${{ secrets.NEON_AUTH_URL_PROD }}
 
 jobs:
   rollback:
@@ -98,6 +103,7 @@ jobs:
         with:
           role-to-assume: ${{ env.DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
       - id: pause
         if: inputs.restore_database
         name: Stop starting jobs and wait for running ones (at most 40 minutes each)
@@ -142,7 +148,7 @@ jobs:
             echo "Restored Neon main from $SNAPSHOT (everything written since is gone; everyone signs in again)."
             if [ "$after" != "$before" ]; then
               # Expected: the restored branch takes over the name; the old one is kept.
-              echo "main's branch id changed ($before -> $after): the steps below set Neon Auth's sign-up webhook on it (docs/operations/aws.md \"Sign-up\"). Delete the pre-restore branch when no longer needed."
+              echo "main's branch id changed: the steps below set Neon Auth's sign-up webhook on it (docs/operations/aws.md \"Sign-up\"). Delete the pre-restore branch when no longer needed."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/deploy

@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     # The APNs auth key (.p8, base64; SSM /castle-chef/shared/apns-key-base64) and its id.
     apns_key: str | None = None
     apns_key_id: str | None = None
+    apns_team_id: str | None = None
 
     # How the API starts a job: `sqs` (the queue on AWS) or `local` (the worker
     # image in Docker on this machine, as Fargate runs it: scripts/worker-docker.sh).
