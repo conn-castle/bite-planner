@@ -46,8 +46,14 @@ RUN uv sync --frozen --no-default-groups --group worker
 FROM build AS agent-build
 COPY backend/agent ./agent
 RUN UV_PROJECT_ENVIRONMENT=/opt/castle-chef-agent/.venv \
-    uv sync --frozen --no-default-groups --package castle-chef-agent --no-editable
+    uv sync --frozen --no-default-groups --package castle-chef-agent --extra meal-similarity --no-editable
 COPY docker/castle-chef /opt/castle-chef-agent/bin/castle-chef
+
+# The same pinned/checksummed model setup as local tests. No inference-time fetch.
+FROM python AS title-model
+COPY backend/agent/src/castle_chef_agent/title_model.py /opt/fetch-title-model.py
+RUN python /opt/fetch-title-model.py /opt/castle-chef-models/minilm \
+ && chmod -R a+rX /opt/castle-chef-models
 
 # Codex (OpenAI's release package, pinned): its app-server calls Instacart's tools
 # in the ChatGPT apps (castle_chef_agent.instacart). The whole package: tool calls
@@ -107,6 +113,7 @@ COPY --from=chromium /opt/ms-playwright /opt/ms-playwright
 RUN groupadd --gid 65532 agent \
  && useradd --uid 65532 --gid 65532 --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin agent
 COPY --from=agent-build /opt/castle-chef-agent /opt/castle-chef-agent
+COPY --from=title-model /opt/castle-chef-models /opt/castle-chef-models
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=worker-build /app/backend /app/backend
 # The backend is the worker's (root) alone: the agent's user can't list or read it.
@@ -120,7 +127,8 @@ ENV CASTLE_CHEF_AGENT_COMMAND="castle-chef run-agent" \
     CASTLE_CHEF_CODEX_COMMAND=/opt/codex/bin/codex \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     CASTLE_CHEF_JOBS_DIR=/tmp/jobs \
-    CASTLE_CHEF_LOGS_DIR=/tmp/logs
+    CASTLE_CHEF_LOGS_DIR=/tmp/logs \
+    CASTLE_CHEF_TITLE_MODEL_DIR=/opt/castle-chef-models/minilm
 # The commit is the image's; the release version is set by the deploy (infra/).
 ARG CASTLE_CHEF_COMMIT=unknown
 ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}

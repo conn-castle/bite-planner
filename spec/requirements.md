@@ -46,6 +46,8 @@ Each step does one thing.
 - [x] The user can mark a suggestion as "don't show meals like this", and toggle it back off. This is offered only while picking suggestions.
 - [x] Future suggestions avoid meals like the ones marked "don't show meals like this"; these preferences belong to the household.
 - [x] The user can generate 20 more suggestions, added below the current ones.
+- [x] Suggestions use conservative title-only repeat detection (normalized exact names or pinned local MiniLM cosine >= 0.80). All ideas in the current draft remain distinct, including liked dishes. Across earlier drafts, suggestions from the inclusive rolling past calendar month in UTC (clamped at month end) are restricted except for titles matching current UP/FAVORITE feedback. Unrated, DOWN and NOT_FOR_US suggestions remain restricted. History survives draft discard and remains household-scoped; current names and original suggestion times are canonical. Uncertain matches are allowed, so some repeats are missed.
+- [x] Each batch uses a job-start history/current-rating snapshot outside the prompt, checks proposed titles before recipe writing, and rechecks at add and final worker validation. Rejection identifies the collided title. The full requested batch must succeed within the existing 60-turn/default 900-second bounds; a failed batch publishes nothing and preserves earlier successful suggestions.
 - [x] The user can leave while suggestions are generating and gets a notification when they're ready.
 - [x] Each meal shows an icon: a picture made from its ingredients, the same every time (meals from before pictures show a plain plate).
 
@@ -53,7 +55,7 @@ Each step does one thing.
 
 - [x] A meal can be rated thumbs up, thumbs down, or favorite, separate from "don't show meals like this". A meal has one rating at a time; a favorite is always liked (spec/README.md).
 - [x] Each rating can be toggled off again.
-- [x] Each suggestion batch receives all current saved household ratings when its prompt is built; ratings saved while it runs inform the next batch. Cleared and unrated meals are absent. Thumbs down means avoid that dish again, even under another name, without treating its ingredients as disliked or ruling out similar meals as "don't show meals like this" does. Thumbs up means liked; favorite means particularly liked and always liked. Positive ratings inform the household's tastes without prescribing repeats or quotas.
+- [x] Each suggestion batch receives all current saved household ratings when its prompt is built; ratings saved while it runs inform the next batch. Cleared and unrated meals are absent. Thumbs down means avoid that dish again, even under another name, without treating its ingredients as disliked or ruling out similar meals as "don't show meals like this" does. Thumbs up means liked; favorite means particularly liked and always liked. Positive ratings inform the household's tastes and exempt matching dishes from the cross-draft month cooldown, without prescribing repeats or quotas.
 - [x] When generating suggestions, the app asks the user to rate meals from the last week that aren't rated yet.
 
 ## Order lock

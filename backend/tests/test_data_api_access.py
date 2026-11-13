@@ -40,7 +40,8 @@ INSERTS = {
         f"VALUES ('{uuid4()}', '{uuid4()}', 'generate_meals', '{uuid4()}')"
     ),
     "meal": (
-        f"INSERT INTO meal (id, name, servings, steps) VALUES ('{uuid4()}', 'Tacos', 4, '[]')"
+        "INSERT INTO meal (id, household_id, name, servings, steps) "
+        f"VALUES ('{uuid4()}', '{uuid4()}', 'Tacos', 4, '[]')"
     ),
     "meal_ingredient": (
         "INSERT INTO meal_ingredient (id, meal_id, position, name) "

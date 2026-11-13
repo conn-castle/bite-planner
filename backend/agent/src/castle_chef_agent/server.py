@@ -15,9 +15,18 @@ from pydantic import BaseModel, Field, ValidationError
 
 from castle_chef_agent import checkout, meal_edit, products, shopping
 from castle_chef_agent.instacart import Instacart, InstacartError, connect, describe
-from castle_chef_agent.jobfiles import read_context
-from castle_chef_agent.meals import MealInput, MealRefused, MealsJob, meal_problems, save_meal
+from castle_chef_agent.jobfiles import locked, read_context
+from castle_chef_agent.meals import (
+    MealInput,
+    MealRefused,
+    MealsJob,
+    batch_problems,
+    check_titles,
+    load_meals,
+    save_meal,
+)
 from castle_chef_agent.shopping import Aisle, Staple
+from castle_chef_agent.title_model import TitleModelError
 
 
 class Tools(StrEnum):
@@ -51,18 +60,32 @@ def meals_server(job_dir: Path) -> MCPServer:
     server = MCPServer("castle-chef")
 
     @server.tool()
+    def check_meal_titles(names: Annotated[list[str], Field(min_length=1, max_length=100)]) -> str:
+        """Check proposed names together before writing recipes. Reserves nothing."""
+        try:
+            problems = check_titles(job_dir, names)
+        except TitleModelError as error:
+            raise ToolError(str(error)) from error
+        return "\n".join(problems) if problems else "Names are distinct. add_meal will recheck."
+
+    @server.tool()
     def add_meal(meal: MealInput) -> str:
         """Add one meal."""
         try:
             save_meal(job_dir, meal)
-        except MealRefused as error:
+        except (MealRefused, TitleModelError) as error:
             raise ToolError(str(error)) from error
         return f'Added "{meal.name}".'
 
     @server.tool()
     def done() -> str:
         """Check that every meal is added. Says what's missing, or that it's complete."""
-        if problems := meal_problems(job_dir, read_context(job_dir, MealsJob).count):
+        try:
+            with locked(job_dir):
+                problems = batch_problems(read_context(job_dir, MealsJob), load_meals(job_dir))
+        except TitleModelError as error:
+            raise ToolError(str(error)) from error
+        if problems:
             raise ToolError(" ".join(problems))
         return "Complete."
 

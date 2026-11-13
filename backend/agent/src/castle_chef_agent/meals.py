@@ -6,10 +6,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from castle_chef_agent.jobfiles import locked, read_context, replace_file
 from castle_chef_agent.names import key
+from castle_chef_agent.title_similarity import encoder
 
 
 class Dish(StrEnum):
@@ -228,10 +229,21 @@ def _quoted(names: list[str]) -> str:
     return ", ".join(f'"{name}"' for name in names)
 
 
+class MealTitle(BaseModel):
+    """Canonical name and original suggestion time, scoped by the worker."""
+
+    name: str
+    created_at: AwareDatetime
+
+
 class MealsJob(BaseModel):
     """What a generate_meals job's tools check against (the worker writes it)."""
 
     count: int
+    snapshot_at: AwareDatetime | None = None
+    current_draft: list[MealTitle] = Field(default_factory=list)
+    recent: list[MealTitle] = Field(default_factory=list)
+    positive: list[MealTitle] = Field(default_factory=list)
 
 
 class MealRefused(Exception):
@@ -247,13 +259,15 @@ def save_meal(job_dir: Path, meal_input: MealInput) -> Path:
     """Save a validated meal as the next numbered JSON file in the job directory,
     or raise MealRefused: a meal named like one already added, or one more than
     the job asks for. The agent may call several `add_meal`s at once."""
-    count = read_context(job_dir, MealsJob).count
+    job = read_context(job_dir, MealsJob)
     with locked(job_dir):
         saved = load_meals(job_dir)
         if any(key(meal.name) == key(meal_input.name) for meal in saved):
             raise MealRefused(f'"{meal_input.name}" is already added.')
-        if len(saved) >= count:
-            raise MealRefused(f"All {count} meals are already added.")
+        if len(saved) >= job.count:
+            raise MealRefused(f"All {job.count} meals are already added.")
+        if problem := title_problem(job, meal_input.name, [meal.name for meal in saved]):
+            raise MealRefused(problem)
         directory = meals_dir(job_dir)
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{len(saved) + 1:03d}.json"
@@ -268,8 +282,45 @@ def load_meals(job_dir: Path) -> list[MealInput]:
     ]
 
 
-def meal_problems(job_dir: Path, count: int) -> list[str]:
-    """What keeps a batch of `count` from being done (all its meals added); empty
-    when it's done."""
-    added = len(load_meals(job_dir))
-    return [] if added == count else [f"{added} of {count} meals are added."]
+def title_problem(job: MealsJob, name: str, added: list[str]) -> str | None:
+    """Draft veto first; positives remove matching history titles, never candidates."""
+    model = encoder()
+    for title in [*added, *(meal.name for meal in job.current_draft)]:
+        if model.matches(name, title):
+            return f'"{name}" repeats "{title}" in the current draft. Choose a different meal idea.'
+    for meal in job.recent:
+        if any(model.matches(meal.name, liked.name) for liked in job.positive):
+            continue
+        if model.matches(name, meal.name):
+            return (
+                f'"{name}" repeats recent suggestion "{meal.name}". Choose a different meal idea.'
+            )
+    return None
+
+
+def check_titles(job_dir: Path, names: list[str]) -> list[str]:
+    """Advisory batch preflight. Reserves nothing; add_meal always rechecks."""
+    job = read_context(job_dir, MealsJob)
+    with locked(job_dir):
+        added = [meal.name for meal in load_meals(job_dir)]
+        problems: list[str] = []
+        for name in names:
+            if problem := title_problem(job, name, added):
+                problems.append(problem)
+            else:
+                added.append(name)
+        return problems
+
+
+def batch_problems(job: MealsJob, meals: list[MealInput]) -> list[str]:
+    """Final validation against the worker's original snapshot, never job.json."""
+    problems: list[str] = []
+    if len(meals) != job.count:
+        problems.append(f"{len(meals)} of {job.count} meals are added.")
+    encoder()  # An unavailable model must fail even for an empty/incomplete batch.
+    added: list[str] = []
+    for meal in meals:
+        if problem := title_problem(job, meal.name, added):
+            problems.append(problem)
+        added.append(meal.name)
+    return problems

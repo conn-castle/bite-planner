@@ -34,11 +34,13 @@ from castle_chef_agent.checkout import (
 from castle_chef_agent.checkout import load_state as load_checkout_state
 from castle_chef_agent.instacart import InstacartError
 from castle_chef_agent.jobfiles import replace_file
-from castle_chef_agent.meals import RECIPE_SERVINGS, MealInput, MealsJob, load_meals, meal_problems
+from castle_chef_agent.meals import RECIPE_SERVINGS, MealInput, batch_problems, load_meals
 from castle_chef_agent.products import ItemChoice
 from castle_chef_agent.products import load_state as load_products_state
 from castle_chef_agent.server import Tools
 from castle_chef_agent.shopping import PreparedRecipes
+from castle_chef_agent.title_model import TitleModelError
+from castle_chef_agent.title_similarity import encoder
 from pydantic import ValidationError
 from sqlalchemy import update
 from sqlmodel import Session, col, select
@@ -78,7 +80,7 @@ from castle_chef.jobs import (
     fail_stale_jobs,
     finish_job,
 )
-from castle_chef.meals import add_meals
+from castle_chef.meals import add_meals, novelty_snapshot
 from castle_chef.models import (
     BookState,
     GroceryOrder,
@@ -92,6 +94,7 @@ from castle_chef.models import (
     MealRating,
     ProductGone,
     ShoppingListItem,
+    utc_now,
 )
 from castle_chef.notifications import (
     ideas_ready,
@@ -221,6 +224,7 @@ def _process(job: Job, fields: dict[str, str]) -> JobResult | None:
         return None
     except (
         AgentRunError,
+        TitleModelError,
         meal_edit.EditRefused,
         ValidationError,
         InvalidList,
@@ -609,11 +613,16 @@ def process_job(job: Job) -> JobResult:
         case JobKind.GENERATE_MEALS:
             count = settings.meals_per_batch
             with get_session() as session:
+                # Prompt feedback and novelty must observe the same current ratings/names.
+                session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
                 prompt = generate_meals_prompt(session, job, count)
-            run_agent(job_dir, prompt, Tools.MEALS, MealsJob(count=count))
-            if problems := meal_problems(job_dir, count):
+                snapshot = novelty_snapshot(session, job, count, utc_now())
+            encoder()  # Fail before generation if the pinned offline model is unavailable.
+            run_agent(job_dir, prompt, Tools.MEALS, snapshot)
+            meals = load_meals(job_dir)
+            if problems := batch_problems(snapshot, meals):
                 raise AgentRunError(f"The agent didn't finish: {' '.join(problems)}")
-            return Meals(meals=load_meals(job_dir))
+            return Meals(meals=meals)
         case _:
             assert_never(job.kind)
 

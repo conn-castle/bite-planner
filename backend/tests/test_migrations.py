@@ -36,10 +36,15 @@ def test_recipe_steps_become_steps_with_timers_and_back() -> None:
             rows = connection.execute(text("SELECT name, steps FROM meal WHERE name LIKE 'mig-%'"))
             return {name: value for name, value in rows}
 
+    household_id = uuid4()
     alembic("downgrade", "1bab82dadb82")
     try:
         with engine.begin() as connection:
             connection.execute(text("DELETE FROM meal WHERE name LIKE 'mig-%'"))
+            connection.execute(
+                text("INSERT INTO household (id, name) VALUES (:id, 'Migration')"),
+                {"id": household_id},
+            )
             for name, value in [("mig-old", ["Heat.", "Roast."]), ("mig-mixed", ["Heat.", new])]:
                 connection.execute(
                     text(
@@ -49,6 +54,13 @@ def test_recipe_steps_become_steps_with_timers_and_back() -> None:
                     {"id": uuid4(), "name": name, "steps": json.dumps(value)},
                 )
 
+            connection.execute(
+                text(
+                    "INSERT INTO meal_preference (household_id, meal_id, rating) "
+                    "SELECT :house, id, 'up' FROM meal WHERE name LIKE 'mig-%'"
+                ),
+                {"house": household_id},
+            )
         alembic("upgrade", "head")
         heat: dict[str, object] = {"text": "Heat.", "timer_minutes": None, "ingredients": []}
         roast: dict[str, object] = {"text": "Roast.", "timer_minutes": None, "ingredients": []}
@@ -58,7 +70,11 @@ def test_recipe_steps_become_steps_with_timers_and_back() -> None:
         assert steps() == {"mig-old": ["Heat.", "Roast."], "mig-mixed": ["Heat.", "Roast."]}
     finally:
         with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM meal_preference WHERE household_id=:id"), {"id": household_id}
+            )
             connection.execute(text("DELETE FROM meal WHERE name LIKE 'mig-%'"))
+            connection.execute(text("DELETE FROM household WHERE id=:id"), {"id": household_id})
         alembic("upgrade", "head")
 
 
@@ -204,4 +220,106 @@ def test_prepared_recipe_backfill_is_literal_one_time_and_constraint_is_strict(
             connection.execute(text("DELETE FROM grocery_order WHERE id=:id"), {"id": order_id})
             connection.execute(text("DELETE FROM meal WHERE id=:id"), {"id": meal_id})
             connection.execute(text("DELETE FROM household WHERE id=:id"), {"id": household_id})
+        alembic("upgrade", "head")
+
+
+@pytest.mark.parametrize(
+    "evidence", ["job", "rating", "agreeing", "unknown", "job-conflict", "rating-conflict"]
+)
+def test_durable_meal_owner_backfill_requires_unambiguous_evidence(evidence: str) -> None:
+    engine = get_engine()
+    house, other, order, job, meal = [uuid4() for _ in range(5)]
+    alembic("downgrade", "e7f3c9012a64")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO household (id, name) VALUES (:id, 'Migration'), (:other, 'Other')"
+                ),
+                {"id": house, "other": other},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO grocery_order (id, household_id, created_by, status) "
+                    "VALUES (:id, :house, :owner, 'draft')"
+                ),
+                {"id": order, "house": house, "owner": uuid4()},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO job (id, grocery_order_id, requested_by, kind) "
+                    "VALUES (:id, :order, :owner, 'generate_meals')"
+                ),
+                {"id": job, "order": order, "owner": uuid4()},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO meal (id, job_id, name, servings, steps) "
+                    "VALUES (:id, :job, 'Historical meal', 2, '[]'::jsonb)"
+                ),
+                {
+                    "id": meal,
+                    "job": job if evidence in ("job", "agreeing", "job-conflict") else None,
+                },
+            )
+            if evidence in ("rating", "agreeing", "rating-conflict"):
+                connection.execute(
+                    text(
+                        "INSERT INTO meal_preference (household_id, meal_id, rating) "
+                        "VALUES (:house, :meal, 'up')"
+                    ),
+                    {"house": house, "meal": meal},
+                )
+            if evidence in ("job-conflict", "rating-conflict"):
+                connection.execute(
+                    text(
+                        "INSERT INTO meal_preference (household_id, meal_id, rating) "
+                        "VALUES (:house, :meal, 'down')"
+                    ),
+                    {"house": other, "meal": meal},
+                )
+        result = subprocess.run(
+            ["alembic", "upgrade", "head"],
+            cwd=BACKEND_DIR,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        with engine.connect() as connection:
+            if evidence in ("job", "rating", "agreeing"):
+                assert result.returncode == 0, result.stderr
+                assert (
+                    connection.execute(
+                        text("SELECT household_id FROM meal WHERE id=:id"), {"id": meal}
+                    ).scalar_one()
+                    == house
+                )
+            else:
+                assert result.returncode != 0
+                assert "unknown/conflicting meals" in result.stderr and str(meal) in result.stderr
+                assert (
+                    connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                    == "e7f3c9012a64"
+                )
+                assert not connection.execute(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name='meal' AND column_name='household_id')"
+                    )
+                ).scalar_one()
+                assert (
+                    connection.execute(
+                        text("SELECT name FROM meal WHERE id=:id"), {"id": meal}
+                    ).scalar_one()
+                    == "Historical meal"
+                )
+    finally:
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM meal_preference WHERE meal_id=:id"), {"id": meal})
+            connection.execute(text("DELETE FROM grocery_order WHERE id=:id"), {"id": order})
+            connection.execute(text("DELETE FROM meal WHERE id=:id"), {"id": meal})
+            connection.execute(
+                text("DELETE FROM household WHERE id IN (:house, :other)"),
+                {"house": house, "other": other},
+            )
         alembic("upgrade", "head")

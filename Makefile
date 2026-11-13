@@ -12,7 +12,7 @@ unexport DATABASE_URL
 # Like CI: fail rather than update a stale uv.lock.
 export UV_LOCKED := 1
 
-.PHONY: help setup deps env dev review dev-reset migrate migration db db-stop worker-image instacart-login worker-login worker-job test lint format check build ios
+.PHONY: help setup deps title-model env dev review dev-reset migrate migration db db-stop worker-image instacart-login worker-login worker-job test lint format check build ios
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
@@ -20,8 +20,12 @@ help:
 setup: deps ## Install dependencies and write backend/.env
 	scripts/backend-env.sh
 
+title-model: ## Fetch and verify pinned local meal-title model assets
+	cd backend && uv run python -m castle_chef_agent.title_model ../.agent-layer/tmp/meal-title-model
+
 deps:
 	cd backend && uv sync
+	$(MAKE) title-model
 	# The browser the checkout tools' tests drive (the build uv.lock's Playwright expects).
 	cd backend && uv run playwright install --only-shell chromium
 	cd infra && uv sync
@@ -73,7 +77,7 @@ worker-job: ## Run one pending job in the worker image, as Fargate does: make wo
 	@test -n "$(JOB)" || { echo 'Usage: make worker-job JOB=<job-id>' >&2; exit 2; }
 	scripts/worker-docker.sh run $(JOB)
 
-test: db ## Run all tests: backend, app, infra
+test: db title-model ## Run all tests: backend, app, infra
 	cd backend && TEST_DATABASE_URL=$(LOCAL_DB) uv run pytest
 	cd apps/mobile && pnpm test
 	cd infra && uv run pytest

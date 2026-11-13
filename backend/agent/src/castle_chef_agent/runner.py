@@ -42,7 +42,13 @@ def tool_environment() -> dict[str, str]:
     # The tool server needs its browser and Codex paths, never the OpenAI API key.
     return {
         name: os.environ[name]
-        for name in ("HOME", "LANG", "PATH", "PLAYWRIGHT_BROWSERS_PATH")
+        for name in (
+            "HOME",
+            "LANG",
+            "PATH",
+            "PLAYWRIGHT_BROWSERS_PATH",
+            "CASTLE_CHEF_TITLE_MODEL_DIR",
+        )
         if name in os.environ
     }
 
