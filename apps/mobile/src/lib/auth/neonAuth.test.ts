@@ -37,7 +37,7 @@ function respond(url: string, method: string, body: unknown): Response {
       expect(body).toEqual({ email, otp: '123456' })
       if (rejectCode) return Response.json({ code: 'INVALID_OTP', message: 'Invalid OTP' }, { status: 400 })
       signedIn = true
-      return Response.json({ token: jwt, user })
+      return Response.json({ token: 'synthetic-sign-in-token', user })
     case '/get-session':
       return Response.json(signedIn ? {
         user: { ...user, emailVerified: true, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
