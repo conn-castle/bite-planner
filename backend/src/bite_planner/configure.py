@@ -105,6 +105,9 @@ def write_env(path: Path, values: dict[str, str], *, shell: bool = False) -> Non
 
 def local_files(root: Path, values: dict[str, str]) -> None:
     private: dict[str, str] = {name: values[name] for name in PARAMETERS if name != "API_URL_PROD"}
+    # Boto3 reads only AWS_DEFAULT_REGION; the AWS CLI and CDK read AWS_REGION. Both
+    # come from the one canonical deployment region.
+    private["AWS_DEFAULT_REGION"] = values["AWS_REGION"]
     write_env(root / ".env.deployment.local", private, shell=True)
     shared: dict[str, str] = {
         "VITE_NEON_AUTH_TRUSTED_ORIGIN": values["VITE_NEON_AUTH_TRUSTED_ORIGIN"]

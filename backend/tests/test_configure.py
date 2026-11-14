@@ -1,5 +1,7 @@
 """Private configuration is generated from canonical SSM without disclosure."""
 
+import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +11,7 @@ import pytest
 from dotenv import dotenv_values
 
 from bite_planner import configure
+from bite_planner.settings import REPO_ROOT
 
 
 class SsmStandIn:
@@ -198,3 +201,55 @@ def test_production_configuration_writes_only_production_consumer(
     assert path.stat().st_mode & 0o777 == 0o600
     assert not (tmp_path / "backend/.env").exists()
     assert not (tmp_path / ".env.deployment.local").exists()
+
+
+PROBE: str = """
+import json, os, boto3
+print(json.dumps({"sdk": boto3.client("ssm").meta.region_name, "cli": os.environ["AWS_REGION"]}))
+"""
+
+
+@pytest.mark.parametrize("consumer", ["make", "source"])
+def test_generated_deployment_settings_give_sdk_and_cli_the_canonical_region(
+    canonical_parameters: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    consumer: str,
+) -> None:
+    # The canonical region differs from the profile's and from a stale shell selection:
+    # commands run with the generated settings must use it for both Boto3 and the CLI.
+    canonical_parameters.pop("/bite-planner/production/api-url")
+    canonical_parameters["/bite-planner/shared/deployment-region"] = "us-west-2"
+    monkeypatch.setattr(boto3, "client", lambda service: SsmStandIn(canonical_parameters))
+    monkeypatch.setattr(configure, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["configure", "local"])
+    configure.main()
+    monkeypatch.undo()
+
+    aws = tmp_path / "aws"
+    aws.mkdir()
+    (aws / "config").write_text("[profile synthetic]\nregion = eu-west-1\n")
+    (aws / "credentials").write_text("")
+    (tmp_path / "probe.py").write_text(PROBE)
+    environment: dict[str, str] = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path),
+        "AWS_CONFIG_FILE": str(aws / "config"),
+        "AWS_SHARED_CREDENTIALS_FILE": str(aws / "credentials"),
+        "AWS_PROFILE": "synthetic",
+        "AWS_EC2_METADATA_DISABLED": "true",
+        "AWS_REGION": "ap-southeast-2",
+        "AWS_DEFAULT_REGION": "ap-southeast-2",
+        "PROBE": f"{sys.executable} -I {tmp_path / 'probe.py'}",
+    }
+    command: list[str] = (
+        # The repository's Makefile, which every make target reads its settings through.
+        ["make", "-s", "-f", str(REPO_ROOT / "Makefile"), "-C", str(tmp_path),
+         "--eval", "probe: ; @$$PROBE", "probe"]
+        if consumer == "make"
+        else ["bash", "-c", 'source .env.deployment.local && $PROBE']
+    )  # fmt: skip
+    result = subprocess.run(
+        command, cwd=tmp_path, env=environment, capture_output=True, text=True, check=True
+    )
+    assert json.loads(result.stdout) == {"sdk": "us-west-2", "cli": "us-west-2"}

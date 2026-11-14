@@ -46,6 +46,7 @@ For interactive AWS access, select your profile and use a device code:
 ```sh
 export AWS_PROFILE=your-profile
 export AWS_REGION=us-east-1
+export AWS_DEFAULT_REGION="$AWS_REGION"  # the region Boto3 reads
 aws sso login --profile "$AWS_PROFILE" --use-device-code
 ```
 
@@ -69,7 +70,7 @@ After the development/deployment metadata exists:
 make env
 ```
 
-This writes ignored mode-600 `.env.deployment.local`, `backend/.env`, and `apps/mobile/.env.development.local`. It does not require a production API URL or write production client settings. Source `.env.deployment.local` before invoking CDK or fastlane directly; Make includes and exports it automatically.
+This writes ignored mode-600 `.env.deployment.local`, `backend/.env`, and `apps/mobile/.env.development.local`. It does not require a production API URL or write production client settings. The deployment file exports the canonical region as both `AWS_REGION` (AWS CLI, CDK) and `AWS_DEFAULT_REGION` (Boto3). Source `.env.deployment.local` before invoking CDK or fastlane directly; Make includes and exports it automatically.
 
 After the production API exists, set `production/api-url` in SSM and generate its consumers:
 

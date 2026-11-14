@@ -44,6 +44,7 @@ Choose your AWS profile and region explicitly:
 ```sh
 export AWS_PROFILE=your-profile
 export AWS_REGION=us-east-1
+export AWS_DEFAULT_REGION="$AWS_REGION"  # the region Boto3 reads
 aws sso login --profile "$AWS_PROFILE" --use-device-code
 make setup
 make dev
