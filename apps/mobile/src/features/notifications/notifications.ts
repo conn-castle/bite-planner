@@ -202,20 +202,27 @@ export type Openable = Exclude<Delivered, { kind: 'test' }>
 /** A notification about the household's draft (or the next order): what the flow opens for. */
 export type AboutDraft = Exclude<Delivered, { kind: 'test' } | { kind: 'booking' }>
 
+// The backend serializes order UUIDs in this hyphenated form. Enforce that
+// contract before a notification's ID can become a navigation destination.
+const ORDER_ID_PATTERN: RegExp = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export function parseDelivered(data: unknown): Delivered | null {
   if (!isRecord(data)) return null
   if (data.kind === 'reminder' && typeof data.order_number === 'number') {
     return { kind: 'reminder', orderNumber: data.order_number }
   }
   if (
-    (data.kind === 'ideas_ready' ||
-      data.kind === 'list_ready' ||
-      data.kind === 'list_failed' ||
-      data.kind === 'quote_ready' ||
-      data.kind === 'quote_failed' ||
-      data.kind === 'booking') &&
-    typeof data.order_id === 'string'
+    data.kind === 'ideas_ready' ||
+    data.kind === 'list_ready' ||
+    data.kind === 'list_failed' ||
+    data.kind === 'quote_ready' ||
+    data.kind === 'quote_failed' ||
+    data.kind === 'booking'
   ) {
+    if (typeof data.order_id !== 'string' || !ORDER_ID_PATTERN.test(data.order_id)) {
+      logger.warn('push.invalid_order_id', { kind: data.kind })
+      return null
+    }
     return { kind: data.kind, orderId: data.order_id }
   }
   if (data.kind === 'test') return { kind: 'test' }
