@@ -35,6 +35,15 @@ make format
 
 `make test` starts Postgres 17 on local port 54329. Tests use `TEST_DATABASE_URL`, create isolated worker databases, and refuse a second simultaneous backend run on the same server. They never use the live `DATABASE_URL`. `make db-stop` stops the local database without deleting data.
 
+## Router security updates
+
+The stable Ionic 9.0.x integration requires React Router 6 (`>=6.4 <7`); this project locks 6.30.6, the latest 6.x release. Two moderate router advisories remain open while we await stable Ionic 9.1 with React Router 7 support:
+
+- [GHSA-337j-9hxr-rhxg](https://github.com/advisories/GHSA-337j-9hxr-rhxg) affects server rendering and hydration, which this app does not use.
+- [GHSA-wrjc-x8rr-h8h6](https://github.com/advisories/GHSA-wrjc-x8rr-h8h6) affects navigation to attacker-controlled paths. Current destinations use backend-generated UUIDs and authenticated push payloads; notification order IDs are also validated before use. Fixed path prefixes alone do not prevent this issue. No application exploit has been demonstrated, and this assessment does not cover new navigation inputs or establish device-level safety.
+
+Keep these alerts visible. [Ionic's router upgrade](https://github.com/ionic-team/ionic-framework/pull/31508) is merged into the `feature-9.1` branch. When it reaches a stable release, upgrade to its supported, patched router version and verify tab histories, back navigation, and transitions on a phone. Development snapshots are not the project's upgrade path. Reassess the redirect advisory before adding deep links or user-supplied navigation destinations.
+
 ## Live development
 
 First provision your account and populate the canonical SSM parameters in the [deployment guide](docs/operations/aws.md#configuration). A complete live setup uses AWS, Neon/Auth and the agent's external services; it is not an offline substitute for `make check`.

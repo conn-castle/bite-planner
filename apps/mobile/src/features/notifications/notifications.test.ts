@@ -4,6 +4,7 @@ import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiRequest } from '../../lib/api/client'
 import type { GroceryOrder, NextOrder } from '../../lib/api/types'
+import { logger } from '../../lib/log'
 import { queryKeys } from '../../lib/query/keys'
 
 vi.mock('../../lib/api/client', () => ({ apiRequest: vi.fn() }))
@@ -37,6 +38,7 @@ function fire(event: string, payload: unknown) {
 
 const request = vi.mocked(apiRequest)
 const PHONE = 'ab'.repeat(32)
+const ORDER_ID: string = '0b9d6c1e-4a52-4c39-9a0f-2f3f3d8f6b11'
 
 let queryClient: QueryClient
 // A fresh copy each test: the module keeps this launch's token and what's showing.
@@ -47,6 +49,7 @@ beforeEach(async () => {
   listeners.clear()
   request.mockReset()
   request.mockResolvedValue(undefined)
+  vi.mocked(logger.warn).mockClear()
   for (const method of Object.values(plugin)) method.mockClear()
   queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
   push = await import('./notifications')
@@ -185,8 +188,51 @@ describe('"ideas ready" reaching this phone', () => {
   })
 })
 
+describe('notification order IDs', () => {
+  it.each(['ideas_ready', 'list_ready', 'list_failed', 'quote_ready', 'quote_failed', 'booking'] as const)(
+    'rejects a path supplied as the %s order ID before showing or opening it', (kind): void => {
+      const refreshed = vi.spyOn(queryClient, 'invalidateQueries')
+      const opened = vi.fn<(tap: import('./notifications').Tap) => void>()
+      const stop: () => void = push.onTap(opened)
+      const notification = { data: { kind, order_id: '../../\\outside.example' } }
+
+      fire('pushNotificationReceived', notification)
+      fire('pushNotificationActionPerformed', { notification })
+
+      expect(currentToast()).toBeNull()
+      expect(currentTapped()).toBeNull()
+      expect(opened).not.toHaveBeenCalled()
+      expect(request).not.toHaveBeenCalled()
+      expect(refreshed.mock.calls).toEqual([[{ queryKey: queryKeys.nextOrder }]])
+      expect(logger.warn).toHaveBeenCalledWith('push.invalid_order_id', { kind })
+      stop()
+    },
+  )
+
+  it.each([
+    '', 'draft', '/\\outside.example', 'https://outside.example',
+    '%2e%2e/%2e%2e/%5coutside.example', `${ORDER_ID}/../../\\outside.example`,
+    `${ORDER_ID}?next=https://outside.example`, `${ORDER_ID}\n`, ` ${ORDER_ID}`,
+    undefined, null, 123,
+  ])('rejects a malformed booking order ID (%j)', (orderId: unknown): void => {
+    fire('pushNotificationActionPerformed', { notification: { data: { kind: 'booking', order_id: orderId } } })
+
+    expect(currentTapped()).toBeNull()
+    expect(logger.warn).toHaveBeenCalledWith('push.invalid_order_id', { kind: 'booking' })
+  })
+
+  it.each([ORDER_ID, '019a7d00-1234-7000-8000-0123456789ab'])(
+    'opens a notification with a canonical UUID (%s)', (orderId: string): void => {
+      fire('pushNotificationActionPerformed', { notification: { data: { kind: 'booking', order_id: orderId } } })
+
+      expect(currentTapped()).toMatchObject({ about: { kind: 'booking', orderId } })
+      expect(logger.warn).not.toHaveBeenCalled()
+    },
+  )
+})
+
 describe('a notification arriving while the app is open', () => {
-  const ideas = { title: 'Your meal ideas are ready', body: '20 ideas for Order 4.', data: { kind: 'ideas_ready', order_id: 'draft' } }
+  const ideas = { title: 'Your meal ideas are ready', body: '20 ideas for Order 4.', data: { kind: 'ideas_ready', order_id: ORDER_ID } }
 
   it('shows "ideas ready" in the app, and refreshes Home', () => {
     const refreshed = vi.spyOn(queryClient, 'invalidateQueries')
@@ -195,31 +241,31 @@ describe('a notification arriving while the app is open', () => {
     expect(currentToast()).toMatchObject({
       title: 'Your meal ideas are ready',
       body: '20 ideas for Order 4.',
-      delivered: { kind: 'ideas_ready', orderId: 'draft' },
+      delivered: { kind: 'ideas_ready', orderId: ORDER_ID },
     })
     expect(refreshed).toHaveBeenCalledWith({ queryKey: queryKeys.nextOrder })
   })
 
   it.each(['quote_ready', 'quote_failed'] as const)('refreshes the order and shows %s while outside its flow', (kind) => {
-    queryClient.setQueryData(queryKeys.order('draft'), { id: 'draft' })
-    fire('pushNotificationReceived', { title: 'Delivery check finished', data: { kind, order_id: 'draft' } })
-    expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(true)
-    expect(currentToast()).toMatchObject({ title: 'Delivery check finished', delivered: { kind, orderId: 'draft' } })
+    queryClient.setQueryData(queryKeys.order(ORDER_ID), { id: ORDER_ID })
+    fire('pushNotificationReceived', { title: 'Delivery check finished', data: { kind, order_id: ORDER_ID } })
+    expect(queryClient.getQueryState(queryKeys.order(ORDER_ID))?.isInvalidated).toBe(true)
+    expect(currentToast()).toMatchObject({ title: 'Delivery check finished', delivered: { kind, orderId: ORDER_ID } })
   })
 
   it('refreshes the order whose ideas arrived, while a reminder leaves single orders fresh', () => {
-    queryClient.setQueryData(queryKeys.order('draft'), { id: 'draft' })
+    queryClient.setQueryData(queryKeys.order(ORDER_ID), { id: ORDER_ID })
     queryClient.setQueryData(queryKeys.order('other'), { id: 'other' })
     const closeFlow = push.orderFlowOpened()
 
     fire('pushNotificationReceived', ideas)
 
-    expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(true)
+    expect(queryClient.getQueryState(queryKeys.order(ORDER_ID))?.isInvalidated).toBe(true)
     expect(queryClient.getQueryState(queryKeys.order('other'))?.isInvalidated).toBe(false)
-    queryClient.setQueryData(queryKeys.order('draft'), { id: 'draft' })
+    queryClient.setQueryData(queryKeys.order(ORDER_ID), { id: ORDER_ID })
     fire('pushNotificationReceived', { data: { kind: 'reminder', order_number: 4 } })
 
-    expect(queryClient.getQueryState(queryKeys.order('draft'))?.isInvalidated).toBe(false)
+    expect(queryClient.getQueryState(queryKeys.order(ORDER_ID))?.isInvalidated).toBe(false)
     expect(queryClient.getQueryState(queryKeys.order('other'))?.isInvalidated).toBe(false)
     closeFlow()
   })
@@ -255,7 +301,7 @@ describe('a notification arriving while the app is open', () => {
     push.tapToast(toast)
 
     expect(currentToast()).toBeNull()
-    expect(currentTapped()).toEqual({ about: { kind: 'ideas_ready', orderId: 'draft' }, at: expect.any(Number) })
+    expect(currentTapped()).toEqual({ about: { kind: 'ideas_ready', orderId: ORDER_ID }, at: expect.any(Number) })
   })
 })
 
@@ -275,13 +321,13 @@ describe('a tapped notification', () => {
     expect(handled).toEqual([{ kind: 'reminder', orderNumber: 4 }])
 
     push.clearTapped()
-    fire('pushNotificationActionPerformed', { notification: { data: { kind: 'list_ready', order_id: 'draft' } } })
+    fire('pushNotificationActionPerformed', { notification: { data: { kind: 'list_ready', order_id: ORDER_ID } } })
     stop()
     fire('pushNotificationActionPerformed', { notification: { data: { kind: 'reminder', order_number: 5 } } })
 
     expect(handled).toEqual([
       { kind: 'reminder', orderNumber: 4 },
-      { kind: 'list_ready', orderId: 'draft' },
+      { kind: 'list_ready', orderId: ORDER_ID },
     ])
   })
 
@@ -398,7 +444,7 @@ describe('what a tap leads to', () => {
   })
 
   it('opens "couldn\'t shop your list" at the shopping list too, where it can be tried again', () => {
-    expect(push.parseDelivered({ kind: 'list_failed', order_id: 'd' })).toEqual({ kind: 'list_failed', orderId: 'd' })
+    expect(push.parseDelivered({ kind: 'list_failed', order_id: ORDER_ID })).toEqual({ kind: 'list_failed', orderId: ORDER_ID })
     expect(push.tapResult({ kind: 'list_failed', orderId: 'd' }, next(4, draft('d', 4)), null)).toEqual({
       open: true,
       orderId: 'd',
@@ -407,17 +453,17 @@ describe('what a tap leads to', () => {
   })
 
   it('reads how booking went from a notification: about that order', () => {
-    expect(push.parseDelivered({ kind: 'booking', order_id: 'o' })).toEqual({ kind: 'booking', orderId: 'o' })
+    expect(push.parseDelivered({ kind: 'booking', order_id: ORDER_ID })).toEqual({ kind: 'booking', orderId: ORDER_ID })
     expect(push.parseDelivered({ kind: 'booking' })).toBeNull()
   })
 
   it('reads "list ready" from a notification', () => {
-    expect(push.parseDelivered({ kind: 'list_ready', order_id: 'd' })).toEqual({ kind: 'list_ready', orderId: 'd' })
+    expect(push.parseDelivered({ kind: 'list_ready', order_id: ORDER_ID })).toEqual({ kind: 'list_ready', orderId: ORDER_ID })
     expect(push.parseDelivered({ kind: 'list_ready' })).toBeNull()
   })
 
   it.each(['quote_ready', 'quote_failed'] as const)('opens %s at Delivery and handles old notifications', (kind) => {
-    expect(push.parseDelivered({ kind, order_id: 'd' })).toEqual({ kind, orderId: 'd' })
+    expect(push.parseDelivered({ kind, order_id: ORDER_ID })).toEqual({ kind, orderId: ORDER_ID })
     expect(push.parseDelivered({ kind })).toBeNull()
     expect(push.tapResult({ kind, orderId: 'd' }, next(4, draft('d', 4)), null)).toEqual({ open: true, orderId: 'd', step: 'delivery' })
     expect(push.tapResult({ kind, orderId: 'd' }, next(4, null), 'discarded')).toMatchObject({ open: false, header: 'That draft was discarded' })
