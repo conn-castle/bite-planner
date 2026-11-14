@@ -195,7 +195,7 @@ describe("a step's timer", () => {
     expect(read(timer.useStepTimer)).toBeNull()
   })
 
-  it('is not one of Castle Chef\'s other notifications waiting to ring', async () => {
+  it('is not one of Bite Planner\'s other notifications waiting to ring', async () => {
     const at = new Date(NOW + 60_000)
     phone.scheduled.set(2, { id: 2, title: 'Other', body: '', schedule: { at }, extra: { mealId: 'tacos', step: 0 } })
     phone.scheduled.set(1, { id: 1, title: 'Old', body: '', schedule: { at } })

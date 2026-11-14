@@ -3,7 +3,7 @@ import { errorFields, logger } from '../log'
 import { ApiError } from './errors'
 import { isRecord } from '../isRecord'
 
-/** HTTP client for the Castle Chef API (backend/src/castle_chef/api.py). */
+/** HTTP client for the Bite Planner API (backend/src/bite_planner/api.py). */
 
 function baseUrl(): string {
   const url = import.meta.env.VITE_API_URL

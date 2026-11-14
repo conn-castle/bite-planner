@@ -22,7 +22,7 @@ export interface LogEntry extends LogFields {
   launch: string
 }
 
-const STORAGE_KEY = 'castle-chef.log-outbox'
+const STORAGE_KEY = 'bite-planner.log-outbox'
 // Past this, the oldest unsent entries are dropped (and the drop is reported).
 const MAX_ENTRIES = 1000
 const SAVE_DELAY_MS = 1000

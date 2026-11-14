@@ -1,4 +1,4 @@
-"""`castle-chef household`, through the CLI: the admin's way to make households,
+"""`bite-planner household`, through the CLI: the admin's way to make households,
 invite people (they join on their first sign-in, as when a member invites them
 from the app), and remove them."""
 
@@ -10,9 +10,9 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 from typer.testing import CliRunner, Result
 
-from castle_chef import household, push
-from castle_chef.cli import app
-from castle_chef.models import (
+from bite_planner import household, push
+from bite_planner.cli import app
+from bite_planner.models import (
     BookState,
     GroceryOrder,
     GroceryOrderStatus,

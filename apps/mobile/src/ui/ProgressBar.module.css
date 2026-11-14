@@ -3,9 +3,9 @@
   display: block;
   height: 6px;
   border-radius: 3px;
-  background: linear-gradient(90deg, transparent, var(--cc-accent), transparent) no-repeat var(--cc-fill-strong);
+  background: linear-gradient(90deg, transparent, var(--bp-accent), transparent) no-repeat var(--bp-fill-strong);
   background-size: 40% 100%;
-  animation: sweep 1.6s var(--cc-ease) infinite;
+  animation: sweep 1.6s var(--bp-ease) infinite;
 }
 
 @keyframes sweep {

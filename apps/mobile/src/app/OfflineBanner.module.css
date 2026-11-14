@@ -1,6 +1,6 @@
 /* While the banner shows, the tab screens' headers move down for it: its 34px height and 8px under it. */
 :global(:root):has(.banner) {
-  --cc-offline-space: 42px;
+  --bp-offline-space: 42px;
 }
 
 .banner {
@@ -15,14 +15,14 @@
   align-items: center;
   gap: 8px;
   padding: 0 14px;
-  border-radius: var(--cc-radius-pill);
-  background: var(--cc-ink);
-  color: var(--cc-on-ink);
+  border-radius: var(--bp-radius-pill);
+  background: var(--bp-ink);
+  color: var(--bp-on-ink);
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
-  box-shadow: var(--cc-shadow-float);
-  animation: drop 380ms var(--cc-ease) both;
+  box-shadow: var(--bp-shadow-float);
+  animation: drop 380ms var(--bp-ease) both;
 }
 
 .banner ion-icon {

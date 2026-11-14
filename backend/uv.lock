@@ -8,8 +8,8 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "castle-chef",
-    "castle-chef-agent",
+    "bite-planner",
+    "bite-planner-agent",
 ]
 
 [[package]]
@@ -159,12 +159,12 @@ wheels = [
 ]
 
 [[package]]
-name = "castle-chef"
+name = "bite-planner"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
-    { name = "castle-chef-agent" },
+    { name = "bite-planner-agent" },
     { name = "httpx2", extra = ["http2"] },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
@@ -194,7 +194,7 @@ worker = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.20.0" },
-    { name = "castle-chef-agent", editable = "agent" },
+    { name = "bite-planner-agent", editable = "agent" },
     { name = "httpx2", extras = ["http2"], specifier = ">=2.13.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
@@ -220,7 +220,7 @@ dev = [
 worker = [{ name = "boto3", specifier = ">=1.43.101" }]
 
 [[package]]
-name = "castle-chef-agent"
+name = "bite-planner-agent"
 version = "0.1.0"
 source = { editable = "agent" }
 dependencies = [

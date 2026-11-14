@@ -74,7 +74,7 @@ export function PickStep({ order, onOpenMeal, onNext, onClose }: PickStepProps) 
         ) : null
       }
       title="Pick meals"
-      lede={`Add the meals you want in Order ${order.number}. Tap ✕ on anything you don't want: Chef stops suggesting meals like it to your household.`}
+      lede={`Add the meals you want in Order ${order.number}. Tap ✕ on anything you don't want: Bite Planner stops suggesting meals like it to your household.`}
       footer={
         <>
           <FooterSummary

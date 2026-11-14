@@ -18,7 +18,7 @@
   right: 10%;
   height: 3px;
   border-radius: 2px;
-  background: var(--cc-fill-strong);
+  background: var(--bp-fill-strong);
 }
 
 .line i {
@@ -45,9 +45,9 @@
   width: 19px;
   height: 19px;
   border-radius: 50%;
-  background: var(--cc-bg);
-  border: 2px solid var(--cc-fill-strong);
-  color: var(--cc-on-ink);
+  background: var(--bp-bg);
+  border: 2px solid var(--bp-fill-strong);
+  color: var(--bp-on-ink);
   font-size: 11px;
 }
 
@@ -74,7 +74,7 @@
   inset: -8px;
   border-radius: 50%;
   border: 2px solid var(--c);
-  animation: ping 1.6s var(--cc-ease) infinite;
+  animation: ping 1.6s var(--bp-ease) infinite;
 }
 
 @keyframes ping {
@@ -92,18 +92,18 @@
   font-size: 10px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
   text-align: center;
   white-space: nowrap;
 }
 
 .done .label {
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .current .label {
   font-weight: 700;
-  color: var(--cc-ink);
+  color: var(--bp-ink);
 }
 
 .ring {
@@ -113,8 +113,8 @@
 }
 
 .ringTrack {
-  fill: var(--cc-bg);
-  stroke: var(--cc-fill-strong);
+  fill: var(--bp-bg);
+  stroke: var(--bp-fill-strong);
   stroke-width: 3;
 }
 
@@ -132,7 +132,7 @@
   font-size: 10.5px;
   font-weight: 650;
   line-height: 1.25;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
   text-align: center;
   white-space: nowrap;
 }
@@ -141,5 +141,5 @@
   display: block;
   font-size: 10px;
   font-weight: 500;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }

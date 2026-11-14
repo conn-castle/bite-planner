@@ -36,10 +36,10 @@ export function useStepTimer(): StepTimer | null {
   return useSyncExternalStore(running.subscribe, running.get, running.get)
 }
 
-/** The phone's notifications are off for Castle Chef, so a timer couldn't ring. */
+/** The phone's notifications are off for Bite Planner, so a timer couldn't ring. */
 export class TimersOff extends Error {
   constructor() {
-    super("Timers ring with a notification, and Castle Chef's are off. Turn them on in the iPhone's Settings.")
+    super("Timers ring with a notification, and Bite Planner's are off. Turn them on in the iPhone's Settings.")
   }
 }
 

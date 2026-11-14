@@ -8,12 +8,12 @@
   width: 22px;
   height: 4px;
   border-radius: 2px;
-  background: var(--cc-fill-strong);
-  transition: background-color 300ms var(--cc-ease);
+  background: var(--bp-fill-strong);
+  transition: background-color 300ms var(--bp-ease);
 }
 
 .dots i.on {
-  background: var(--cc-ink);
+  background: var(--bp-ink);
 }
 
 .other i {
@@ -21,7 +21,7 @@
 }
 
 .other i.on {
-  background: var(--cc-other);
+  background: var(--bp-other);
 }
 
 /* .segs */
@@ -39,10 +39,10 @@
   align-items: center;
   gap: 10px;
   font-size: 13px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .progress b {
-  color: var(--cc-ink);
+  color: var(--bp-ink);
   font-weight: 650;
 }

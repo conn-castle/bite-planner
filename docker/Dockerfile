@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# Castle Chef images (linux/amd64; build from the repository root):
+# Bite Planner images (linux/amd64; build from the repository root):
 #   api     the FastAPI app on AWS Lambda, through the Lambda Web Adapter
-#   worker  one job per Fargate task: `castle-chef job run` and the agent
+#   worker  one job per Fargate task: `bite-planner job run` and the agent
 # Every download is pinned by version and digest or checksum.
 # Releases push the worker with zstd layers, which Fargate starts faster than
 # gzip (Lambda gets the api image as built).
@@ -24,7 +24,7 @@ COPY backend/pyproject.toml backend/uv.lock backend/.python-version ./
 
 # The API adds the `api` dependency group; the worker, which starts once per
 # job, installs only what it needs. Dependencies first, so code changes don't
-# rebuild them; editable (uv's default), so castle_chef.settings.REPO_ROOT is /app.
+# rebuild them; editable (uv's default), so bite_planner.settings.REPO_ROOT is /app.
 FROM build AS api-build
 COPY backend/agent ./agent
 RUN uv sync --frozen --no-default-groups --group api --no-install-project
@@ -41,16 +41,16 @@ COPY backend/migrations ./migrations
 COPY backend/src ./src
 RUN uv sync --frozen --no-default-groups --group worker
 
-# The agent's own environment: only its tools (castle_chef_agent) and their
-# dependencies, installed as a package (no source tree), with a `castle-chef` launcher.
+# The agent's own environment: only its tools (bite_planner_agent) and their
+# dependencies, installed as a package (no source tree), with a `bite-planner` launcher.
 FROM build AS agent-build
 COPY backend/agent ./agent
-RUN UV_PROJECT_ENVIRONMENT=/opt/castle-chef-agent/.venv \
-    uv sync --frozen --no-default-groups --package castle-chef-agent --no-editable
-COPY docker/castle-chef /opt/castle-chef-agent/bin/castle-chef
+RUN UV_PROJECT_ENVIRONMENT=/opt/bite-planner-agent/.venv \
+    uv sync --frozen --no-default-groups --package bite-planner-agent --no-editable
+COPY docker/bite-planner /opt/bite-planner-agent/bin/bite-planner
 
 # Codex (OpenAI's release package, pinned): its app-server calls Instacart's tools
-# in the ChatGPT apps (castle_chef_agent.instacart). The whole package: tool calls
+# in the ChatGPT apps (bite_planner_agent.instacart). The whole package: tool calls
 # need its code-mode host, not just the codex binary.
 FROM python AS codex
 ADD --checksum=sha256:0e211868c9fd73cb49ad35ac675b5eafdf6b9f453df8a493df980c59a590fe5f \
@@ -59,7 +59,7 @@ ADD --checksum=sha256:0e211868c9fd73cb49ad35ac675b5eafdf6b9f453df8a493df980c59a5
 RUN mkdir /opt/codex && tar -xzf /tmp/codex.tar.gz -C /opt/codex \
  && chmod -R a+rX /opt/codex && /opt/codex/bin/codex --version
 
-# Chrome Headless Shell, for the agent's Instacart checkout tools (castle_chef_agent.checkout):
+# Chrome Headless Shell, for the agent's Instacart checkout tools (bite_planner_agent.checkout):
 # the build Playwright expects (uv.lock's playwright 1.63.0: chromium-headless-shell
 # revision 1243), where Playwright looks for it. Unzipped keeping each file's mode.
 FROM python AS chromium
@@ -82,11 +82,12 @@ RUN chmod -R a+rX /opt/ms-playwright
 FROM python AS api
 COPY --from=lambda-adapter /lambda-adapter /opt/extensions/lambda-adapter
 COPY --from=api-build /app/backend /app/backend
+COPY LICENSE THIRD_PARTY_NOTICES.md /app/
 ENV AWS_LWA_PORT=8080 AWS_LWA_READINESS_CHECK_PATH=/health
 # The commit is the image's; the release version is set by the deploy (infra/).
-ARG CASTLE_CHEF_COMMIT=unknown
-ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
-CMD ["uvicorn", "castle_chef.api:app", "--host", "0.0.0.0", "--port", "8080"]
+ARG BITE_PLANNER_COMMIT=unknown
+ENV BITE_PLANNER_COMMIT=${BITE_PLANNER_COMMIT}
+CMD ["uvicorn", "bite_planner.api:app", "--host", "0.0.0.0", "--port", "8080"]
 
 FROM python AS worker
 # The headless shell's libraries (Playwright's list for Debian 13), from the Debian
@@ -106,28 +107,29 @@ COPY --from=chromium /opt/ms-playwright /opt/ms-playwright
 # The agent runs as this unprivileged user; the worker (root) starts it.
 RUN groupadd --gid 65532 agent \
  && useradd --uid 65532 --gid 65532 --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin agent
-COPY --from=agent-build /opt/castle-chef-agent /opt/castle-chef-agent
+COPY --from=agent-build /opt/bite-planner-agent /opt/bite-planner-agent
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=worker-build /app/backend /app/backend
+COPY LICENSE THIRD_PARTY_NOTICES.md /app/
 # The backend is the worker's (root) alone: the agent's user can't list or read it.
 RUN chmod 700 /app
 # The OpenAI key comes from SSM through the worker task's ECS secret. Only the
 # isolated runner gets it; its MCP tool subprocess does not.
-ENV CASTLE_CHEF_AGENT_COMMAND="castle-chef run-agent" \
-    CASTLE_CHEF_AGENT_UID=65532 \
-    CASTLE_CHEF_AGENT_PATH=/opt/castle-chef-agent/bin:/usr/local/bin:/usr/bin:/bin \
-    CASTLE_CHEF_AGENT_ENV='["OPENAI_API_KEY","PLAYWRIGHT_BROWSERS_PATH"]' \
-    CASTLE_CHEF_CODEX_COMMAND=/opt/codex/bin/codex \
+ENV BITE_PLANNER_AGENT_COMMAND="bite-planner run-agent" \
+    BITE_PLANNER_AGENT_UID=65532 \
+    BITE_PLANNER_AGENT_PATH=/opt/bite-planner-agent/bin:/usr/local/bin:/usr/bin:/bin \
+    BITE_PLANNER_AGENT_ENV='["OPENAI_API_KEY","PLAYWRIGHT_BROWSERS_PATH"]' \
+    BITE_PLANNER_CODEX_COMMAND=/opt/codex/bin/codex \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
-    CASTLE_CHEF_JOBS_DIR=/tmp/jobs \
-    CASTLE_CHEF_LOGS_DIR=/tmp/logs
+    BITE_PLANNER_JOBS_DIR=/tmp/jobs \
+    BITE_PLANNER_LOGS_DIR=/tmp/logs
 # The commit is the image's; the release version is set by the deploy (infra/).
-ARG CASTLE_CHEF_COMMIT=unknown
-ENV CASTLE_CHEF_COMMIT=${CASTLE_CHEF_COMMIT}
+ARG BITE_PLANNER_COMMIT=unknown
+ENV BITE_PLANNER_COMMIT=${BITE_PLANNER_COMMIT}
 # A hard cap above two agent runs (15 min each: a list, then its shopping) plus
 # saving: a hung process can't keep the task (and its bill) running.
-# castle_chef.jobs.WORKER_LIMIT is this limit: a booking isn't counted lost before it.
-ENTRYPOINT ["timeout", "--kill-after=30s", "2400s", "castle-chef"]
-# One job (the task gets CASTLE_CHEF_JOB_ID); `agent-login codex` connects
+# bite_planner.jobs.WORKER_LIMIT is this limit: a booking isn't counted lost before it.
+ENTRYPOINT ["timeout", "--kill-after=30s", "2400s", "bite-planner"]
+# One job (the task gets BITE_PLANNER_JOB_ID); `agent-login codex` connects
 # Instacart (CODEX_HOME on EFS, set by the task).
 CMD ["job", "run"]

@@ -1,2 +1,2 @@
-app_identifier "com.conncastle.castlechef"
+app_identifier "com.conncastle.biteplanner"
 team_id ENV.fetch("APPLE_TEAM_ID")

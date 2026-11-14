@@ -10,19 +10,19 @@
   min-width: 0;
   padding: 9px 10px;
   border-radius: 14px;
-  background: var(--cc-fill);
+  background: var(--bp-fill);
 }
 
 .value {
   margin: 0;
   display: block;
-  font: 700 18px/1.15 var(--cc-font-display);
+  font: 700 18px/1.15 var(--bp-font-display);
 }
 
 .label {
   font-size: 11.5px;
   font-weight: 600;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 /* Recipe facts keep the reviewed centered 17px values. */
@@ -78,7 +78,7 @@
 
 .meal .value svg {
   font-size: 18px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .meal .number {
@@ -90,8 +90,8 @@
 }
 
 .meal .unit {
-  font: 600 12px/1.1 var(--cc-font-text);
-  color: var(--cc-ink-2);
+  font: 600 12px/1.1 var(--bp-font-text);
+  color: var(--bp-ink-2);
 }
 
 .meal .label {
@@ -115,5 +115,5 @@
 }
 
 .meal .unavailable {
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }

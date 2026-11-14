@@ -1,0 +1,5 @@
+#!/opt/bite-planner-agent/.venv/bin/python
+# The agent's `bite-planner` in the worker image: its tools (`bite-planner mcp`) alone.
+from bite_planner_agent.cli import app
+
+app(prog_name="bite-planner")

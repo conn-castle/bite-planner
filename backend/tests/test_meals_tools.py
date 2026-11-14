@@ -1,4 +1,4 @@
-"""The agent's meals tools (castle_chef_agent.server's meals server): `add_meal`
+"""The agent's meals tools (bite_planner_agent.server's meals server): `add_meal`
 and `done`, called as the agent calls them, in a job directory as the worker
 makes it."""
 
@@ -10,10 +10,10 @@ from typing import Any
 
 import pytest
 import typer
-from castle_chef_agent import cli
-from castle_chef_agent.jobfiles import write_context
-from castle_chef_agent.meals import MealsJob, load_meals
-from castle_chef_agent.server import meals_server
+from bite_planner_agent import cli
+from bite_planner_agent.jobfiles import write_context
+from bite_planner_agent.meals import MealsJob, load_meals
+from bite_planner_agent.server import meals_server
 from mcp.server.mcpserver import MCPServer
 from typer.testing import CliRunner
 
@@ -311,7 +311,7 @@ def test_no_tool_sends_the_agent_looking_for_the_job_directory(tmp_path: Path) -
 
 
 def test_the_tools_need_an_existing_job_directory(tmp_path: Path) -> None:
-    # As the worker starts them, from the agent's own `castle-chef` (docker/castle-chef).
+    # As the worker starts them, from the agent's own `bite-planner` (docker/bite-planner).
     # The refusal itself, not its printed form (Typer colors that under GitHub Actions).
     result = CliRunner().invoke(
         cli.app, ["mcp", "meals", "--job-dir", str(tmp_path / "missing")], standalone_mode=False

@@ -21,7 +21,7 @@ export function CornerToggle({ off, label, onToggle, offIcon }: CornerToggleProp
   return (
     <button
       type="button"
-      className={`${styles.toggle} ${off ? styles.undo : ''} cc-hit`}
+      className={`${styles.toggle} ${off ? styles.undo : ''} bp-hit`}
       aria-label={label}
       onClick={onToggle}
     >

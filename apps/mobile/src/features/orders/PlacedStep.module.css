@@ -4,7 +4,7 @@
   align-items: center;
   text-align: center;
   padding-top: 48px;
-  animation: rise 460ms var(--cc-ease) both;
+  animation: rise 460ms var(--bp-ease) both;
 }
 
 @keyframes rise {
@@ -20,8 +20,8 @@
   width: 84px;
   height: 84px;
   border-radius: 50%;
-  background: var(--cc-success-soft);
-  color: var(--cc-success);
+  background: var(--bp-success-soft);
+  color: var(--bp-success);
   font-size: 40px;
 }
 
@@ -31,8 +31,8 @@
 
 /* Something needs doing: the danger chip's colors. */
 .mark.attention {
-  background: var(--cc-danger-soft);
-  color: var(--cc-danger);
+  background: var(--bp-danger-soft);
+  color: var(--bp-danger);
 }
 
 .status {
@@ -40,7 +40,7 @@
 }
 
 .title {
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   margin: 12px 0 0;
   font-size: 28px;
   font-weight: 700;
@@ -54,7 +54,7 @@
   max-width: 320px;
   font-size: 15px;
   line-height: 1.45;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
   text-wrap: pretty;
 }
 

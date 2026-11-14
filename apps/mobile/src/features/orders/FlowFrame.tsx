@@ -37,7 +37,7 @@ export function FlowFrame({ step, onBack, onClose, bodyClassName, title, lede, f
         <IonToolbar>
           <div className={styles.bar}>
             {onBack ? (
-              <button type="button" className={`${styles.back} cc-hit`} onClick={onBack}>
+              <button type="button" className={`${styles.back} bp-hit`} onClick={onBack}>
                 <Icon name="chevL" />
                 Back
               </button>

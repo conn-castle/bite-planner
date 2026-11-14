@@ -4,9 +4,9 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from castle_chef_agent.jobfiles import write_context
-from castle_chef_agent.server import shopping_list_server
-from castle_chef_agent.shopping import (
+from bite_planner_agent.jobfiles import write_context
+from bite_planner_agent.server import shopping_list_server
+from bite_planner_agent.shopping import (
     ListJob,
     PreparedRecipe,
     PreparedRecipes,
@@ -16,7 +16,7 @@ from castle_chef_agent.shopping import (
     recipe_lines,
 )
 
-from castle_chef import shopping
+from bite_planner import shopping
 from tests.test_products_tools import call
 
 

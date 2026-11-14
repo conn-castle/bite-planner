@@ -1,7 +1,7 @@
 /* spec/mockup.html: .view.home, .sbfade, .lt, .lt-row */
 
 .content {
-  --background: var(--cc-home-bg);
+  --background: var(--bp-home-bg);
 }
 
 /* Solid under the status bar, then fading out over the 8px above the header's text,
@@ -11,13 +11,13 @@
   inset: 0 0 auto;
   height: calc(var(--ion-safe-area-top, 0px) + 8px);
   pointer-events: none;
-  background: linear-gradient(var(--cc-home-bg) var(--ion-safe-area-top, 0px), transparent);
+  background: linear-gradient(var(--bp-home-bg) var(--ion-safe-area-top, 0px), transparent);
 }
 
 /* The offline banner, when it shows, takes the top; the header moves down for it. */
 .header {
-  padding: calc(var(--ion-safe-area-top, 0px) + 8px + var(--cc-offline-space)) var(--cc-page-x) 10px;
-  transition: padding-top 380ms var(--cc-ease);
+  padding: calc(var(--ion-safe-area-top, 0px) + 8px + var(--bp-offline-space)) var(--bp-page-x) 10px;
+  transition: padding-top 380ms var(--bp-ease);
 }
 
 .overline {
@@ -25,7 +25,7 @@
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .titleRow {
@@ -37,7 +37,7 @@
 
 .title {
   margin: 0;
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   font-size: 34px;
   font-weight: 700;
   line-height: 1.12;
@@ -45,7 +45,7 @@
 }
 
 .body {
-  padding: 0 var(--cc-card-x) var(--cc-tab-bar-clearance);
+  padding: 0 var(--bp-card-x) var(--bp-tab-bar-clearance);
 }
 
 /* The back button sits 14px from the edge (.hero-btns). */
@@ -56,7 +56,7 @@
 
 /* A page pushed onto a nav in a card: no tab bar to clear. */
 .navBody {
-  padding: 4px var(--cc-page-x) calc(var(--ion-safe-area-bottom, 0px) + 32px);
+  padding: 4px var(--bp-page-x) calc(var(--ion-safe-area-bottom, 0px) + 32px);
 }
 
 /* A page pushed in a tab (.navbar): Back and its label at the edge. */
@@ -76,7 +76,7 @@
   background: none;
   font: inherit;
   font-size: 17px;
-  color: var(--cc-ink);
+  color: var(--bp-ink);
   cursor: pointer;
 }
 
@@ -86,18 +86,18 @@
 }
 
 .back:focus-visible {
-  outline: 2px solid var(--cc-accent);
+  outline: 2px solid var(--bp-accent);
   outline-offset: -2px;
 }
 
 /* Clears the tab bar. */
 .tabBody {
-  padding: 8px var(--cc-card-x) var(--cc-tab-bar-clearance);
+  padding: 8px var(--bp-card-x) var(--bp-tab-bar-clearance);
 }
 
 /* A nav page's content (e.g. a recipe) pushed in a tab: clears the tab bar. */
 .navBody.clearTabBar {
-  padding-bottom: var(--cc-tab-bar-clearance);
+  padding-bottom: var(--bp-tab-bar-clearance);
 }
 
 /* A nav page's main action along the bottom (spec/mockup.html: .sticky-cta):
@@ -109,11 +109,11 @@
 .footerBar {
   display: flex;
   gap: 10px;
-  padding: 14px var(--cc-page-x) max(34px, var(--ion-safe-area-bottom, 0px));
-  background: linear-gradient(rgb(255 255 255 / 0), var(--cc-bg) 28%);
+  padding: 14px var(--bp-page-x) max(34px, var(--ion-safe-area-bottom, 0px));
+  background: linear-gradient(rgb(255 255 255 / 0), var(--bp-bg) 28%);
 }
 
 /* In a tab, it sits above the tab bar. */
 .aboveTabBar .footerBar {
-  padding-bottom: calc(var(--cc-tab-bar-height) + var(--cc-tab-bar-bottom) + 12px);
+  padding-bottom: calc(var(--bp-tab-bar-height) + var(--bp-tab-bar-bottom) + 12px);
 }

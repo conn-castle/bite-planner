@@ -3,8 +3,8 @@
 from datetime import date, time
 
 import pytest
-from castle_chef_agent.checkout import CheckoutRefused, delivery_day
-from castle_chef_agent.windows import Window, choose, parse
+from bite_planner_agent.checkout import CheckoutRefused, delivery_day
+from bite_planner_agent.windows import Window, choose, parse
 
 
 def window(start: int, end: int) -> Window:

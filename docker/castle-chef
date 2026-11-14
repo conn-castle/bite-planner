@@ -1,5 +1,0 @@
-#!/opt/castle-chef-agent/.venv/bin/python
-# The agent's `castle-chef` in the worker image: its tools (`castle-chef mcp`) alone.
-from castle_chef_agent.cli import app
-
-app(prog_name="castle-chef")

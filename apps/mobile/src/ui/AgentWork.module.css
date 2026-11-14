@@ -13,7 +13,7 @@
   height: 120px;
   margin-bottom: 26px;
   border-radius: 50%;
-  background: var(--cc-fill);
+  background: var(--bp-fill);
 }
 
 .orb svg {
@@ -28,8 +28,8 @@
   inset: -10px;
   border-radius: 50%;
   border: 2.5px solid transparent;
-  border-top-color: var(--cc-accent);
-  border-right-color: var(--cc-accent-soft);
+  border-top-color: var(--bp-accent);
+  border-right-color: var(--bp-accent-soft);
   animation: spin 1.2s linear infinite;
 }
 
@@ -40,7 +40,7 @@
 }
 
 .title {
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   margin: 0;
   font-size: 26px;
   font-weight: 700;
@@ -52,7 +52,7 @@
 .lede {
   margin: 6px 0 0;
   font-size: 15px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .progress {
@@ -65,7 +65,7 @@
   margin: 0;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 /* Recovery actions under the checkout wait. */

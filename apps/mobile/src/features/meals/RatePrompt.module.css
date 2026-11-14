@@ -21,7 +21,7 @@
   top: 0;
   right: 0;
   left: 56px;
-  border-top: 0.5px solid var(--cc-hairline);
+  border-top: 0.5px solid var(--bp-hairline);
 }
 
 .art {
@@ -33,7 +33,7 @@
   height: 34px;
   overflow: hidden;
   border-radius: 10px;
-  background: var(--cc-fill);
+  background: var(--bp-fill);
 }
 
 .art svg {

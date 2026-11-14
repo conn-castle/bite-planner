@@ -1,6 +1,6 @@
 # Makes sign-up on Neon `main` invite-only: Neon Auth asks the API before it creates
 # any account (its blocking user.before_create webhook), and the API allows only
-# invited emails (docs/operations/aws.md "Sign-up"). Sets the webhook, then checks it
+# invited emails (docs/operations/aws.md "Households and sign-up"). Sets the webhook, then checks it
 # is exactly that. Run by every deploy, and by rollback from the current main (the
 # release it goes back to may not have this).
 name: Invite-only sign-up

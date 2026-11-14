@@ -5,7 +5,7 @@
   padding: calc(var(--ion-safe-area-top, 0px) + 64px) 24px calc(var(--ion-safe-area-bottom, 0px) + 24px);
   max-width: 440px;
   margin: 0 auto;
-  animation: rise 560ms var(--cc-ease) both;
+  animation: rise 560ms var(--bp-ease) both;
 }
 
 @keyframes rise {
@@ -28,7 +28,7 @@
 }
 
 .title {
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   margin: 24px 0 0;
   font-size: 28px;
   font-weight: 700;
@@ -41,12 +41,12 @@
   max-width: 320px;
   font-size: 16px;
   line-height: 1.45;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
   text-wrap: pretty;
 }
 
 .subtitle strong {
-  color: var(--cc-ink);
+  color: var(--bp-ink);
   font-weight: 600;
 }
 

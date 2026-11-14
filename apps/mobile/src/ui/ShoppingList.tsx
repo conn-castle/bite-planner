@@ -6,7 +6,7 @@ import { Icon } from './Icon'
 import { Stepper } from './Stepper'
 import styles from './ShoppingList.module.css'
 
-/** The aisle colors defined in theme/tokens.css (--cc-aisle-produce-soft …, with -deep). */
+/** The aisle colors defined in theme/tokens.css (--bp-aisle-produce-soft …, with -deep). */
 type AisleColor = 'produce' | 'meat' | 'dairy' | 'frozen' | 'pantry' | 'other'
 
 type AisleColors = CSSProperties & { '--aisle-soft': string; '--aisle-deep': string }
@@ -14,13 +14,13 @@ type AisleColors = CSSProperties & { '--aisle-soft': string; '--aisle-deep': str
 /** An aisle's colors as CSS variables, for its card's head: --aisle-soft, --aisle-deep. */
 function aisleColors(color: AisleColor): AisleColors {
   return {
-    '--aisle-soft': `var(--cc-aisle-${color}-soft)`,
-    '--aisle-deep': `var(--cc-aisle-${color}-deep)`,
+    '--aisle-soft': `var(--bp-aisle-${color}-soft)`,
+    '--aisle-deep': `var(--bp-aisle-${color}-deep)`,
   }
 }
 
 /** The card for items the store doesn't have: an aisle card in the colors of a problem. */
-const MISSING_COLORS: AisleColors = { '--aisle-soft': 'var(--cc-danger-soft)', '--aisle-deep': 'var(--cc-danger)' }
+const MISSING_COLORS: AisleColors = { '--aisle-soft': 'var(--bp-danger-soft)', '--aisle-deep': 'var(--bp-danger)' }
 
 /** The aisles in the store's order, each with its card head's colors. */
 const AISLES: { aisle: Aisle; name: string; color: AisleColor }[] = [
@@ -139,7 +139,7 @@ function ShoppedList({ items, forMeals, shop }: ShoppedListProps) {
               <span className={styles.decide}>
                 <button
                   type="button"
-                  className={`${styles.pill} cc-hit`}
+                  className={`${styles.pill} bp-hit`}
                   aria-label={`Skip ${item.name}`}
                   onClick={() => decide.onSkip(item)}
                 >
@@ -147,7 +147,7 @@ function ShoppedList({ items, forMeals, shop }: ShoppedListProps) {
                 </button>
                 <button
                   type="button"
-                  className={`${styles.pill} ${styles.pillDark} cc-hit`}
+                  className={`${styles.pill} ${styles.pillDark} bp-hit`}
                   aria-label={`Alternatives for ${item.name}`}
                   onClick={() => shop.onOpen?.(item)}
                 >

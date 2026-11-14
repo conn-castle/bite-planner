@@ -4,11 +4,11 @@ from datetime import timedelta
 from uuid import UUID
 
 import pytest
-from castle_chef_agent.shopping import Aisle
+from bite_planner_agent.shopping import Aisle
 from fastapi.testclient import TestClient
 
-from castle_chef import api
-from castle_chef.shopping import ListEntry
+from bite_planner import api
+from bite_planner.shopping import ListEntry
 from tests.test_api import (
     MOM,
     as_user,

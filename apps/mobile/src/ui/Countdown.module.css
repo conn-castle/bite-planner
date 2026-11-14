@@ -5,15 +5,15 @@
   flex: none;
   width: 58px;
   height: 58px;
-  --ring: var(--cc-ink-3);
+  --ring: var(--bp-ink-3);
 }
 
 .accent {
-  --ring: var(--cc-accent);
+  --ring: var(--bp-accent);
 }
 
 .late {
-  --ring: var(--cc-danger);
+  --ring: var(--bp-danger);
 }
 
 .countdown svg {
@@ -29,7 +29,7 @@
 }
 
 .track {
-  stroke: var(--cc-fill-strong);
+  stroke: var(--bp-fill-strong);
 }
 
 .fill {
@@ -48,7 +48,7 @@
 }
 
 .value b {
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   font-size: 20px;
   font-weight: 700;
   line-height: 1;
@@ -56,7 +56,7 @@
 }
 
 .late .value b {
-  color: var(--cc-danger);
+  color: var(--bp-danger);
 }
 
 .value small {
@@ -65,5 +65,5 @@
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }

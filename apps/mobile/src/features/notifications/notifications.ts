@@ -27,7 +27,7 @@ export const pushAvailable = Capacitor.getPlatform() === 'ios'
 // ---------------------------------------------------------------------------
 // Permission.
 
-/** This phone's permission for Castle Chef's notifications, as iOS has it; null until read. */
+/** This phone's permission for Bite Planner's notifications, as iOS has it; null until read. */
 export type Permission = 'on' | 'off' | 'not-set'
 
 const permission = store<Permission | null>(null)
@@ -39,7 +39,7 @@ export function usePermission(): Permission | null {
 /**
  * The member's own daily reminder, for the screens that mention it: its time
  * ("8:00 AM"; null until the session has loaded), and whether it's off: turned
- * off in Settings, or this phone has Castle Chef's notifications off in iOS.
+ * off in Settings, or this phone has Bite Planner's notifications off in iOS.
  */
 export function useYourReminder(): { time: string | null; off: boolean } {
   const settings = usePersonalSettings()
@@ -90,7 +90,7 @@ async function registerPhone(mine: number): Promise<void> {
   await PushNotifications.register()
 }
 
-/** Castle Chef's page in iOS Settings, where notifications are turned on or off once asked. */
+/** Bite Planner's page in iOS Settings, where notifications are turned on or off once asked. */
 export async function openNotificationSettings(): Promise<void> {
   // UIApplication.openSettingsURLString.
   await AppLauncher.openUrl({ url: 'app-settings:' })

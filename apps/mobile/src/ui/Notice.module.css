@@ -2,9 +2,9 @@
   display: flex;
   gap: 10px;
   padding: 14px 16px;
-  border-radius: var(--cc-radius-md);
-  background: var(--cc-danger-soft);
-  color: var(--cc-danger);
+  border-radius: var(--bp-radius-md);
+  background: var(--bp-danger-soft);
+  color: var(--bp-danger);
 }
 
 .icon {
@@ -28,7 +28,7 @@
 
 .body button {
   font-weight: 600;
-  color: var(--cc-danger);
+  color: var(--bp-danger);
   background: none;
   border: 0;
   padding: 0;

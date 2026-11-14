@@ -3,18 +3,18 @@
   "context": {
     "stages": {
       "dev": {
-        "databaseUrlParameter": "/castle-chef/development/database-url-pooled",
+        "databaseUrlParameter": "/bite-planner/development/database-url-pooled",
         "corsOrigins": [
           "capacitor://localhost"
         ],
-        "instacartBookingParameter": "/castle-chef/development/instacart-booking"
+        "instacartBookingParameter": "/bite-planner/development/instacart-booking"
       },
       "prod": {
-        "databaseUrlParameter": "/castle-chef/production/database-url-pooled",
+        "databaseUrlParameter": "/bite-planner/production/database-url-pooled",
         "corsOrigins": [
           "capacitor://localhost"
         ],
-        "instacartBookingParameter": "/castle-chef/production/instacart-booking"
+        "instacartBookingParameter": "/bite-planner/production/instacart-booking"
       }
     }
   }

@@ -1,16 +1,18 @@
+name: bite-planner
 # Local Postgres for autogenerating migrations and running tests.
 services:
   postgres:
     image: postgres:17
+    network_mode: bridge
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: castle_chef
+      POSTGRES_DB: bite_planner
     volumes:
       - ./tests/neon_stubs.sql:/docker-entrypoint-initdb.d/neon_stubs.sql:ro
     ports:
       - "54329:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d castle_chef"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bite_planner"]
       interval: 2s
       retries: 15

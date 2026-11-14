@@ -16,7 +16,7 @@
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .lead {
@@ -29,7 +29,7 @@
 .more {
   margin-top: 2px;
   font-size: 13px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .view {
@@ -54,7 +54,7 @@
 }
 
 .fold:focus-visible {
-  outline: 2px solid var(--cc-accent);
+  outline: 2px solid var(--bp-accent);
   outline-offset: -2px;
 }
 
@@ -63,14 +63,14 @@
   min-width: 0;
   font-size: 14px;
   font-weight: 600;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .chevron {
   flex: none;
   font-size: 16px;
-  color: var(--cc-ink-3);
-  transition: transform 250ms var(--cc-ease);
+  color: var(--bp-ink-3);
+  transition: transform 250ms var(--bp-ease);
 }
 
 .open {
@@ -80,7 +80,7 @@
 .open .foldLabel {
   font-size: 13px;
   font-weight: 650;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .open .chevron {

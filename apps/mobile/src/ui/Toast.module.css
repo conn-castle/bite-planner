@@ -15,13 +15,13 @@
   border: 0;
   border-radius: 22px;
   background: rgba(250, 249, 247, 0.9);
-  -webkit-backdrop-filter: var(--cc-glass-blur);
-  backdrop-filter: var(--cc-glass-blur);
+  -webkit-backdrop-filter: var(--bp-glass-blur);
+  backdrop-filter: var(--bp-glass-blur);
   box-shadow: 0 12px 40px -10px rgba(0, 0, 0, 0.3);
-  color: var(--cc-ink);
+  color: var(--bp-ink);
   font: inherit;
   text-align: left;
-  animation: drop 500ms var(--cc-ease) both;
+  animation: drop 500ms var(--bp-ease) both;
 }
 
 .icon {
@@ -31,7 +31,7 @@
   width: 38px;
   height: 38px;
   border-radius: 9px;
-  background: linear-gradient(160deg, #ff7a4d, var(--cc-accent));
+  background: linear-gradient(160deg, #ff7a4d, var(--bp-accent));
 }
 
 .icon svg {
@@ -56,14 +56,14 @@
 .text b small {
   font-size: 12.5px;
   font-weight: 500;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .text > span {
   display: block;
   font-size: 14px;
   line-height: 1.3;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 @keyframes drop {

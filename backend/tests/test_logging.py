@@ -7,22 +7,24 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from castle_chef.api import create_app
-from castle_chef.cli import app
-from castle_chef.models import Job
+from bite_planner.api import create_app
+from bite_planner.cli import app
+from bite_planner.models import Job
 
 runner = CliRunner()
 FAKE_AGENT = Path(__file__).parent / "fake_agent.py"
 
 
 def log_events(logs_dir: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in (logs_dir / "castle-chef.jsonl").read_text().splitlines()]
+    return [json.loads(line) for line in (logs_dir / "bite-planner.jsonl").read_text().splitlines()]
 
 
 def test_worker_writes_structured_job_events_to_the_log_file(
     job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 1 end_turn 0 0")
+    monkeypatch.setenv(
+        "BITE_PLANNER_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 1 end_turn 0 0"
+    )
 
     assert runner.invoke(app, ["job", "run", "--job-id", str(job.id)]).exit_code == 0
 
@@ -37,11 +39,11 @@ def test_worker_writes_structured_job_events_to_the_log_file(
 
 
 def test_uvicorns_own_lines_are_json_too(tmp_path: Path) -> None:
-    # As the image runs the API (`uvicorn castle_chef.api:app`): uvicorn sets up
+    # As the image runs the API (`uvicorn bite_planner.api:app`): uvicorn sets up
     # its logging, then imports the app; a crash it reports keeps its traceback.
     script = """
 import logging, uvicorn
-uvicorn.Config("castle_chef.api:app").load()
+uvicorn.Config("bite_planner.api:app").load()
 try:
     raise RuntimeError("a defect")
 except RuntimeError:
@@ -62,8 +64,8 @@ def test_the_api_logs_the_release_it_runs_when_it_starts(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # As on Lambda: the image sets the commit, and the deploy the release.
-    monkeypatch.setenv("CASTLE_CHEF_RELEASE", "2026.10.4.1")
-    monkeypatch.setenv("CASTLE_CHEF_COMMIT", "abc123")
+    monkeypatch.setenv("BITE_PLANNER_RELEASE", "2026.10.4.1")
+    monkeypatch.setenv("BITE_PLANNER_COMMIT", "abc123")
 
     create_app()
 

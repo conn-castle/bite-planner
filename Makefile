@@ -1,10 +1,10 @@
-# Castle Chef developer commands. Run `make` to list them.
+# Bite Planner developer commands. Run `make` to list them.
 .DEFAULT_GOAL := help
 SHELL := bash
 .SHELLFLAGS := -euo pipefail -c
 
 -include .env.deployment.local
-LOCAL_DB := postgresql://postgres:postgres@localhost:54329/castle_chef
+LOCAL_DB := postgresql://postgres:postgres@localhost:54329/bite_planner
 # Commands that use Neon dev read DATABASE_URL from backend/.env; one left in the shell
 # (e.g. production's) must not redirect them.
 unexport DATABASE_URL
@@ -61,10 +61,10 @@ db-stop: ## Stop the local Postgres (its data is kept)
 worker-image: ## Build the worker image (Fargate's) from the working tree
 	scripts/worker-docker.sh build
 
-instacart-login: ## Sign Castle Chef in to Instacart's website for checkout (a browser opens here; saved to SSM)
+instacart-login: ## Sign Bite Planner in to Instacart's website for checkout (a browser opens here; saved to SSM)
 	cd backend && \
-	  CASTLE_CHEF_INSTACART_SESSION_PARAMETER=/castle-chef/shared/instacart-session \
-	  uv run castle-chef instacart sign-in
+	  BITE_PLANNER_INSTACART_SESSION_PARAMETER=/bite-planner/shared/instacart-session \
+	  uv run bite-planner instacart sign-in
 
 worker-login: ## Connect the local worker image to Instacart through Codex (once)
 	scripts/worker-docker.sh login codex

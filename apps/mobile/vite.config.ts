@@ -6,14 +6,16 @@ import { defineConfig, loadEnv } from 'vite'
 export default defineConfig(({ mode, command }) => {
   const { version } = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string }
   // Release this build belongs to (`YYYY.M.D.N`), set by the release workflow; `dev` for local builds.
-  const release = process.env.CASTLE_CHEF_RELEASE ?? 'dev'
+  const release = process.env.BITE_PLANNER_RELEASE ?? 'dev'
   // `make review` (scripts/review.sh): the review server in front of the dev server
   // provides private Tailscale HTTPS at this public port; Vite stays on loopback HTTP.
-  const reviewPort = process.env.CASTLE_CHEF_REVIEW_PORT
+  const reviewPort = process.env.BITE_PLANNER_REVIEW_PORT
   const env: Record<string, string> = loadEnv(mode, process.cwd())
   if (command === 'build') {
     for (const name of ['VITE_NEON_AUTH_URL', 'VITE_NEON_AUTH_TRUSTED_ORIGIN', 'VITE_API_URL']) {
-      if (!env[name]) throw new Error(`Missing ${name}; generate private configuration with make env.`)
+      if (!env[name]) {
+        throw new Error(`Missing ${name}; from the repository root run: uv run --project backend python -m bite_planner.configure production`)
+      }
     }
   }
 
@@ -38,11 +40,11 @@ function devServer(env: Record<string, string>, reviewPort: string | undefined) 
     host: reviewPort ? '127.0.0.1' : true,
     hmr: reviewPort ? { protocol: 'wss', clientPort: Number(reviewPort) } : undefined,
     proxy: {
-      // The Castle Chef API, run locally with `uv run uvicorn castle_chef.api:app`
+      // The Bite Planner API, run locally with `uv run uvicorn bite_planner.api:app`
       // (backend/). Same origin as the app, so no CORS in development.
-      // Set CASTLE_CHEF_API_DEV_URL to use a deployed API (e.g. the AWS stack on dev).
+      // Set BITE_PLANNER_API_DEV_URL to use a deployed API (e.g. the AWS stack on dev).
       '/api': {
-        target: process.env.CASTLE_CHEF_API_DEV_URL ?? 'http://localhost:8000',
+        target: process.env.BITE_PLANNER_API_DEV_URL ?? 'http://localhost:8000',
         changeOrigin: true, // a Lambda Function URL routes by its own Host header
         rewrite: (path: string) => path.replace(/^\/api/, ''),
       },

@@ -1,5 +1,5 @@
-"""The household's Instacart store (castle_chef.instacart): searching and the cart
-through Instacart's tools, and connecting it (`castle-chef agent-login codex`),
+"""The household's Instacart store (bite_planner.instacart): searching and the cart
+through Instacart's tools, and connecting it (`bite-planner agent-login codex`),
 against a stand-in `codex app-server` that answers with recorded replies (a cart
 holding items is assembled from recorded parts: fixtures/instacart/README.md)."""
 
@@ -11,12 +11,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from castle_chef_agent.instacart import CartUpdate, InstacartError
+from bite_planner_agent.instacart import CartUpdate, InstacartError
 from typer.testing import CliRunner
 
-from castle_chef import instacart
-from castle_chef.cli import app
-from castle_chef.settings import get_settings
+from bite_planner import instacart
+from bite_planner.cli import app
+from bite_planner.settings import get_settings
 from tests.conftest import TEST_ADDRESS, TEST_ADDRESSES
 
 
@@ -169,7 +169,7 @@ def test_an_app_server_that_stops_is_an_error(codex_home: Path) -> None:
 
 
 def test_without_a_codex_login_nothing_reaches_instacart(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("CASTLE_CHEF_CODEX_HOME", raising=False)
+    monkeypatch.delenv("BITE_PLANNER_CODEX_HOME", raising=False)
     get_settings.cache_clear()
     with pytest.raises(InstacartError, match="No Codex login"), instacart.store():
         pass

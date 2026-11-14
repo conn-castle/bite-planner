@@ -1,6 +1,6 @@
 """Stands in for the OpenAI Responses runner in worker tests.
 
-Usage (as CASTLE_CHEF_AGENT_COMMAND): fake_agent.py MEALS STOP_REASON EXIT_CODE SECONDS
+Usage (as BITE_PLANNER_AGENT_COMMAND): fake_agent.py MEALS STOP_REASON EXIT_CODE SECONDS
 followed by the runner arguments the worker appends. It starts the MCP
 server the job directory's `tools.json` names and uses its tools: MEALS meals
 with `add_meal` (or, given a shopping list prompt, MEALS items sharing its lines with
@@ -23,9 +23,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from castle_chef_agent.jobfiles import read_context
-from castle_chef_agent.runner import AgentSummary, tool_environment
-from castle_chef_agent.shopping import ListJob
+from bite_planner_agent.jobfiles import read_context
+from bite_planner_agent.runner import AgentSummary, tool_environment
+from bite_planner_agent.shopping import ListJob
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import CallToolResult, TextContent

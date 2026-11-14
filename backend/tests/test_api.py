@@ -16,13 +16,13 @@ from uuid import NAMESPACE_OID, UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
 import pytest
+from bite_planner_agent.checkout import Checkout, QuoteLine
+from bite_planner_agent.instacart import Product
+from bite_planner_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
+from bite_planner_agent.products import ItemChoice, ProductCount
+from bite_planner_agent.shopping import Aisle, PreparedRecipes
+from bite_planner_agent.windows import Availability, AvailableDay, Window
 from botocore.stub import Stubber
-from castle_chef_agent.checkout import Checkout, QuoteLine
-from castle_chef_agent.instacart import Product
-from castle_chef_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
-from castle_chef_agent.products import ItemChoice, ProductCount
-from castle_chef_agent.shopping import Aisle, PreparedRecipes
-from castle_chef_agent.windows import Availability, AvailableDay, Window
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from pydantic import BaseModel
@@ -31,16 +31,16 @@ from sqlmodel import Session, col, select
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive, Scope, Send
 
-from castle_chef import api as api_module
-from castle_chef import booking, delivery, household, orders, products, shopping
-from castle_chef.api import app, create_app
-from castle_chef.auth import AuthError, AuthUnavailable, Principal, WebhookRejected
-from castle_chef.checkout import SIGNED_OUT_ERROR, Quote
-from castle_chef.db import get_engine, get_request_session
-from castle_chef.dispatch import DispatchError, LocalDispatcher, SqsDispatcher, get_dispatcher
-from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, create_shop, fail_job, finish_job
-from castle_chef.meals import add_meals
-from castle_chef.models import (
+from bite_planner import api as api_module
+from bite_planner import booking, delivery, household, orders, products, shopping
+from bite_planner.api import app, create_app
+from bite_planner.auth import AuthError, AuthUnavailable, Principal, WebhookRejected
+from bite_planner.checkout import SIGNED_OUT_ERROR, Quote
+from bite_planner.db import get_engine, get_request_session
+from bite_planner.dispatch import DispatchError, LocalDispatcher, SqsDispatcher, get_dispatcher
+from bite_planner.jobs import SUPERSEDED_ERROR, claim_job, create_shop, fail_job, finish_job
+from bite_planner.meals import add_meals
+from bite_planner.models import (
     BookState,
     GroceryOrder,
     Household,
@@ -50,8 +50,8 @@ from castle_chef.models import (
     OrderStep,
     ShoppingListItem,
 )
-from castle_chef.settings import get_settings, load_ssm_parameters
-from castle_chef.shopping import ListEntry, add_items
+from bite_planner.settings import get_settings, load_ssm_parameters
+from bite_planner.shopping import ListEntry, add_items
 from tests.conftest import OTHER_ADDRESS, TEST_ADDRESS
 
 CASTLE = uuid4()  # the household of MOM and DAD
@@ -620,7 +620,7 @@ def test_each_request_is_logged_without_ids(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     order_id = uuid4()
-    with caplog.at_level(logging.INFO, logger="castle_chef.api"):
+    with caplog.at_level(logging.INFO, logger="bite_planner.api"):
         client.get(f"/v1/grocery-orders/{order_id}", headers=as_user(MOM))
         client.get("/v1/me")
 
@@ -2854,7 +2854,7 @@ def test_saved_broad_results_can_be_chosen_and_undone_without_shopping_again(
     def no_live_search() -> None:
         raise AssertionError("Browsing or selecting saved results must not contact Instacart")
 
-    monkeypatch.setattr("castle_chef.instacart.store", no_live_search)
+    monkeypatch.setattr("bite_planner.instacart.store", no_live_search)
     before = item_named(get_order(client, order_id), "tortillas")
     assert before["more_alternatives_query"] == "onions"
     assert before["more_alternatives"][0]["name"] == "Red onions"
@@ -3037,7 +3037,7 @@ def test_app_logs_are_written_as_structured_log_lines(
         {"event": "orders.load_failed", "error": "boom"},
     ]
 
-    with caplog.at_level(logging.INFO, logger="castle_chef.client"):
+    with caplog.at_level(logging.INFO, logger="bite_planner.client"):
         response = client.post(
             "/v1/logs",
             headers=as_user(MOM),
@@ -3045,7 +3045,7 @@ def test_app_logs_are_written_as_structured_log_lines(
         )
 
     assert response.status_code == 204
-    batch, *lines = [r for r in caplog.records if r.name == "castle_chef.client"]
+    batch, *lines = [r for r in caplog.records if r.name == "bite_planner.client"]
     assert (batch.getMessage(), *(vars(batch)[key] for key in ("email", "device", "entries"))) == (
         "client.batch",
         "mom@example.com",
@@ -3067,7 +3067,7 @@ def test_only_app_errors_are_logged_at_error_level(
         {"event": "no.level"},
     ]
 
-    with caplog.at_level(logging.INFO, logger="castle_chef.client"):
+    with caplog.at_level(logging.INFO, logger="bite_planner.client"):
         client.post("/v1/logs", headers=as_user(MOM), json={"device": {}, "entries": entries})
 
     lines = [r for r in caplog.records if r.getMessage() == "client.log"]
@@ -3090,7 +3090,7 @@ def test_oversized_log_batches_are_rejected(client: TestClient) -> None:
 
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "DELETE"])
 def test_configured_origins_may_call_the_api(monkeypatch: pytest.MonkeyPatch, method: str) -> None:
-    monkeypatch.setenv("CASTLE_CHEF_CORS_ORIGINS", '["capacitor://localhost"]')
+    monkeypatch.setenv("BITE_PLANNER_CORS_ORIGINS", '["capacitor://localhost"]')
     get_settings.cache_clear()
     cors_client = TestClient(create_app())
     preflight = {
@@ -3119,7 +3119,7 @@ def test_sqs_dispatcher_sends_the_job_message(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
-    queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/castle-chef-jobs"
+    queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/bite-planner-jobs"
     dispatcher = SqsDispatcher(queue_url)
     job_id = uuid4()
 
@@ -3143,10 +3143,10 @@ def test_secrets_are_loaded_from_ssm_where_not_injected(monkeypatch: pytest.Monk
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
     monkeypatch.setenv(
-        "CASTLE_CHEF_SSM_PARAMETERS",
-        '{"CASTLE_CHEF_TEST_SECRET": "/castle-chef/test/secret", "DATABASE_URL": "/unused"}',
+        "BITE_PLANNER_SSM_PARAMETERS",
+        '{"BITE_PLANNER_TEST_SECRET": "/bite-planner/test/secret", "DATABASE_URL": "/unused"}',
     )
-    monkeypatch.delenv("CASTLE_CHEF_TEST_SECRET", raising=False)
+    monkeypatch.delenv("BITE_PLANNER_TEST_SECRET", raising=False)
     ssm = boto3.client("ssm")
     monkeypatch.setattr(boto3, "client", lambda service: ssm)
 
@@ -3155,12 +3155,12 @@ def test_secrets_are_loaded_from_ssm_where_not_injected(monkeypatch: pytest.Monk
         stub.add_response(
             "get_parameter",
             {"Parameter": {"Value": "s3cret"}},
-            {"Name": "/castle-chef/test/secret", "WithDecryption": True},
+            {"Name": "/bite-planner/test/secret", "WithDecryption": True},
         )
         load_ssm_parameters()
 
-    assert os.environ["CASTLE_CHEF_TEST_SECRET"] == "s3cret"
-    monkeypatch.delenv("CASTLE_CHEF_TEST_SECRET")
+    assert os.environ["BITE_PLANNER_TEST_SECRET"] == "s3cret"
+    monkeypatch.delenv("BITE_PLANNER_TEST_SECRET")
 
 
 # The final review's total: a quote (stage 3).
@@ -3759,7 +3759,7 @@ def test_new_users_auth_failures_are_logged_without_a_session(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     ok(invite(client, "sam@example.com"), 201)
-    with caplog.at_level(logging.INFO, logger="castle_chef.client"):
+    with caplog.at_level(logging.INFO, logger="bite_planner.client"):
         assert (
             client.post(
                 "/v1/auth/diagnostics",
@@ -3787,7 +3787,7 @@ def test_new_users_auth_failures_are_logged_without_a_session(
 def test_unknown_email_cannot_fill_auth_diagnostic_logs(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
-    with caplog.at_level(logging.INFO, logger="castle_chef.client"):
+    with caplog.at_level(logging.INFO, logger="bite_planner.client"):
         assert (
             client.post(
                 "/v1/auth/diagnostics",
@@ -3845,7 +3845,7 @@ def test_a_requests_database_work_is_done_before_its_answer_is_sent(
 def test_each_request_says_whose_it_was_and_why_it_was_refused(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
-    with caplog.at_level(logging.INFO, logger="castle_chef.api"):
+    with caplog.at_level(logging.INFO, logger="bite_planner.api"):
         missing = client.get(f"/v1/grocery-orders/{uuid4()}", headers=as_user(MOM))
         client.get("/v1/me")
         client.get("/v1/me", headers=as_user(MOM))
@@ -3867,7 +3867,7 @@ def test_a_request_that_fails_unexpectedly_is_logged_as_an_error_with_its_traceb
     monkeypatch.setattr(household, "join_if_invited", broken)
     with (
         TestClient(app, raise_server_exceptions=False) as failing,
-        caplog.at_level(logging.INFO, logger="castle_chef.api"),
+        caplog.at_level(logging.INFO, logger="bite_planner.api"),
     ):
         assert failing.get("/v1/me", headers=as_user(MOM)).status_code == 500
 
@@ -3884,10 +3884,10 @@ def test_a_caller_that_hangs_up_is_not_logged_as_a_defect(
         raise ClientDisconnect()
 
     monkeypatch.setattr(household, "join_if_invited", gone)
-    with caplog.at_level(logging.INFO, logger="castle_chef.api"):
+    with caplog.at_level(logging.INFO, logger="bite_planner.api"):
         client.get("/v1/me", headers=as_user(MOM))
 
-    events = [(r.getMessage(), r.levelname) for r in caplog.records if r.name == "castle_chef.api"]
+    events = [(r.getMessage(), r.levelname) for r in caplog.records if r.name == "bite_planner.api"]
     assert ("http.client_gone", "WARNING") in events
     assert not [event for event in events if event[1] == "ERROR"]
 
@@ -3897,13 +3897,13 @@ def test_prepared_recipe_is_one_snapshot_for_recipe_list_and_shop_reference(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from castle_chef_agent.jobfiles import write_context
-    from castle_chef_agent.server import Tools, shopping_list_server
-    from castle_chef_agent.shopping import ListJob
+    from bite_planner_agent.jobfiles import write_context
+    from bite_planner_agent.server import Tools, shopping_list_server
+    from bite_planner_agent.shopping import ListJob
 
-    from castle_chef import worker
-    from castle_chef.api import MealOut
-    from castle_chef.models import MealIngredient, MealStep
+    from bite_planner import worker
+    from bite_planner.api import MealOut
+    from bite_planner.models import MealIngredient, MealStep
     from tests.test_prepared_recipes import adaptation, context
     from tests.test_products_tools import call
 
@@ -4011,7 +4011,7 @@ def test_prepared_recipe_is_one_snapshot_for_recipe_list_and_shop_reference(
         )
     )
     with Session(get_engine()) as session:
-        from castle_chef.models import JobKind
+        from bite_planner.models import JobKind
 
         # Placed recipes follow the newest succeeded build owning their list,
         # regardless of a newer failed build record.
@@ -4054,8 +4054,8 @@ def test_prepared_save_never_leaks_items_or_snapshot(
     caplog: pytest.LogCaptureFixture,
     change: str,
 ) -> None:
-    from castle_chef import worker
-    from castle_chef.models import GroceryOrderMeal, JobKind
+    from bite_planner import worker
+    from bite_planner.models import GroceryOrderMeal, JobKind
     from tests.test_prepared_recipes import proportional_snapshot
 
     order_id, [meal_id] = with_suggestions(client, names=("Beans",))
@@ -4107,7 +4107,7 @@ def test_prepared_save_never_leaks_items_or_snapshot(
             result.prepared.recipes[0].servings = 12
         session.commit()
     monkeypatch.setattr(worker, "_notify_failed", lambda *_args: None)
-    with caplog.at_level(logging.INFO, logger="castle_chef.worker"):
+    with caplog.at_level(logging.INFO, logger="bite_planner.worker"):
         assert worker._save(claimed, result, {}) == (False, None)
     if change in {"servings", "revision"}:
         [event] = [r for r in caplog.records if r.getMessage() == "job.superseded"]
@@ -4130,12 +4130,12 @@ def test_worker_merges_identity_and_adapted_recipes_and_api_keeps_actual_base_yi
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from castle_chef_agent.jobfiles import write_context
-    from castle_chef_agent.server import Tools, shopping_list_server
-    from castle_chef_agent.shopping import ListJob
+    from bite_planner_agent.jobfiles import write_context
+    from bite_planner_agent.server import Tools, shopping_list_server
+    from bite_planner_agent.shopping import ListJob
 
-    from castle_chef import worker
-    from castle_chef.api import MealOut
+    from bite_planner import worker
+    from bite_planner.api import MealOut
     from tests.test_products_tools import call
 
     order_id, ids = with_suggestions(client, names=("Legacy four", "Base two"))
@@ -4177,7 +4177,7 @@ def test_worker_merges_identity_and_adapted_recipes_and_api_keeps_actual_base_yi
                     steps=[s.text for s in recipe.steps],
                 )[0]
             for index, ingredient in enumerate(recipe.ingredients):
-                from castle_chef_agent.shopping import letters
+                from bite_planner_agent.shopping import letters
 
                 line = f"{recipe.number}{letters(index)}"
                 if ingredient.name == "salt":

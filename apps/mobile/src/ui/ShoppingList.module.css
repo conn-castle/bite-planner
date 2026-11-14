@@ -3,10 +3,10 @@
 .card {
   margin-top: 16px;
   overflow: hidden;
-  border: 0.5px solid var(--cc-card-line);
-  border-radius: var(--cc-radius-md);
-  background: var(--cc-bg);
-  box-shadow: var(--cc-shadow-line);
+  border: 0.5px solid var(--bp-card-line);
+  border-radius: var(--bp-radius-md);
+  background: var(--bp-bg);
+  box-shadow: var(--bp-shadow-line);
 }
 
 .aisle {
@@ -33,7 +33,7 @@
   gap: 10px;
   margin: 0 14px;
   padding: 10px 0;
-  border-bottom: 0.5px solid var(--cc-hairline);
+  border-bottom: 0.5px solid var(--bp-hairline);
 }
 
 .row:last-child {
@@ -68,29 +68,29 @@
   display: block;
   overflow: hidden;
   font-size: 12px;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .removed {
   font-weight: 600;
-  color: var(--cc-danger);
+  color: var(--bp-danger);
 }
 
 /* Taken off the list: crossed out, its name in red. */
 .out .amount,
 .out .name b {
   text-decoration: line-through;
-  text-decoration-color: color-mix(in srgb, var(--cc-danger) 45%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--bp-danger) 45%, transparent);
 }
 
 .out .name b {
-  color: color-mix(in srgb, var(--cc-danger) 75%, var(--cc-ink));
+  color: color-mix(in srgb, var(--bp-danger) 75%, var(--bp-ink));
 }
 
 .out .amount {
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 /* The shopped list: each aisle's products in tiles, two across. */
@@ -116,7 +116,7 @@
   flex-direction: column;
   min-width: 0;
   padding: 10px;
-  border: 0.5px solid var(--cc-card-line);
+  border: 0.5px solid var(--bp-card-line);
   border-radius: 14px;
 }
 
@@ -161,7 +161,7 @@ div.tileOpen {
   margin-top: 2px;
   font-size: 12.5px;
   line-height: 1.3;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .tileProduct .again {
@@ -181,7 +181,7 @@ div.tileOpen {
   margin-left: 6px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .tilePrice.removed {
@@ -197,12 +197,12 @@ div.tileOpen {
   margin-top: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 /* Not buying: on the fill, the picture faded, the item crossed out in red. */
 .tileOut {
-  background: var(--cc-fill);
+  background: var(--bp-fill);
 }
 
 .tileOut .picture {
@@ -211,21 +211,21 @@ div.tileOpen {
 
 .tileOut .tileItem {
   text-decoration: line-through;
-  text-decoration-color: color-mix(in srgb, var(--cc-danger) 45%, transparent);
-  color: color-mix(in srgb, var(--cc-danger) 75%, var(--cc-ink));
+  text-decoration-color: color-mix(in srgb, var(--bp-danger) 45%, transparent);
+  color: color-mix(in srgb, var(--bp-danger) 75%, var(--bp-ink));
 }
 
 .picture {
   flex: none;
   display: block;
   object-fit: contain;
-  border: 0.5px solid var(--cc-hairline);
+  border: 0.5px solid var(--bp-hairline);
   border-radius: 12px;
-  background: var(--cc-bg);
+  background: var(--bp-bg);
 }
 
 span.picture {
-  background: var(--cc-fill);
+  background: var(--bp-fill);
 }
 
 /* A tile's: across it, without the frame. */
@@ -260,12 +260,12 @@ span.pictureTile {
   display: inline-flex;
   vertical-align: -2px;
   font-size: 14px;
-  color: var(--cc-success);
+  color: var(--bp-success);
 }
 
 /* The store doesn't have these: an aisle card, clearly a problem. */
 .missing {
-  border-color: color-mix(in srgb, var(--cc-danger) 35%, transparent);
+  border-color: color-mix(in srgb, var(--bp-danger) 35%, transparent);
 }
 
 .decide {
@@ -280,15 +280,15 @@ span.pictureTile {
   padding: 7px 12px;
   border: 0;
   border-radius: 999px;
-  background: var(--cc-fill);
+  background: var(--bp-fill);
   font: inherit;
   font-size: 14px;
   font-weight: 650;
-  color: var(--cc-ink);
+  color: var(--bp-ink);
   cursor: pointer;
 }
 
 .pillDark {
-  background: var(--cc-ink);
-  color: var(--cc-on-ink);
+  background: var(--bp-ink);
+  color: var(--bp-on-ink);
 }

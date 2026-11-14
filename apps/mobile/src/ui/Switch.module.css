@@ -1,4 +1,4 @@
 .switch {
-  --track-background-checked: var(--cc-accent);
+  --track-background-checked: var(--bp-accent);
   flex: none;
 }

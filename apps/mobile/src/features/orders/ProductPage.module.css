@@ -10,7 +10,7 @@
 
 .item {
   margin: 10px 0 0;
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   font-size: 26px;
   font-weight: 700;
   line-height: 1.15;
@@ -29,16 +29,16 @@
 
 .out .item {
   text-decoration: line-through;
-  text-decoration-color: color-mix(in srgb, var(--cc-danger) 60%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--bp-danger) 60%, transparent);
   text-decoration-thickness: 2px;
-  color: color-mix(in srgb, var(--cc-danger) 75%, var(--cc-ink));
+  color: color-mix(in srgb, var(--bp-danger) 75%, var(--bp-ink));
 }
 
 .product {
   margin: 0;
   font-size: 14.5px;
   line-height: 1.35;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .product > span {

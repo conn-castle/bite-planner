@@ -26,13 +26,13 @@
   display: flex;
   flex-direction: column;
   /* Not clipped: its × sits a little off the corner. */
-  border-radius: var(--cc-radius-md);
-  background: var(--cc-bg);
-  border: 1.5px solid var(--cc-hairline);
-  animation: appear 380ms var(--cc-ease) both;
+  border-radius: var(--bp-radius-md);
+  background: var(--bp-bg);
+  border: 1.5px solid var(--bp-hairline);
+  animation: appear 380ms var(--bp-ease) both;
   transition:
-    border-color 200ms var(--cc-ease),
-    background-color 200ms var(--cc-ease);
+    border-color 200ms var(--bp-ease),
+    background-color 200ms var(--bp-ease);
 }
 
 @keyframes appear {
@@ -43,7 +43,7 @@
 }
 
 .added {
-  border-color: var(--cc-ink);
+  border-color: var(--bp-ink);
   background: #fbfaf8;
 }
 
@@ -61,7 +61,7 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
-  transition: opacity var(--cc-press) var(--cc-ease);
+  transition: opacity var(--bp-press) var(--bp-ease);
 }
 
 .open:active {
@@ -75,8 +75,8 @@
   height: 104px;
   overflow: hidden;
   /* The card's rounded top, inside its border. */
-  border-radius: calc(var(--cc-radius-md) - 1.5px) calc(var(--cc-radius-md) - 1.5px) 0 0;
-  background: var(--cc-fill);
+  border-radius: calc(var(--bp-radius-md) - 1.5px) calc(var(--bp-radius-md) - 1.5px) 0 0;
+  background: var(--bp-fill);
 }
 
 .art svg {
@@ -108,13 +108,13 @@
   }
 }
 
-.placeholder .add { display: block; height: 34px; border-radius: var(--cc-radius-pill); }
+.placeholder .add { display: block; height: 34px; border-radius: var(--bp-radius-pill); }
 .add { margin: 8px 10px 10px; }
-.change { margin: 8px 10px 0; font-size: 12px; color: var(--cc-ink-2); }
+.change { margin: 8px 10px 0; font-size: 12px; color: var(--bp-ink-2); }
 
 /* Marked "don't show meals like this" (.pc.off). */
 .notForUs {
-  background: var(--cc-fill);
+  background: var(--bp-fill);
   border-color: transparent;
 }
 
@@ -124,7 +124,7 @@
 }
 
 .notForUs .name {
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .notForUs .facts {
@@ -145,13 +145,13 @@
   text-align: center;
   font-size: 12px;
   font-weight: 650;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .placeholder .art,
 .placeholder .line,
 .placeholder .add {
-  background: var(--cc-fill-strong);
+  background: var(--bp-fill-strong);
   animation: pulse 1s ease-in-out infinite;
 }
 
@@ -184,20 +184,20 @@
   margin: 0;
   text-align: center;
   font-size: 12.5px;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .hint b {
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 /* An indeterminate progress line. */
 .progress {
   height: 6px;
   border-radius: 3px;
-  background: linear-gradient(90deg, transparent, var(--cc-accent), transparent) no-repeat var(--cc-fill-strong);
+  background: linear-gradient(90deg, transparent, var(--bp-accent), transparent) no-repeat var(--bp-fill-strong);
   background-size: 40% 100%;
-  animation: sweep 1.6s var(--cc-ease) infinite;
+  animation: sweep 1.6s var(--bp-ease) infinite;
 }
 
 @keyframes sweep {

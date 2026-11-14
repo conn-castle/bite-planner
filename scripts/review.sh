@@ -10,21 +10,21 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # The public Tailscale HTTPS port, also used by Vite's HMR client.
-readonly REVIEW_PORT=${CASTLE_CHEF_REVIEW_PORT:-5174}
-readonly APP_PORT=${CASTLE_CHEF_APP_PORT:-5175} API_PORT=${CASTLE_CHEF_API_PORT:-8000}
-readonly REVIEW_TOOL=.agent-layer/skills-imported/request-html-comments/scripts/html_review.mjs
+readonly REVIEW_PORT=${BITE_PLANNER_REVIEW_PORT:-5174}
+readonly APP_PORT=${BITE_PLANNER_APP_PORT:-5175} API_PORT=${BITE_PLANNER_API_PORT:-8000}
+readonly REVIEW_TOOL=${BITE_PLANNER_REVIEW_TOOL:?Set BITE_PLANNER_REVIEW_TOOL to the installed html_review.mjs path}
 
 [[ -f backend/.env ]] || { echo "Missing backend/.env: run make env" >&2; exit 1; }
-[[ -f $REVIEW_TOOL ]] || { echo "Missing $REVIEW_TOOL: run al skills pull" >&2; exit 1; }
+[[ -f $REVIEW_TOOL ]] || { echo "Missing $REVIEW_TOOL: set BITE_PLANNER_REVIEW_TOOL to an installed annotation tool" >&2; exit 1; }
 # The final review's total reads the Instacart session from SSM (scripts/worker-docker.sh).
-aws sts get-caller-identity --profile conn >/dev/null 2>&1 \
-  || { echo "Sign in to AWS first: aws sso login --profile conn --use-device-code" >&2; exit 1; }
+aws sts get-caller-identity >/dev/null 2>&1 \
+  || { echo "Sign in to AWS first: aws sso login --profile ${AWS_PROFILE:?Set AWS_PROFILE} --use-device-code" >&2; exit 1; }
 
 # Prepare the API's database with the same command as `make migrate` before any
 # server starts: `/health` alone doesn't detect a schema behind this checkout.
 (cd backend
-  if [[ -n ${CASTLE_CHEF_REVIEW_DATABASE_URL:-} ]]; then
-    export DATABASE_URL=$CASTLE_CHEF_REVIEW_DATABASE_URL
+  if [[ -n ${BITE_PLANNER_REVIEW_DATABASE_URL:-} ]]; then
+    export DATABASE_URL=$BITE_PLANNER_REVIEW_DATABASE_URL
   fi
   uv run alembic upgrade head)
 
@@ -39,12 +39,12 @@ scripts/worker-docker.sh build >/dev/null
 # Each server gets its own process group, so stopping it stops its children too.
 set -m
 (cd backend
-  if [[ -n ${CASTLE_CHEF_REVIEW_DATABASE_URL:-} ]]; then
-    export DATABASE_URL=$CASTLE_CHEF_REVIEW_DATABASE_URL
+  if [[ -n ${BITE_PLANNER_REVIEW_DATABASE_URL:-} ]]; then
+    export DATABASE_URL=$BITE_PLANNER_REVIEW_DATABASE_URL
   fi
-  AWS_PROFILE=conn AWS_REGION=us-east-1 exec uv run uvicorn castle_chef.api:app --reload --port "$API_PORT") </dev/null &
+  exec uv run uvicorn bite_planner.api:app --reload --port "$API_PORT") </dev/null &
 api=$!
-(cd apps/mobile && CASTLE_CHEF_REVIEW_PORT=$REVIEW_PORT CASTLE_CHEF_API_DEV_URL="http://127.0.0.1:$API_PORT" \
+(cd apps/mobile && BITE_PLANNER_REVIEW_PORT=$REVIEW_PORT BITE_PLANNER_API_DEV_URL="http://127.0.0.1:$API_PORT" \
   exec pnpm exec vite --port "$APP_PORT" --strictPort) </dev/null &
 web=$!
 # Waits on the servers by pid, never a bare `wait`: a background child that a stop

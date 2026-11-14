@@ -1,5 +1,5 @@
 /*
- * Castle Chef design tokens. Every color, radius, shadow, and type choice lives
+ * Bite Planner design tokens. Every color, radius, shadow, and type choice lives
  * here; components use these variables, never raw values. Light only, by design.
  */
 
@@ -7,133 +7,133 @@
   color-scheme: light;
 
   /* Surfaces */
-  --cc-bg: #ffffff;
-  --cc-home-bg: #eceae5; /* the warm page behind the tab screens' cards */
-  --cc-fill: #f5f4f1; /* warm off-white: inputs, chips, pressed rows */
-  --cc-fill-strong: #ecebe7;
-  --cc-hairline: rgba(20, 19, 17, 0.08);
+  --bp-bg: #ffffff;
+  --bp-home-bg: #eceae5; /* the warm page behind the tab screens' cards */
+  --bp-fill: #f5f4f1; /* warm off-white: inputs, chips, pressed rows */
+  --bp-fill-strong: #ecebe7;
+  --bp-hairline: rgba(20, 19, 17, 0.08);
 
   /* Ink */
-  --cc-ink: #141311;
-  --cc-ink-2: #62605b;
-  --cc-ink-3: #9d9a94;
-  --cc-on-ink: #ffffff;
-  --cc-on-ink-2: #cfcbc4; /* secondary text on ink */
+  --bp-ink: #141311;
+  --bp-ink-2: #62605b;
+  --bp-ink-3: #9d9a94;
+  --bp-on-ink: #ffffff;
+  --bp-on-ink-2: #cfcbc4; /* secondary text on ink */
 
   /* One warm accent, used sparingly: activity, highlights, the brand mark. */
-  --cc-accent: #ef5a2f;
-  --cc-accent-soft: #fdefe9;
-  --cc-success: #1d8a5a;
-  --cc-success-soft: #e8f5ee;
-  --cc-danger: #d23b2c;
-  --cc-danger-soft: #fcecea;
+  --bp-accent: #ef5a2f;
+  --bp-accent-soft: #fdefe9;
+  --bp-success: #1d8a5a;
+  --bp-success-soft: #e8f5ee;
+  --bp-danger: #d23b2c;
+  --bp-danger-soft: #fcecea;
   /* Another member at work (e.g. placing an order): their initial, the lock's card and progress. */
-  --cc-other: #5b7fa8;
-  --cc-other-soft: #eef2f8;
-  --cc-other-line: rgba(91, 127, 168, 0.45);
-  --cc-other-ring: rgba(91, 127, 168, 0.3);
+  --bp-other: #5b7fa8;
+  --bp-other-soft: #eef2f8;
+  --bp-other-line: rgba(91, 127, 168, 0.45);
+  --bp-other-ring: rgba(91, 127, 168, 0.3);
 
   /* Each order's color, in turn by order number: the days its meals cover.
      -soft is its card's tinted head, -deep its text on that tint. */
-  --cc-order-1: #6f9a78;
-  --cc-order-1-soft: #eef4ef;
-  --cc-order-1-deep: #4c7456;
-  --cc-order-2: #6a8bb5;
-  --cc-order-2-soft: #eef2f8;
-  --cc-order-2-deep: #46668f;
-  --cc-order-3: #9a78b0;
-  --cc-order-3-soft: #f4eff7;
-  --cc-order-3-deep: #74558a;
-  --cc-order-4: #3f9795;
-  --cc-order-4-soft: #e8f3f3;
-  --cc-order-4-deep: #2c7371;
-  --cc-order-5: #c8903a;
-  --cc-order-5-soft: #f8f1e3;
-  --cc-order-5-deep: #94661f;
+  --bp-order-1: #6f9a78;
+  --bp-order-1-soft: #eef4ef;
+  --bp-order-1-deep: #4c7456;
+  --bp-order-2: #6a8bb5;
+  --bp-order-2-soft: #eef2f8;
+  --bp-order-2-deep: #46668f;
+  --bp-order-3: #9a78b0;
+  --bp-order-3-soft: #f4eff7;
+  --bp-order-3-deep: #74558a;
+  --bp-order-4: #3f9795;
+  --bp-order-4-soft: #e8f3f3;
+  --bp-order-4-deep: #2c7371;
+  --bp-order-5: #c8903a;
+  --bp-order-5-soft: #f8f1e3;
+  --bp-order-5-deep: #94661f;
 
   /* Each shopping list aisle's card head: -soft its band, -deep its text. Their
      own set, apart from the order colors, so a color never means both. */
-  --cc-aisle-produce-soft: #eef4ef;
-  --cc-aisle-produce-deep: #44704f;
-  --cc-aisle-meat-soft: #f8ece8;
-  --cc-aisle-meat-deep: #94503c;
-  --cc-aisle-dairy-soft: #f8f2e1;
-  --cc-aisle-dairy-deep: #8a6420;
-  --cc-aisle-frozen-soft: #eaf1f7;
-  --cc-aisle-frozen-deep: #3f6588;
-  --cc-aisle-pantry-soft: #f3eee6;
-  --cc-aisle-pantry-deep: #6f5a3e;
-  --cc-aisle-other-soft: var(--cc-fill);
-  --cc-aisle-other-deep: var(--cc-ink-2);
+  --bp-aisle-produce-soft: #eef4ef;
+  --bp-aisle-produce-deep: #44704f;
+  --bp-aisle-meat-soft: #f8ece8;
+  --bp-aisle-meat-deep: #94503c;
+  --bp-aisle-dairy-soft: #f8f2e1;
+  --bp-aisle-dairy-deep: #8a6420;
+  --bp-aisle-frozen-soft: #eaf1f7;
+  --bp-aisle-frozen-deep: #3f6588;
+  --bp-aisle-pantry-soft: #f3eee6;
+  --bp-aisle-pantry-deep: #6f5a3e;
+  --bp-aisle-other-soft: var(--bp-fill);
+  --bp-aisle-other-deep: var(--bp-ink-2);
   /* A card on the white page: a thin border and the slightest lift. */
-  --cc-card-line: rgba(20, 19, 17, 0.11);
-  --cc-shadow-line: 0 1px 2px rgba(20, 19, 17, 0.04);
+  --bp-card-line: rgba(20, 19, 17, 0.11);
+  --bp-shadow-line: 0 1px 2px rgba(20, 19, 17, 0.04);
 
   /* Type */
   /* Text: SF Pro on Apple devices, Inter (with optical sizes) elsewhere.
      Titles: SF Pro Rounded where the system has it, else the text font. */
-  --cc-font-text: -apple-system, BlinkMacSystemFont, 'Inter Variable', system-ui, sans-serif;
-  --cc-font-display: ui-rounded, var(--cc-font-text);
+  --bp-font-text: -apple-system, BlinkMacSystemFont, 'Inter Variable', system-ui, sans-serif;
+  --bp-font-display: ui-rounded, var(--bp-font-text);
 
   /* Shape */
-  --cc-radius-sm: 12px;
-  --cc-radius-md: 18px;
-  --cc-radius-lg: 26px;
-  --cc-radius-pill: 999px;
+  --bp-radius-sm: 12px;
+  --bp-radius-md: 18px;
+  --bp-radius-lg: 26px;
+  --bp-radius-pill: 999px;
 
   /* Depth */
-  --cc-shadow-card: 0 1px 2px rgba(20, 19, 17, 0.04), 0 10px 28px -14px rgba(20, 19, 17, 0.14);
-  --cc-shadow-float: 0 18px 44px -16px rgba(20, 19, 17, 0.3), 0 2px 8px rgba(20, 19, 17, 0.06);
-  --cc-glass: rgba(255, 255, 255, 0.74);
-  --cc-glass-strong: rgba(255, 255, 255, 0.86); /* glass that text sits on, e.g. a sheet's footer */
-  --cc-glass-bar: rgba(255, 255, 255, 0.82); /* a pushed page's navigation bar (.navbar) */
-  --cc-glass-blur: blur(24px) saturate(180%);
+  --bp-shadow-card: 0 1px 2px rgba(20, 19, 17, 0.04), 0 10px 28px -14px rgba(20, 19, 17, 0.14);
+  --bp-shadow-float: 0 18px 44px -16px rgba(20, 19, 17, 0.3), 0 2px 8px rgba(20, 19, 17, 0.06);
+  --bp-glass: rgba(255, 255, 255, 0.74);
+  --bp-glass-strong: rgba(255, 255, 255, 0.86); /* glass that text sits on, e.g. a sheet's footer */
+  --bp-glass-bar: rgba(255, 255, 255, 0.82); /* a pushed page's navigation bar (.navbar) */
+  --bp-glass-blur: blur(24px) saturate(180%);
 
   /* Layout */
-  --cc-page-x: 20px; /* text and headings */
-  --cc-card-x: 16px; /* cards on the tab screens */
-  --cc-tab-bar-height: 64px;
-  --cc-tab-bar-width: 292px;
+  --bp-page-x: 20px; /* text and headings */
+  --bp-card-x: 16px; /* cards on the tab screens */
+  --bp-tab-bar-height: 64px;
+  --bp-tab-bar-width: 292px;
   /* From the screen's bottom edge; never lower than the home indicator's safe area. */
-  --cc-tab-bar-bottom: max(28px, var(--ion-safe-area-bottom, 0px));
+  --bp-tab-bar-bottom: max(28px, var(--ion-safe-area-bottom, 0px));
   /* Space kept free at the bottom of every tab page for the floating tab bar. */
-  --cc-tab-bar-clearance: calc(var(--cc-tab-bar-height) + var(--cc-tab-bar-bottom) + 40px);
+  --bp-tab-bar-clearance: calc(var(--bp-tab-bar-height) + var(--bp-tab-bar-bottom) + 40px);
 
   /* Space the offline banner takes at the top of the tab screens while it shows (app/OfflineBanner). */
-  --cc-offline-space: 0px;
+  --bp-offline-space: 0px;
   /* The smallest area a control takes taps across, however small it's drawn. */
-  --cc-hit-min: 44px;
+  --bp-hit-min: 44px;
 
   /* Motion: critically damped ease for UI; springs where a gesture is involved. */
-  --cc-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --cc-press: 120ms;
+  --bp-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --bp-press: 120ms;
 
   /* Ionic, mapped onto the tokens. */
-  --ion-background-color: var(--cc-bg);
+  --ion-background-color: var(--bp-bg);
   --ion-background-color-rgb: 255, 255, 255;
-  --ion-text-color: var(--cc-ink);
+  --ion-text-color: var(--bp-ink);
   --ion-text-color-rgb: 20, 19, 17;
-  --ion-font-family: var(--cc-font-text);
-  --ion-color-primary: var(--cc-ink);
+  --ion-font-family: var(--bp-font-text);
+  --ion-color-primary: var(--bp-ink);
   --ion-color-primary-rgb: 20, 19, 17;
-  --ion-color-primary-contrast: var(--cc-on-ink);
+  --ion-color-primary-contrast: var(--bp-on-ink);
   --ion-color-primary-contrast-rgb: 255, 255, 255;
   --ion-color-primary-shade: #000000;
   --ion-color-primary-tint: #2c2b28;
-  --ion-color-danger: var(--cc-danger);
+  --ion-color-danger: var(--bp-danger);
   --ion-color-danger-rgb: 210, 59, 44;
-  --ion-toolbar-background: var(--cc-bg);
-  --ion-toolbar-border-color: var(--cc-hairline);
-  --ion-border-color: var(--cc-hairline);
+  --ion-toolbar-background: var(--bp-bg);
+  --ion-toolbar-border-color: var(--bp-hairline);
+  --ion-border-color: var(--bp-hairline);
   --ion-item-background: transparent;
   --ion-backdrop-opacity: 0.28;
 }
 
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --cc-glass: #ffffff;
-    --cc-glass-strong: #ffffff;
-    --cc-glass-bar: #ffffff;
-    --cc-glass-blur: none;
+    --bp-glass: #ffffff;
+    --bp-glass-strong: #ffffff;
+    --bp-glass-bar: #ffffff;
+    --bp-glass-blur: none;
   }
 }

@@ -9,9 +9,9 @@
 
 .welcome {
   padding: 22px 20px 20px;
-  border-radius: var(--cc-radius-lg);
-  background: var(--cc-bg);
-  border: 1.5px solid var(--cc-accent);
+  border-radius: var(--bp-radius-lg);
+  background: var(--bp-bg);
+  border: 1.5px solid var(--bp-accent);
   box-shadow: 0 12px 30px -16px rgba(239, 90, 47, 0.45);
 }
 
@@ -28,7 +28,7 @@
   height: 52px;
   overflow: hidden;
   border-radius: 50%;
-  background: var(--cc-fill);
+  background: var(--bp-fill);
 }
 
 .meal svg {
@@ -38,7 +38,7 @@
 
 .title {
   margin: 0;
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   font-size: 23px;
   font-weight: 700;
   line-height: 1.15;
@@ -48,7 +48,7 @@
 .subtitle {
   margin: 6px 0 0;
   font-size: 14px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .start {

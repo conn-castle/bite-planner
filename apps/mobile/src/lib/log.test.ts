@@ -93,14 +93,14 @@ describe('log outbox', () => {
     first.logger.info('uploaded')
     const batch = await first.nextLogBatch(10)
     batch.commit()
-    await vi.waitFor(() => expect(JSON.parse(stored.get('castle-chef.log-outbox') ?? '{}').entries).toEqual([]))
+    await vi.waitFor(() => expect(JSON.parse(stored.get('bite-planner.log-outbox') ?? '{}').entries).toEqual([]))
 
     const { nextLogBatch } = await freshLog()
     expect((await nextLogBatch(10)).entries).toEqual([])
   })
 
   it('reports a saved outbox it cannot read, and still queues what is logged after', async () => {
-    stored.set('castle-chef.log-outbox', JSON.stringify({ entries: [{ event: 'no level or time' }], dropped: 0 }))
+    stored.set('bite-planner.log-outbox', JSON.stringify({ entries: [{ event: 'no level or time' }], dropped: 0 }))
     const { logger, nextLogBatch } = await freshLog()
     logger.info('after launch')
 

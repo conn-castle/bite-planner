@@ -1,4 +1,6 @@
-"""CDK app: released by .github/actions/deploy; by hand, docs/operations/aws.md "Deploying by hand".
+"""CDK app: released by .github/actions/deploy.
+
+Manual deployment: docs/operations/aws.md "Provisioning sequence".
 
 Context:
   stage              dev | prod (cdk.json `stages`); default prod
@@ -11,8 +13,8 @@ import os
 
 import aws_cdk as cdk
 
-from castle_chef_infra.repositories import RepositoriesStack
-from castle_chef_infra.runtime import RuntimeConfig, RuntimeStack
+from bite_planner_infra.repositories import RepositoriesStack
+from bite_planner_infra.runtime import RuntimeConfig, RuntimeStack
 
 app = cdk.App()
 
@@ -42,16 +44,16 @@ def image_digest(name: str) -> str:
 
 repositories = RepositoriesStack(
     app,
-    "CastleChefRepositories",
+    "BitePlannerRepositories",
     env=environment,
-    github_subject=required_env("CASTLE_CHEF_GITHUB_SUBJECT"),
-    budget_email=required_env("CASTLE_CHEF_ALARM_EMAIL"),
+    github_subject=required_env("BITE_PLANNER_GITHUB_SUBJECT"),
+    budget_email=required_env("BITE_PLANNER_ALARM_EMAIL"),
 )
 if app.node.try_get_context("repositoriesOnly") != "true":
     runtime = RuntimeStack(
         app,
         # One stack per stage; prod keeps the plain name.
-        "CastleChef" if stage_name == "prod" else f"CastleChef-{stage_name}",
+        "BitePlanner" if stage_name == "prod" else f"BitePlanner-{stage_name}",
         env=environment,
         config=RuntimeConfig(
             neon_auth_url=required_env(
@@ -60,14 +62,14 @@ if app.node.try_get_context("repositoriesOnly") != "true":
             database_url_parameter=stage["databaseUrlParameter"],
             instacart_booking_parameter=stage["instacartBookingParameter"],
             cors_origins=stage["corsOrigins"],
-            alarm_email=required_env("CASTLE_CHEF_ALARM_EMAIL"),
+            alarm_email=required_env("BITE_PLANNER_ALARM_EMAIL"),
             release=app.node.get_context("release"),
             api_image_digest=image_digest("apiImageDigest"),
             worker_image_digest=image_digest("workerImageDigest"),
         ),
     )
-    cdk.Tags.of(runtime).add("project", "castle-chef")
+    cdk.Tags.of(runtime).add("project", "bite-planner")
     cdk.Tags.of(runtime).add("stage", stage_name)
-cdk.Tags.of(repositories).add("project", "castle-chef")
+cdk.Tags.of(repositories).add("project", "bite-planner")
 
 app.synth()

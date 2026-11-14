@@ -18,15 +18,12 @@ Functional requirements for ordering. Check an item off when it's implemented. T
 
 ## Ordering flow
 
-The flow being built toward, one piece at a time:
-
-1. Meal ideas are generated, and while they generate the user is asked to rate recent meals.
-2. Pick meals.
-3. Servings: each picked meal's servings (− and + around the number). Leaving this step starts the shopping list: it's made, then shopped at Instacart, in one wait.
-4. The shopping list: the Wegmans products chosen for it, which the user reviews and changes (piece 9). Until piece 9, the list of things to buy, after the dates.
-5. Delivery: the day, and the latest time it should arrive by (piece 9). Until piece 9, the delivery date, after servings.
-6. Next delivery date (which sets the next order's decide-by date).
-7. Final review: the user checks the order, with its estimated total, and approves it. It's booked at Instacart right away or, for a day not bookable yet, one day after Instacart first offers it; the confirmation shows the Instacart order.
+1. Pick meals (including the wait while ideas generate).
+2. Choose servings for each selected meal.
+3. Review the built and shopped list and resolve product decisions.
+4. Choose the delivery day and latest arrival time.
+5. Choose the next delivery date.
+6. Review the quote and approve booking under its stated window policy.
 
 Each step does one thing.
 
@@ -59,7 +56,7 @@ Each step does one thing.
 ## Order lock
 
 - [x] Only one household member can be creating an order at a time.
-- [x] The lock is held from when order creation starts until it is closed or the order is placed (from stage 3: approved).
+- [x] The lock is held from when order creation starts until it is closed or the order is placed (approved).
 - [x] The open app renews the lock every 30 seconds; the lock expires 2 minutes after the last renewal.
 - [x] While one member has order creation open, other members are told that another household member is ordering.
 
@@ -71,11 +68,7 @@ The list is made in three stages:
 2. An AI agent combines those ingredients into one list of things to buy (e.g. "1 onion" and "1 cup diced onion" become onions), grouped by aisle.
 3. An agent shops that list at Instacart: it chooses the exact product for each item, with alternatives; the user reviews them in the app, picks the delivery day and latest time, and approves, and the order is booked without anything more to do.
 
-Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-27):
-
-- No grocery service offers a public, self-serve way for another app to place orders on a shopper's account. Instacart's developer program isn't accepting applications; its tools that fill a real cart and check out are for partners (ChatGPT, Claude, Gemini, Muse). Walmart's checkout API and grocery program need approval and a business case.
-- For our household it works today, with the household's accounts (Nick's): Instacart's own tools in the ChatGPT apps, called through the Codex app-server with the household's ChatGPT sign-in, search Wegmans (with sizes, prices, pictures, and "Buy it again") and fill the cart; a headless browser with the household's Instacart session reads checkout (times, fees, total) and places the order after the user approves it in the app. The model only searches and chooses, through our tools; our code writes the cart and checks out. Instacart's terms don't allow an automated system to operate an account without its authorization; the account owner accepts that for personal use.
-- Walmart is the path if Castle Chef is ever offered to other households: its product API is self-serve, and one link fills anyone's Walmart cart with chosen products and quantities; the shopper then checks out themselves.
+The current grocery integration uses operator-connected Instacart tools for product search/cart access and a protected browser session for checkout. Other providers are deferred; this contract makes no claim about their API availability or admission policies.
 
 - [x] Before an order is placed, the backend generates its shopping list from the chosen meals and their servings (stages 1 and 2), asynchronously (it takes minutes), starting as soon as the servings are chosen; the user sees it when it's done.
 - [x] Changing selected meals, their servings or accepted recipe revisions makes a list stale. Replacing it rebuilds from scratch after a warning; quantities, removals and product choices reset. Picks and servings can be undone to restore the old list before replacement. (Generation isn't deterministic and can change the list a lot, so there is no merging.)
@@ -94,14 +87,14 @@ Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-2
 - [x] The final review shows the estimated total (the items, each of checkout's other lines as Instacart labels them, and the tip), the day and latest time, and the account's address, card, and what Instacart does when an item is out of stock (a setting on each item in the cart, "Replace with best match" unless changed: the one setting, or "Varies by item"). Below the store's minimum ($10 at Wegmans), it says so and the order can't be approved.
 - [x] Approval authorizes exactly the saved delivery date and latest arrival time. Booking chooses the latest remaining window on that date ending no later than the approved time. It never substitutes another date or a later arrival without a new explicit approval; final review states that policy.
 - [x] An approved delivery whose date has actual windows in its fresh snapshot books immediately. For future dates not yet offered, booking waits until four days before delivery at 9:00 AM store time, or starts immediately when approved after that time.
-- [x] The scheduled job runs every hour from 9:00 AM to 9:00 PM store time, starting only the orders that are due and still waiting: a run that failed is made up by the next one, and running it again never starts an order twice (decided 2026-10-04). The alarms cover its schedule.
+- [x] The scheduled job runs every hour from 9:00 AM to 9:00 PM store time, starting only the orders that are due and still waiting: a run that failed is made up by the next one, and running it again never starts an order twice. The alarms cover its schedule.
 - [x] While it waits to book, the order can be changed, unless the following order already has a draft or has been placed (then only cancelled): opening it goes through the flow again, and it needs approving again (the total is read again); it doesn't book while it's being changed or until it's approved again.
 - [x] If no approved window is available before purchasing, nothing is ordered. Booking records the next actual available date/window as a proposal and notifies the approver. Approve delivery explicitly authorizes that proposal; Decide later keeps it pending and starts no purchase. Expired proposals require checking times again. A proposal colliding with the next delivery requires choosing that next date explicitly.
 - [x] Booking fills the cart again with the approved products and counts, and just before placing it checks that the cart is those products and counts, the address and card are the ones the final review showed, and the tip follows the tip rule, then clicks once. The window and the total are Instacart's at that moment (prices can change between approving and booking); the confirmation shows the total charged. An order is clicked at most once: a retried job, a second approve, or a scheduled run after it never clicks again.
 - [x] Booking never goes without a product that was approved. If one is no longer available, the household's setting decides: use the first of its alternatives that's available (and tell whoever approved it about the swap), or ask (nothing is ordered, and whoever approved it is told and picks an alternative). With none of its alternatives available, it asks either way.
 - [x] While it waits to book, the order can be cancelled outright (discarded, like a draft), up to when it books.
 - [x] A failure before the click (signed out, the store's minimum not met, the address or card changed, the checkout page changed) orders nothing: the order stays approved, marked "Not booked" with why, and Try again books it the same way.
-- [x] An order still waiting to book two hours after its booking time shows as "Not booked" ("It didn't book on Mon, Oct 5 as planned."), with Try again, which books it through the API, not the schedule; until then the next hourly run may still book it. No notification says it's late: one would need our code to be running, and whenever it is, the hourly run books it (decided 2026-10-04).
+- [x] An order still waiting to book two hours after its booking time shows as "Not booked" ("It didn't book on Mon, Oct 5 as planned."), with Try again, which books it through the API, not the schedule; until then the next hourly run may still book it. No notification says it's late: one would need our code to be running, and whenever it is, the hourly run books it.
 - [x] Once purchase authorization is recorded, every unconfirmed outcome is “Check Instacart”, including a lost GO reply or a browser reporting no local click. Retry, change, cancellation and alternative approval remain blocked. “It was placed” is available immediately. “It wasn’t placed” requires both the member checking Instacart and persisted AWS STOPPED evidence for the exact purchasing task. A timeout, missing task, failed job or absent confirmation never supplies that proof.
 - [x] Selected, approved, proposed, reapproved, deferred, purchase-authorized, confirmed and manually resolved delivery decisions are recorded transactionally with date/time, actor, job/proposal IDs and outcome evidence. Cancellation preserves this history. ECS stop evidence arrives through a dedicated queue with retries, dead-letter queues and owner alarms; missing evidence keeps recovery blocked.
 - [x] Only production places orders; development never orders and doesn't touch the real Instacart cart unless agreed for a test.
@@ -109,8 +102,8 @@ Stage 3 is Instacart only, for our own household (research in piece 9, 2026-09-2
 ## Placing and status
 
 - [x] Placing an order calls the API, which saves the order and its status in the database.
-- [x] The call to the grocery service is a stub that does nothing and returns success (until piece 9 part 3, which books at Instacart).
-- [x] An order's status is saved and shown; for now it is always "order placed" (piece 9 part 3 adds waiting to book, not booked, and check Instacart).
+- [x] Approval dispatches or schedules real booking according to the approved delivery window and configured booking mode.
+- [x] The stored booking state distinguishes waiting, booking, confirmed, delivery/product decisions, failure, and uncertain purchase outcomes.
 - [x] After approving, the flow shows a waiting screen while it books ("Booking at Wegmans", about a minute, which can be closed), or, for a day not bookable yet, the day it will book.
 - [x] The confirmation after booking shows the Instacart order number, the booked window, the total charged, and "Open in Instacart"; so does the order view.
 - [x] Approving counts as ordering for the rest of the app: reminders stop and the next order starts from it, whether it's booked yet or not. While it waits, what the next order takes from it (its target and decide-by dates, and so its reminders) follows it: approving it again with another next delivery moves them, never starting another order, and cancelling it puts reminders back on its own dates, as if it had never been approved.
@@ -149,6 +142,11 @@ Household settings (shared by all members):
 Personal settings:
 
 - [x] Notification time, in the time zone of the member's phone (detected automatically, never shown or asked for).
+
+## Prepared recipes
+
+- [x] A successful list build stores one prepared recipe snapshot, atomically with its items. Recipe and cooking views at the order's servings use those exact amounts and step texts, retaining base units, preparation, artwork, ingredient assignments, and timers. Recipe consumption can be fractional even when the shopping list buys whole pieces.
+- [x] Recipe servings controls remain a local, provisional what-if calculated from the original recipe, without changing the order or running an agent. Reset to the ordered servings restores the saved prepared recipe. Unbuilt/stale views are provisional; older backfilled orders honestly label scaled ingredients and unchanged original steps.
 
 ## Views
 
@@ -202,9 +200,9 @@ reopens the warning. The warning describes resets without claiming that manual e
 
 ## Deferred
 
-- Walmart, and ordering for households other than ours (see stage 3).
+- Additional grocery providers.
 - Setting up the ChatGPT and Instacart connections from the app (after the MVP; until then they're set up with commands).
-- Making shopping faster, once ordering works end to end: find out where its time goes (a 24-item list took 11 minutes with Grok at extra-high reasoning; the current OpenAI runner uses GPT-6.1 Sol at high reasoning).
+- Improving shopping latency with measured performance evidence.
 - Real delivery status updates.
 - Handling gaps between orders (for now, reminders go out every day).
 - Meal icons v2 (generated combinations of icons) and v3 (AI-generated images).
@@ -212,6 +210,3 @@ reopens the warning. The warning describes resets without claiming that manual e
 - Having suggestions available immediately, such as generating them ahead of time (to discuss; the ready notification may change with it).
 - Meal preferences the household can check in settings (well after launch), which fill the suggestion agent's instructions; "low effort to cook" becomes one of them.
 - Capturing each job's full cost robustly (the agent's tokens and dollars, the Fargate task, and anything else it uses), stored with the job, so we can estimate what the service would cost to run as a product.
-
-- [x] A successful list build stores one prepared recipe snapshot, atomically with its items. Recipe and cooking views at the order's servings use those exact amounts and step texts, retaining base units, preparation, artwork, ingredient assignments, and timers. Recipe consumption can be fractional even when the shopping list buys whole pieces.
-- [x] Recipe servings controls remain a local, provisional what-if calculated from the original recipe, without changing the order or running an agent. Reset to the ordered servings restores the saved prepared recipe. Unbuilt/stale views are provisional; older backfilled orders honestly label scaled ingredients and unchanged original steps.

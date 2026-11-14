@@ -3,8 +3,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlmodel import SQLModel
 
-import castle_chef.models  # noqa: F401  (registers the tables on SQLModel.metadata)
-from castle_chef.db import get_engine
+import bite_planner.models  # noqa: F401  (registers the tables on SQLModel.metadata)
+from bite_planner.db import get_engine
 
 config = context.config
 if config.config_file_name is not None:

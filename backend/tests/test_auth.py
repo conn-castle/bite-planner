@@ -15,15 +15,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 from jwt.algorithms import OKPAlgorithm
 
-from castle_chef.api import app, get_verifier
-from castle_chef.auth import (
+from bite_planner.api import app, get_verifier
+from bite_planner.auth import (
     AuthError,
     AuthUnavailable,
     NeonAuthVerifier,
     NeonWebhookVerifier,
     WebhookRejected,
 )
-from castle_chef.settings import get_settings
+from bite_planner.settings import get_settings
 
 SIGNING_KEY = Ed25519PrivateKey.generate()
 KID = "test-key"
@@ -150,9 +150,9 @@ def test_garbage_is_rejected(auth_url: str) -> None:
 def test_the_api_fetches_the_signing_keys_once_not_on_every_request(
     auth_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CASTLE_CHEF_NEON_AUTH_URL", auth_url)
-    monkeypatch.setenv("CASTLE_CHEF_NEON_AUTH_ISSUER", origin(auth_url))
-    monkeypatch.setenv("CASTLE_CHEF_NEON_AUTH_AUDIENCE", origin(auth_url))
+    monkeypatch.setenv("BITE_PLANNER_NEON_AUTH_URL", auth_url)
+    monkeypatch.setenv("BITE_PLANNER_NEON_AUTH_ISSUER", origin(auth_url))
+    monkeypatch.setenv("BITE_PLANNER_NEON_AUTH_AUDIENCE", origin(auth_url))
     get_settings.cache_clear()
     get_verifier.cache_clear()  # one made for another test's settings
     client = TestClient(app)

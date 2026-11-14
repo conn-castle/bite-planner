@@ -22,7 +22,7 @@ export function Button({
   type = 'button',
   ...props
 }: ButtonProps) {
-  const classes = [styles.button, styles[variant], (block || large) && styles.large, block && styles.block, 'cc-hit', className]
+  const classes = [styles.button, styles[variant], (block || large) && styles.large, block && styles.block, 'bp-hit', className]
   return <button type={type} className={classes.filter(Boolean).join(' ')} {...props} />
 }
 
@@ -37,6 +37,6 @@ export function IconButton({
   variant,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant: 'fill' | 'white' }) {
-  const classes = [styles.icon, styles[variant], 'cc-hit', className]
+  const classes = [styles.icon, styles[variant], 'bp-hit', className]
   return <button type={type} className={classes.filter(Boolean).join(' ')} {...props} />
 }

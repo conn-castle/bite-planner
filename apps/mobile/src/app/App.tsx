@@ -63,7 +63,7 @@ function SessionGate() {
   if (isPending) return null
   if (error && !session) {
     return (
-      <Welcome title="Can't reach Castle Chef" subtitle={error.message}>
+      <Welcome title="Can't reach Bite Planner" subtitle={error.message}>
         <Button block onClick={() => void refetch()} disabled={isFetching}>
           Try again
         </Button>

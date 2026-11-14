@@ -6,15 +6,15 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
-from castle_chef_agent.checkout import ClickRequest
-from castle_chef_agent.windows import Availability, AvailableDay, DeliveryProposal, Window
+from bite_planner_agent.checkout import ClickRequest
+from bite_planner_agent.windows import Availability, AvailableDay, DeliveryProposal, Window
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from castle_chef import booking, orders, worker
-from castle_chef.checkout import BookIssue, CheckoutError, Quote
-from castle_chef.jobs import claim_job, finish_job
-from castle_chef.models import (
+from bite_planner import booking, orders, worker
+from bite_planner.checkout import BookIssue, CheckoutError, Quote
+from bite_planner.jobs import claim_job, finish_job
+from bite_planner.models import (
     BookState,
     DeliveryDecision,
     DeliveryDecisionKind,
@@ -22,7 +22,7 @@ from castle_chef.models import (
     Household,
     Job,
 )
-from castle_chef.push import NotificationKind
+from bite_planner.push import NotificationKind
 from tests.test_api import (
     CHECKOUT,
     DAD,
@@ -242,8 +242,8 @@ def test_a_delivery_check_notifies_its_requester_when_the_worker_finishes(
         )
 
     monkeypatch.setattr(worker, "process_quote", check)
-    monkeypatch.setenv("CASTLE_CHEF_JOBS_DIR", str(tmp_path / "jobs"))
-    from castle_chef.settings import get_settings
+    monkeypatch.setenv("BITE_PLANNER_JOBS_DIR", str(tmp_path / "jobs"))
+    from bite_planner.settings import get_settings
 
     get_settings.cache_clear()
     worker.run_job(UUID(job["id"]))

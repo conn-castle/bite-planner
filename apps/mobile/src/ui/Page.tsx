@@ -103,11 +103,11 @@ export function NavPage({ title, tab, actions, footer, children }: NavPageProps)
 
   return (
     <>
-      <IonHeader translucent className={bar ? 'cc-bar' : scrolled ? 'cc-scrolled' : undefined}>
+      <IonHeader translucent className={bar ? 'bp-bar' : scrolled ? 'bp-scrolled' : undefined}>
         <IonToolbar className={bar ? styles.barToolbar : styles.navToolbar}>
           <IonButtons slot="start">
             {bar ? (
-              <button type="button" className={`${styles.back} cc-hit`} onClick={back}>
+              <button type="button" className={`${styles.back} bp-hit`} onClick={back}>
                 <Icon name="chevL" />
                 <span>{bar}</span>
               </button>

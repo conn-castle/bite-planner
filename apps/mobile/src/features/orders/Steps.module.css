@@ -2,11 +2,11 @@
 
 /* Groups are cards at the tab screens' inset, not the flow's text inset. */
 .groups {
-  margin: 14px calc(var(--cc-card-x) - var(--cc-page-x)) 0;
+  margin: 14px calc(var(--bp-card-x) - var(--bp-page-x)) 0;
 }
 
 /* B: the group is 680px wide; title/lede keep the shared four-pixel text inset. */
-.servingsBody { max-width: calc(680px + 2 * var(--cc-card-x)); margin-inline: auto; }
+.servingsBody { max-width: calc(680px + 2 * var(--bp-card-x)); margin-inline: auto; }
 .servingsFooter {
   display: flex;
   flex-wrap: wrap;
@@ -26,7 +26,7 @@
   max-width: 100%;
 }
 .footerAction > button { max-width: 100%; }
-.reviewCount { color: var(--cc-ink); font-size: 13px; font-weight: 650; text-align: right; }
+.reviewCount { color: var(--bp-ink); font-size: 13px; font-weight: 650; text-align: right; }
 @media (min-width: 712px) {
   .servingsBody { padding-top: 16px; }
   .servingsBody .groups { margin-top: 22px; }

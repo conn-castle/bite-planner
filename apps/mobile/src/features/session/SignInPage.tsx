@@ -81,7 +81,7 @@ export function SignInPage() {
 
   if (step === 'email') {
     return (
-      <Welcome title="Sign in to Castle Chef" subtitle="Enter your email and we'll send you a sign-in code.">
+      <Welcome title="Sign in to Bite Planner" subtitle="Enter your email and we'll send you a sign-in code.">
         <form className={styles.form} onSubmit={(event) => void sendCode(event)}>
           <TextField
             label="Email"

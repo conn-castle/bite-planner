@@ -12,7 +12,7 @@
 /* What the loading flow waits for, e.g. "Loading your meal ideas…", in the place of a step's title. */
 .label {
   margin: 0;
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   font-size: 22px;
   font-weight: 700;
   line-height: 1.2;
