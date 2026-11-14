@@ -1,4 +1,4 @@
-"""The worker, through `castle-chef job run` (or `worker.run_job`) with a fake agent."""
+"""The worker, through `bite-planner job run` (or `worker.run_job`) with a fake agent."""
 
 import fcntl
 import io
@@ -17,19 +17,19 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
-from castle_chef_agent.checkout import RENEWED_SESSION_FILE, SESSION_FILE, Checkout, ClickRequest
-from castle_chef_agent.instacart import Product
-from castle_chef_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
-from castle_chef_agent.products import ProductCount
-from castle_chef_agent.server import Tools
-from castle_chef_agent.shopping import Aisle, RecipeIngredient
-from castle_chef_agent.windows import Window
+from bite_planner_agent.checkout import RENEWED_SESSION_FILE, SESSION_FILE, Checkout, ClickRequest
+from bite_planner_agent.instacart import Product
+from bite_planner_agent.meals import Color, Dish, Icon, IngredientInput, MealInput, StepInput
+from bite_planner_agent.products import ProductCount
+from bite_planner_agent.server import Tools
+from bite_planner_agent.shopping import Aisle, RecipeIngredient
+from bite_planner_agent.windows import Window
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 from typer.testing import CliRunner
 
-from castle_chef import booking, orders, push, records, shopping, worker
-from castle_chef.checkout import (
+from bite_planner import booking, orders, push, records, shopping, worker
+from bite_planner.checkout import (
     SIGNED_OUT_ERROR,
     Booking,
     BookIssue,
@@ -39,12 +39,12 @@ from castle_chef.checkout import (
     QuoteRequest,
     Swap,
 )
-from castle_chef.cli import app
-from castle_chef.db import get_engine
-from castle_chef.harness import run_agent
-from castle_chef.jobs import SUPERSEDED_ERROR, claim_job, fail_job, submit_build_list
-from castle_chef.meals import add_meals
-from castle_chef.models import (
+from bite_planner.cli import app
+from bite_planner.db import get_engine
+from bite_planner.harness import run_agent
+from bite_planner.jobs import SUPERSEDED_ERROR, claim_job, fail_job, submit_build_list
+from bite_planner.meals import add_meals
+from bite_planner.models import (
     AppUser,
     BookState,
     GroceryOrder,
@@ -62,8 +62,8 @@ from castle_chef.models import (
     ShoppingListItem,
     utc_now,
 )
-from castle_chef.push import Notification, NotificationKind, Outcome, Sent
-from castle_chef.settings import get_settings
+from bite_planner.push import Notification, NotificationKind, Outcome, Sent
+from bite_planner.settings import get_settings
 from tests.conftest import BACKEND_DIR, OTHER_ADDRESS, TEST_ADDRESS
 from tests.test_prepared_recipes import proportional_snapshot
 
@@ -75,14 +75,14 @@ def use_fake_agent(
     monkeypatch: pytest.MonkeyPatch, meals: int, stop_reason: str = "end_turn", exit_code: int = 0
 ) -> None:
     monkeypatch.setenv(
-        "CASTLE_CHEF_AGENT_COMMAND",
+        "BITE_PLANNER_AGENT_COMMAND",
         f"{sys.executable} {FAKE_AGENT} {meals} {stop_reason} {exit_code} 0",
     )
     get_settings.cache_clear()
 
 
 def batch_size(monkeypatch: pytest.MonkeyPatch, meals: int) -> None:
-    monkeypatch.setenv("CASTLE_CHEF_MEALS_PER_BATCH", str(meals))
+    monkeypatch.setenv("BITE_PLANNER_MEALS_PER_BATCH", str(meals))
 
 
 def run_job(job: Job, expected_exit: int = 0) -> str:
@@ -104,7 +104,7 @@ def job_meals(session: Session, job: Job) -> list[Meal]:
 
 
 def log_events(logs_dir: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in (logs_dir / "castle-chef.jsonl").read_text().splitlines()]
+    return [json.loads(line) for line in (logs_dir / "bite-planner.jsonl").read_text().splitlines()]
 
 
 def test_job_succeeds_when_agent_adds_a_batch_of_meals(
@@ -194,7 +194,7 @@ def test_a_batch_stays_succeeded_when_its_notification_cannot_be_sent(
     use_fake_agent(monkeypatch, meals=1)
 
     def broken() -> None:
-        raise RuntimeError("Set CASTLE_CHEF_APNS_KEY and CASTLE_CHEF_APNS_KEY_ID.")
+        raise RuntimeError("Set BITE_PLANNER_APNS_KEY and BITE_PLANNER_APNS_KEY_ID.")
 
     monkeypatch.setattr(push, "get_sender", broken)
 
@@ -208,7 +208,7 @@ def test_a_batch_stays_succeeded_when_its_notification_cannot_be_sent(
 def test_a_batch_is_20_meals_by_default(
     session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.delenv("CASTLE_CHEF_MEALS_PER_BATCH")
+    monkeypatch.delenv("BITE_PLANNER_MEALS_PER_BATCH")
     use_fake_agent(monkeypatch, meals=0)
 
     run_job(job)
@@ -230,18 +230,18 @@ def test_agent_environment_has_no_database_credentials(
     assert reload(session, job).status == JobStatus.SUCCEEDED
 
 
-def test_the_agents_tools_start_from_the_worker_images_own_castle_chef(
+def test_the_agents_tools_start_from_the_worker_images_own_bite_planner(
     session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # In the image, the `castle-chef` on the agent's PATH is docker/castle-chef (the agent's
+    # In the image, the `bite-planner` on the agent's PATH is docker/bite-planner (the agent's
     # app alone, not the backend's): the tools the worker names must start from it.
-    image_launcher = BACKEND_DIR.parent / "docker" / "castle-chef"
+    image_launcher = BACKEND_DIR.parent / "docker" / "bite-planner"
     _, body = image_launcher.read_text().split("\n", 1)  # its shebang is the image's Python
-    launcher = tmp_path / "agent-bin" / "castle-chef"
+    launcher = tmp_path / "agent-bin" / "bite-planner"
     launcher.parent.mkdir()
     launcher.write_text(f"#!{sys.executable}\n{body}")
     launcher.chmod(0o755)
-    monkeypatch.setenv("CASTLE_CHEF_AGENT_PATH", f"{launcher.parent}{os.pathsep}{os.defpath}")
+    monkeypatch.setenv("BITE_PLANNER_AGENT_PATH", f"{launcher.parent}{os.pathsep}{os.defpath}")
     batch_size(monkeypatch, 2)
     use_fake_agent(monkeypatch, meals=2)
 
@@ -298,7 +298,7 @@ def test_job_fails_when_its_meals_cannot_be_saved(
     def fail_to_save(*_args: object) -> None:
         raise RuntimeError("database went away")
 
-    monkeypatch.setattr("castle_chef.worker.add_meals", fail_to_save)
+    monkeypatch.setattr("bite_planner.worker.add_meals", fail_to_save)
 
     run_job(job)
 
@@ -425,8 +425,8 @@ def test_agent_timeout_stops_everything_the_agent_started(
     session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     spawner = Path(__file__).parent / "fake_agent_spawner.py"
-    monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {spawner}")
-    monkeypatch.setenv("CASTLE_CHEF_AGENT_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("BITE_PLANNER_AGENT_COMMAND", f"{sys.executable} {spawner}")
+    monkeypatch.setenv("BITE_PLANNER_AGENT_TIMEOUT_SECONDS", "2")
 
     run_job(job)
 
@@ -1101,7 +1101,7 @@ def test_a_changed_address_discards_inflight_shopping_results(
     monkeypatch: pytest.MonkeyPatch,
     codex_home: Path,
 ) -> None:
-    from castle_chef import delivery
+    from bite_planner import delivery
 
     picked(session, job, 4)
     build = start_list(session, draft)
@@ -1454,13 +1454,13 @@ def booked_order(session: Session, book: Job) -> GroceryOrder:
 
 
 def use_booking(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
-    monkeypatch.setenv("CASTLE_CHEF_INSTACART_BOOKING", mode)
+    monkeypatch.setenv("BITE_PLANNER_INSTACART_BOOKING", mode)
     if mode == "live":
-        from castle_chef.worker_tasks import WorkerTask
+        from bite_planner.worker_tasks import WorkerTask
         from tests.test_failures import CLUSTER, TASK
 
         monkeypatch.setattr(
-            "castle_chef.worker.current_task", lambda: WorkerTask(task_arn=TASK, cluster=CLUSTER)
+            "bite_planner.worker.current_task", lambda: WorkerTask(task_arn=TASK, cluster=CLUSTER)
         )
     get_settings.cache_clear()
 
@@ -2093,7 +2093,9 @@ def test_a_jobs_record_is_also_kept_while_it_runs(
     monkeypatch.setattr(records, "SAVE_EVERY_SECONDS", 0.2)
     batch_size(monkeypatch, 1)
     # An agent that takes a second.
-    monkeypatch.setenv("CASTLE_CHEF_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 1 end_turn 0 1")
+    monkeypatch.setenv(
+        "BITE_PLANNER_AGENT_COMMAND", f"{sys.executable} {FAKE_AGENT} 1 end_turn 0 1"
+    )
 
     run_job(job)
 

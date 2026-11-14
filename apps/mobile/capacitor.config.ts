@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.conncastle.castlechef',
-  appName: 'Castle Chef',
+  appId: 'com.conncastle.biteplanner',
+  appName: 'Bite Planner',
   webDir: 'dist',
   // The app is light only: white behind the WebView, dark status bar text.
   backgroundColor: '#ffffff',

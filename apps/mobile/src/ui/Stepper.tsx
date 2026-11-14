@@ -50,7 +50,7 @@ export function Stepper({
     >
       <button
         type="button"
-        className={`${styles.step} cc-hit`}
+        className={`${styles.step} bp-hit`}
         onClick={() => step(-1)}
         disabled={disabled || value <= min}
         aria-label={`Fewer ${label.toLowerCase()}`}
@@ -62,7 +62,7 @@ export function Stepper({
       </output>
       <button
         type="button"
-        className={`${styles.step} cc-hit`}
+        className={`${styles.step} bp-hit`}
         onClick={() => step(1)}
         disabled={disabled || value >= max}
         aria-label={`More ${label.toLowerCase()}`}

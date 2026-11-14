@@ -1,9 +1,9 @@
 /* spec/mockup.html: .hcard, .hh, .od */
 .card {
-  background: var(--cc-bg);
+  background: var(--bp-bg);
   border-radius: 22px;
-  border: 0.5px solid var(--cc-hairline);
-  box-shadow: var(--cc-shadow-card);
+  border: 0.5px solid var(--bp-hairline);
+  box-shadow: var(--bp-shadow-card);
   overflow: hidden;
   /* Its rows (ui/Group ListRow) are inset like a group's. */
   --list-row-padding: 11px 14px;
@@ -27,7 +27,7 @@
 
 .pressable {
   cursor: pointer;
-  transition: filter 160ms var(--cc-ease);
+  transition: filter 160ms var(--bp-ease);
 }
 
 .pressable:active {
@@ -35,7 +35,7 @@
 }
 
 .pressable:focus-visible {
-  outline: 2px solid var(--cc-accent);
+  outline: 2px solid var(--bp-accent);
   outline-offset: -2px;
 }
 
@@ -70,6 +70,6 @@
 
 /* The header's text size (the mockup's .chev inherits it). */
 .chevron {
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
   font-size: 15px;
 }

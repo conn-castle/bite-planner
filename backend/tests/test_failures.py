@@ -11,29 +11,29 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from castle_chef_agent.shopping import PreparedRecipes
+from bite_planner_agent.shopping import PreparedRecipes
 from fastapi.testclient import TestClient
 from sqlalchemy import Connection, event
 from sqlmodel import Session, select
 
-from castle_chef.api import create_app
-from castle_chef.db import get_engine
-from castle_chef.jobs import claim_job
-from castle_chef.models import Job, JobKind, JobStatus, ListSource, utc_now
-from castle_chef.settings import get_settings
+from bite_planner.api import create_app
+from bite_planner.db import get_engine
+from bite_planner.jobs import claim_job
+from bite_planner.models import Job, JobKind, JobStatus, ListSource, utc_now
+from bite_planner.settings import get_settings
 
-CLUSTER = "arn:aws:ecs:us-east-1:123456789012:cluster/castle-chef"
-TASK = "arn:aws:ecs:us-east-1:123456789012:task/castle-chef/abc"
+CLUSTER = "arn:aws:ecs:us-east-1:123456789012:cluster/bite-planner"
+TASK = "arn:aws:ecs:us-east-1:123456789012:task/bite-planner/abc"
 STOP_QUEUE = "arn:aws:sqs:us-east-1:123456789012:worker-stops"
 JOBS_DLQ = "arn:aws:sqs:us-east-1:123456789012:jobs-dead-letters"
 
 
 @pytest.fixture
 def events(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    monkeypatch.setenv("CASTLE_CHEF_FAILURE_HANDLER", "true")
-    monkeypatch.setenv("CASTLE_CHEF_WORKER_CLUSTER_ARN", CLUSTER)
-    monkeypatch.setenv("CASTLE_CHEF_WORKER_STOPS_QUEUE_ARN", STOP_QUEUE)
-    monkeypatch.setenv("CASTLE_CHEF_JOBS_DEAD_LETTERS_QUEUE_ARN", JOBS_DLQ)
+    monkeypatch.setenv("BITE_PLANNER_FAILURE_HANDLER", "true")
+    monkeypatch.setenv("BITE_PLANNER_WORKER_CLUSTER_ARN", CLUSTER)
+    monkeypatch.setenv("BITE_PLANNER_WORKER_STOPS_QUEUE_ARN", STOP_QUEUE)
+    monkeypatch.setenv("BITE_PLANNER_JOBS_DEAD_LETTERS_QUEUE_ARN", JOBS_DLQ)
     get_settings.cache_clear()
     yield TestClient(create_app())
 
@@ -60,7 +60,10 @@ def task_event(
         "containers": [container],
         "overrides": {
             "containerOverrides": [
-                {"name": "worker", "environment": [{"name": "CASTLE_CHEF_JOB_ID", "value": job_id}]}
+                {
+                    "name": "worker",
+                    "environment": [{"name": "BITE_PLANNER_JOB_ID", "value": job_id}],
+                }
             ]
         },
     }

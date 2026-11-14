@@ -1,4 +1,4 @@
-"""Stands in for `codex app-server` in tests (as CASTLE_CHEF_CODEX_COMMAND): the
+"""Stands in for `codex app-server` in tests (as BITE_PLANNER_CODEX_COMMAND): the
 same JSON-RPC over stdio, answering Instacart tool calls with the replies recorded
 in fixtures/instacart/.
 

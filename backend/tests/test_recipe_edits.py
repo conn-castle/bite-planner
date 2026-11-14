@@ -6,19 +6,19 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 import pytest
-from castle_chef_agent import meal_edit
-from castle_chef_agent.jobfiles import write_context
-from castle_chef_agent.meals import StepInput
-from castle_chef_agent.server import Tools, meal_edit_server
+from bite_planner_agent import meal_edit
+from bite_planner_agent.jobfiles import write_context
+from bite_planner_agent.meals import StepInput
+from bite_planner_agent.server import Tools, meal_edit_server
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import text
 from sqlmodel import Session, select
 
-from castle_chef import api, meal_edits, orders, push, shopping, worker
-from castle_chef.db import get_engine
-from castle_chef.jobs import STALE_ERROR, SUPERSEDED_ERROR, claim_job, fail_job
-from castle_chef.models import EditDecision, Job, JobKind, JobStatus, Meal
+from bite_planner import api, meal_edits, orders, push, shopping, worker
+from bite_planner.db import get_engine
+from bite_planner.jobs import STALE_ERROR, SUPERSEDED_ERROR, claim_job, fail_job
+from bite_planner.models import EditDecision, Job, JobKind, JobStatus, Meal
 from tests.test_api import (
     CASTLE,
     DAD,
@@ -412,10 +412,10 @@ def test_accept_supersedes_only_selected_active_work_atomically(
 def test_proposal_during_build_preserves_original_automatic_shop_pipeline(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from castle_chef_agent.products import ItemChoice, ProductCount
-    from castle_chef_agent.shopping import Aisle
+    from bite_planner_agent.products import ItemChoice, ProductCount
+    from bite_planner_agent.shopping import Aisle
 
-    from castle_chef.models import ShoppingListItem
+    from bite_planner.models import ShoppingListItem
     from tests.test_api import ONIONS
     from tests.test_prepared_recipes import proportional_snapshot
 
@@ -901,8 +901,8 @@ def test_legacy_yield_reaches_worker_and_accept_scales_shopping_once(
 def test_accept_only_stops_pinned_dependencies_and_undo_restores_other_work(
     client: TestClient, kind: str, running: bool, affected: bool
 ) -> None:
-    from castle_chef_agent.products import ItemChoice, ProductCount
-    from castle_chef_agent.shopping import Aisle
+    from bite_planner_agent.products import ItemChoice, ProductCount
+    from bite_planner_agent.shopping import Aisle
 
     from tests.test_api import ONIONS
     from tests.test_prepared_recipes import proportional_snapshot

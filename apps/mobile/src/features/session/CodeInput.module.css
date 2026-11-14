@@ -20,18 +20,18 @@
   place-items: center;
   height: 60px;
   border-radius: 16px;
-  background: var(--cc-fill);
+  background: var(--bp-fill);
   font-size: 26px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   transition:
-    box-shadow 160ms var(--cc-ease),
-    background-color 160ms var(--cc-ease);
+    box-shadow 160ms var(--bp-ease),
+    background-color 160ms var(--bp-ease);
 }
 
 .filled {
-  background: var(--cc-fill-strong);
-  animation: pop 180ms var(--cc-ease);
+  background: var(--bp-fill-strong);
+  animation: pop 180ms var(--bp-ease);
 }
 
 @keyframes pop {
@@ -41,6 +41,6 @@
 }
 
 .active {
-  background: var(--cc-bg);
-  box-shadow: 0 0 0 2px var(--cc-ink);
+  background: var(--bp-bg);
+  box-shadow: 0 0 0 2px var(--bp-ink);
 }

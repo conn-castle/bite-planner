@@ -1,4 +1,4 @@
-"""The agent's checkout tools (castle_chef_agent.checkout), in a headless browser on
+"""The agent's checkout tools (bite_planner_agent.checkout), in a headless browser on
 stand-ins for Instacart's pages (fixtures/checkout): what the agent sees, what it
 can and can't do, and how its report is read and checked."""
 
@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from castle_chef_agent import checkout
-from castle_chef_agent.checkout import (
+from bite_planner_agent import checkout
+from bite_planner_agent.checkout import (
     RENEWED_SESSION_FILE,
     SESSION_FILE,
     Browser,
@@ -22,7 +22,7 @@ from castle_chef_agent.checkout import (
     load_state,
     tip_cents,
 )
-from castle_chef_agent.jobfiles import read_context, write_context
+from bite_planner_agent.jobfiles import read_context, write_context
 
 from tests.conftest import SETTLE_CHECK_MS
 

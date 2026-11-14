@@ -1,4 +1,4 @@
-"""The agent's shopping-list tools (castle_chef_agent.server's shopping-list server):
+"""The agent's shopping-list tools (bite_planner_agent.server's shopping-list server):
 `add_item`, `add_staple`, `remove`, and `done`, called as the agent calls them in a
 job directory, and what the worker saves of the list they make."""
 
@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from castle_chef_agent import shopping as agent_shopping
-from castle_chef_agent.jobfiles import write_context
-from castle_chef_agent.server import shopping_list_server
-from castle_chef_agent.shopping import Aisle, IngredientLine, ListJob
+from bite_planner_agent import shopping as agent_shopping
+from bite_planner_agent.jobfiles import write_context
+from bite_planner_agent.server import shopping_list_server
+from bite_planner_agent.shopping import Aisle, IngredientLine, ListJob
 from mcp.server.mcpserver import MCPServer
 
-from castle_chef import shopping
-from castle_chef.shopping import ListEntry
+from bite_planner import shopping
+from bite_planner.shopping import ListEntry
 from tests.test_products_tools import call
 
 LINES = [

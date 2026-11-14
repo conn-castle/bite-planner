@@ -6,9 +6,9 @@
   margin: 24px 0 10px;
   font-size: 13px;
   font-weight: 650;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .aside {
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }

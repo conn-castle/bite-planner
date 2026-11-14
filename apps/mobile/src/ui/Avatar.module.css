@@ -5,9 +5,9 @@
   display: inline-grid;
   place-items: center;
   border-radius: 50%;
-  font: 700 24px/1 var(--cc-font-display);
-  color: var(--cc-on-ink);
-  background: var(--cc-other);
+  font: 700 24px/1 var(--bp-font-display);
+  color: var(--bp-on-ink);
+  background: var(--bp-other);
 }
 
 .xs {
@@ -42,8 +42,8 @@
   inset: -5px;
   border-radius: 50%;
   border: 2px solid transparent;
-  border-top-color: var(--cc-other);
-  border-right-color: var(--cc-other-ring);
+  border-top-color: var(--bp-other);
+  border-right-color: var(--bp-other-ring);
   animation: spin 1.6s linear infinite;
 }
 

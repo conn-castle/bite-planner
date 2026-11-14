@@ -54,7 +54,7 @@ export const queryClient = new QueryClient({
 // Capacitor Preferences: UserDefaults on iOS (not evicted like WebView storage),
 // localStorage in a browser.
 export const persister = createAsyncStoragePersister({
-  key: 'castle-chef.query-cache',
+  key: 'bite-planner.query-cache',
   throttleTime: 1000,
   storage: {
     getItem: async (key) => (await Preferences.get({ key })).value,

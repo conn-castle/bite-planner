@@ -2,8 +2,8 @@ import { neonAuth } from './neonAuth'
 
 /**
  * Sign-in, behind an interface so the provider can be replaced. The app only
- * uses these calls; `lib/api/client.ts` sends `getToken()` to the Castle Chef API, which
- * verifies it with the matching backend verifier (castle_chef.auth).
+ * uses these calls; `lib/api/client.ts` sends `getToken()` to the Bite Planner API, which
+ * verifies it with the matching backend verifier (bite_planner.auth).
  */
 
 export interface User {

@@ -1,4 +1,4 @@
-"""The agent's booking tools (castle_chef_agent.checkout, a `book` job), in a
+"""The agent's booking tools (bite_planner_agent.checkout, a `book` job), in a
 headless browser on stand-ins for Instacart's pages (fixtures/checkout): choosing
 the window by the rule, what the report must show, pressing Place order only once
 the worker says to, and reading the confirmation."""
@@ -13,8 +13,8 @@ from typing import Any, Self
 from zoneinfo import ZoneInfo
 
 import pytest
-from castle_chef_agent import checkout
-from castle_chef_agent.checkout import (
+from bite_planner_agent import checkout
+from bite_planner_agent.checkout import (
     CLICK_ANSWER_FILE,
     CLICK_REQUEST_FILE,
     SESSION_FILE,
@@ -29,8 +29,8 @@ from castle_chef_agent.checkout import (
     ReportRefs,
     load_state,
 )
-from castle_chef_agent.jobfiles import write_context
-from castle_chef_agent.windows import Window
+from bite_planner_agent.jobfiles import write_context
+from bite_planner_agent.windows import Window
 
 from tests.conftest import SETTLE_CHECK_MS
 from tests.test_checkout_tools import SESSION, ref

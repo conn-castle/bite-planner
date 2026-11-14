@@ -1,4 +1,4 @@
-# Go back to an earlier release (README "Rollback"): redeploy its images with
+# Go back to an earlier release (docs/operations/aws.md "Releases and recovery"): redeploy its images with
 # its own CDK code, no rebuild. Optionally also restore Neon `main` to how it was
 # while that release was the latest, which discards everything written since
 # (including sign-ins). Temporary until main is fixed: the next push to main
@@ -29,11 +29,16 @@ permissions:
   contents: read
 
 env:
-  NEON_PROJECT_ID: example-project
+  NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
   NEONCTL_VERSION: 4.17.4
-  AWS_REGION: us-east-1
-  DEPLOY_ROLE: arn:aws:iam::123456789012:role/castle-chef-github-deploy
-  STACK: CastleChef
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  DEPLOY_ROLE: ${{ secrets.DEPLOY_ROLE }}
+  STACK: BitePlanner
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  BITE_PLANNER_GITHUB_SUBJECT: ${{ secrets.BITE_PLANNER_GITHUB_SUBJECT }}
+  BITE_PLANNER_ALARM_EMAIL: ${{ secrets.BITE_PLANNER_ALARM_EMAIL }}
+  NEON_AUTH_URL_DEV: ${{ secrets.NEON_AUTH_URL_DEV }}
+  NEON_AUTH_URL_PROD: ${{ secrets.NEON_AUTH_URL_PROD }}
 
 jobs:
   rollback:
@@ -98,6 +103,7 @@ jobs:
         with:
           role-to-assume: ${{ env.DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
       - id: pause
         if: inputs.restore_database
         name: Stop starting jobs and wait for running ones (at most 40 minutes each)
@@ -142,7 +148,7 @@ jobs:
             echo "Restored Neon main from $SNAPSHOT (everything written since is gone; everyone signs in again)."
             if [ "$after" != "$before" ]; then
               # Expected: the restored branch takes over the name; the old one is kept.
-              echo "main's branch id changed ($before -> $after): the steps below set Neon Auth's sign-up webhook on it (docs/operations/aws.md \"Sign-up\"). Delete the pre-restore branch when no longer needed."
+              echo "main's branch id changed: the steps below set Neon Auth's sign-up webhook on it (docs/operations/aws.md \"Households and sign-up\"). Delete the pre-restore branch when no longer needed."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/deploy
@@ -162,7 +168,7 @@ jobs:
           sparse-checkout: .github/actions
       - id: api
         run: |
-          url=$(jq -er '.CastleChef.ApiUrlOutput' "$RUNNER_TEMP/cdk-outputs.json")
+          url=$(jq -er '.BitePlanner.ApiUrlOutput' "$RUNNER_TEMP/cdk-outputs.json")
           echo "url=$url" >> "$GITHUB_OUTPUT"
       - name: Make sign-up invite-only
         uses: ./current/.github/actions/invite-only

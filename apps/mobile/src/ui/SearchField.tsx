@@ -25,7 +25,7 @@ export function SearchField({ value, onChange, placeholder, className }: SearchF
         onChange={(event) => onChange(event.target.value)}
       />
       {value && (
-        <button type="button" className={`${styles.clear} cc-hit`} aria-label="Clear search" onClick={() => onChange('')}>
+        <button type="button" className={`${styles.clear} bp-hit`} aria-label="Clear search" onClick={() => onChange('')}>
           <Icon name="x" />
         </button>
       )}

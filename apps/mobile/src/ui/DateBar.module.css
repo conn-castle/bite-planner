@@ -26,7 +26,7 @@
   margin: 0;
   position: relative;
   font: inherit;
-  color: var(--cc-ink);
+  color: var(--bp-ink);
   text-align: center;
   cursor: pointer;
 }
@@ -46,11 +46,11 @@
 }
 
 .chips.scroll {
-  margin: 0 calc(-1 * var(--cc-page-x));
-  padding-left: var(--cc-page-x);
-  padding-right: var(--cc-page-x);
+  margin: 0 calc(-1 * var(--bp-page-x));
+  padding-left: var(--bp-page-x);
+  padding-right: var(--bp-page-x);
   /* A day scrolled into view stops at the page's margin, not the screen's edge. */
-  scroll-padding-inline: var(--cc-page-x);
+  scroll-padding-inline: var(--bp-page-x);
 }
 
 .chips.fit {
@@ -65,10 +65,10 @@
 .chips .day {
   padding: 9px 0 10px;
   border-radius: 16px;
-  background: var(--cc-fill);
+  background: var(--bp-fill);
   transition:
-    background-color 200ms var(--cc-ease),
-    transform var(--cc-press) var(--cc-ease);
+    background-color 200ms var(--bp-ease),
+    transform var(--bp-press) var(--bp-ease);
 }
 
 .chips .day:active:not(:disabled):not(.static) {
@@ -79,24 +79,24 @@
   display: block;
   font-size: 11.5px;
   font-weight: 650;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .chips .day b {
   display: block;
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   font-size: 21px;
   font-weight: 700;
   line-height: 1.15;
 }
 
 .chips .selected {
-  background: var(--cc-ink);
-  color: var(--cc-on-ink);
+  background: var(--bp-ink);
+  color: var(--bp-on-ink);
 }
 
 .chips .selected small {
-  color: var(--cc-on-ink-2);
+  color: var(--bp-on-ink-2);
 }
 
 /* Shown for orientation only, e.g. today, or a past day. */
@@ -119,7 +119,7 @@
 
 .chips .selected .cover {
   opacity: 1;
-  box-shadow: 0 0 0 1.5px var(--cc-ink);
+  box-shadow: 0 0 0 1.5px var(--bp-ink);
 }
 
 .tag {
@@ -129,8 +129,8 @@
   transform: translateX(-50%);
   padding: 1px 5px;
   border-radius: 6px;
-  background: var(--cc-accent);
-  color: var(--cc-on-ink);
+  background: var(--bp-accent);
+  color: var(--bp-on-ink);
   font-size: 9.5px;
   font-weight: 700;
   line-height: 1.35;
@@ -141,7 +141,7 @@
 
 /* Tags that orient (today, the delivery day) rather than recommend. */
 .quiet {
-  background: var(--cc-ink);
+  background: var(--bp-ink);
 }
 
 /* 12px under the chips, as in the mockup (its 4px padding + 12px margin). */
@@ -151,7 +151,7 @@
   gap: 14px;
   margin-top: 8px;
   font-size: 12px;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .legend span {
@@ -172,8 +172,8 @@
   margin-top: 2px;
   overflow: hidden;
   border-radius: 20px;
-  background: var(--cc-bg);
-  border: 0.5px solid var(--cc-hairline);
+  background: var(--bp-bg);
+  border: 0.5px solid var(--bp-hairline);
   box-shadow: 0 1px 2px rgba(20, 19, 17, 0.04);
 }
 
@@ -208,11 +208,11 @@
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .compact .day small.month {
-  color: var(--cc-ink);
+  color: var(--bp-ink);
 }
 
 .compact .day b {
@@ -224,20 +224,20 @@
   font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  transition: background-color 200ms var(--cc-ease);
+  transition: background-color 200ms var(--bp-ease);
 }
 
 .compact .unavailable b {
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .compact .today b {
-  background: var(--cc-ink);
-  color: var(--cc-on-ink);
+  background: var(--bp-ink);
+  color: var(--bp-on-ink);
 }
 
 .compact .selected:not(.today) b {
-  background: var(--cc-fill-strong);
+  background: var(--bp-fill-strong);
 }
 
 .compact .cover {
@@ -266,7 +266,7 @@
 
 /* Not delivered yet: a lighter tint of the order's color (the mockup dashes it; spec/README.md). */
 .compact .ahead {
-  background: color-mix(in srgb, var(--cover) 45%, var(--cc-bg));
+  background: color-mix(in srgb, var(--cover) 45%, var(--bp-bg));
 }
 
 /* What happens on the day (.dc .ic): a truck on delivery days, a ring on the decide-by day. */
@@ -279,7 +279,7 @@
 
 .truck {
   display: flex;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
   font-size: 11px;
 }
 
@@ -292,12 +292,12 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 2px solid var(--cc-accent);
+  border: 2px solid var(--bp-accent);
 }
 
 .decide.late {
-  border-color: var(--cc-danger);
-  background: var(--cc-danger);
+  border-color: var(--bp-danger);
+  background: var(--bp-danger);
 }
 
 /* .dc .ic .rem */
@@ -305,7 +305,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--cc-accent);
+  background: var(--bp-accent);
 }
 
 .decided {
@@ -313,7 +313,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  border: 1.5px solid var(--cc-ink-3);
+  border: 1.5px solid var(--bp-ink-3);
 }
 
 /* The line under the strip (.strip-cap). */
@@ -324,14 +324,14 @@
   min-height: 38px;
   margin: 0;
   padding: 9px 14px 10px;
-  border-top: 0.5px solid var(--cc-hairline);
+  border-top: 0.5px solid var(--bp-hairline);
   font-size: 13px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .caption b {
   font-weight: 650;
-  color: var(--cc-ink);
+  color: var(--bp-ink);
   white-space: nowrap;
 }
 

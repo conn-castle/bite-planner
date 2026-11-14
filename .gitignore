@@ -43,3 +43,9 @@
 
 # Grok CLI state created in the working directory
 /grove/
+
+# Generated private deployment configuration
+/.env.deployment.local
+
+# Personal agent configuration and scratch files
+/.agent-layer/

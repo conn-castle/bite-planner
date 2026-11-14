@@ -1,4 +1,4 @@
-"""The household's Instacart cart while a job fills it (castle_chef.cart), against
+"""The household's Instacart cart while a job fills it (bite_planner.cart), against
 the stand-in app-server's cart that keeps its changes (fake_codex.py)."""
 
 import json
@@ -9,9 +9,9 @@ from uuid import UUID
 import pytest
 from sqlmodel import Session
 
-from castle_chef import cart
-from castle_chef.checkout import CartLedger, CartLine, OwnItem
-from castle_chef.models import Household
+from bite_planner import cart
+from bite_planner.checkout import CartLedger, CartLine, OwnItem
+from bite_planner.models import Household
 
 from .conftest import TEST_ADDRESS
 

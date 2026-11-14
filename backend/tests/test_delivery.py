@@ -4,10 +4,10 @@ from collections.abc import Iterator
 
 import boto3
 import pytest
+from bite_planner_agent.address import Address
 from botocore.stub import Stubber
-from castle_chef_agent.address import Address
 
-from castle_chef import delivery
+from bite_planner import delivery
 
 ADDRESS: Address = Address(
     street_address="1600 Pennsylvania Avenue NW", city="Washington", state="DC", postal_code="20500"

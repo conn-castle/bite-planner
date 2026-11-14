@@ -20,7 +20,7 @@ interface CheckoutWaitProps {
   step: 'delivery' | 'review'
   store: string
   failed: boolean
-  /** It failed because Castle Chef is signed out of Instacart's website. */
+  /** It failed because Bite Planner is signed out of Instacart's website. */
   signedOut: boolean
   startFailed: string | null
   retrying: boolean
@@ -74,7 +74,7 @@ export function CheckoutWait({ order, step, store, failed, signedOut, startFaile
             <RetryNotice
               message={
                 signedOut
-                  ? `Castle Chef is signed out of Instacart, so it couldn't check delivery. Sign it in again, then try again. Your order is saved.`
+                  ? `Bite Planner is signed out of Instacart, so it couldn't check delivery. Sign it in again, then try again. Your order is saved.`
                   : `We couldn't check delivery and your total at ${store} this time. Your order is saved.`
               }
               onRetry={onRetry}
@@ -91,4 +91,3 @@ export function CheckoutWait({ order, step, store, failed, signedOut, startFaile
     </FlowFrame>
   )
 }
-

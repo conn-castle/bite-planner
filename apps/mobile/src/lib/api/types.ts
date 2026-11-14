@@ -1,4 +1,4 @@
-// Shapes returned by the Castle Chef API, and the request bodies it takes (backend/src/castle_chef/api.py).
+// Shapes returned by the Bite Planner API, and the request bodies it takes (backend/src/bite_planner/api.py).
 
 /** A calendar date with no time of day or time zone: "2026-09-27". */
 export type ISODate = string
@@ -113,7 +113,7 @@ export type MealRating = 'not_for_us' | 'down' | 'up' | 'favorite'
 /** What a meal's picture shows it served in. */
 export type MealDish = 'plate' | 'bowl' | 'skillet' | 'tacos'
 
-/** An ingredient's icon in its meal's picture (castle_chef_agent.meals.Icon). */
+/** An ingredient's icon in its meal's picture (bite_planner_agent.meals.Icon). */
 export type MealIcon =
   | 'fish'
   | 'shrimp'
@@ -300,7 +300,7 @@ export interface Quote {
   job: Job
   /** For the order's products, counts, and tip rule now; otherwise a new one is due. */
   current: boolean
-  /** It failed because Castle Chef is signed out of Instacart's website (someone signs it in again first). */
+  /** It failed because Bite Planner is signed out of Instacart's website (someone signs it in again first). */
   signed_out: boolean
   /** Once it succeeds: why Instacart won't check the cart out (below the store's minimum), or checkout. */
   blocked_because: string | null

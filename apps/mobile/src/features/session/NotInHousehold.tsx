@@ -27,7 +27,7 @@ export function NotInHousehold({ session }: { session: Session }) {
       title="Almost there"
       subtitle={
         <>
-          <strong>{session.user.email}</strong> isn't part of a Castle Chef household. Ask someone
+          <strong>{session.user.email}</strong> isn't part of a Bite Planner household. Ask someone
           in your household to invite this email, then open the app again.
         </>
       }

@@ -55,7 +55,7 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
       : ideas > 0
         ? `Add the ones you want for ${forDelivery}. Pick as many as you'll cook before the next one.`
         : working
-          ? `Chef is picking ${BATCH_SIZE} ideas for ${forDelivery}. This takes a minute or two. ${
+          ? `Bite Planner is picking ${BATCH_SIZE} ideas for ${forDelivery}. This takes a minute or two. ${
               notified ? "You can leave; we'll notify you when they're ready." : "You can leave; they'll be here when you come back."
             }`
           : 'No meals added yet.'
@@ -124,7 +124,7 @@ export function DraftCard({ order, userId, today, onContinue, onDiscard, discard
           <Button variant={late ? 'danger' : look === 'ready' ? 'accent' : 'primary'} block onClick={onContinue}>
             {picks > 0 ? 'Continue order' : ideas > 0 ? 'Pick meals' : working ? 'Watch progress' : 'Continue order'}
           </Button>
-          <button type="button" className={`${styles.discard} cc-hit`} onClick={onDiscard} disabled={discarding}>
+          <button type="button" className={`${styles.discard} bp-hit`} onClick={onDiscard} disabled={discarding}>
             Discard draft
           </button>
         </OrderCardActions>

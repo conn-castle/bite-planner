@@ -1,5 +1,7 @@
 # Only what docker/Dockerfile copies; everything else stays out of the build context.
 *
+!LICENSE
+!THIRD_PARTY_NOTICES.md
 !backend/pyproject.toml
 !backend/uv.lock
 !backend/.python-version
@@ -7,5 +9,5 @@
 !backend/migrations
 !backend/src
 !backend/agent
-!docker/castle-chef
+!docker/bite-planner
 **/__pycache__

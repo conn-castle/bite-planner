@@ -1,4 +1,4 @@
-"""What the stacks must guarantee (see castle_chef_infra/runtime.py), checked on
+"""What the stacks must guarantee (see bite_planner_infra/runtime.py), checked on
 the synthesized CloudFormation."""
 
 import ast
@@ -13,13 +13,13 @@ import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Match, Template
 
-from castle_chef_infra.repositories import RepositoriesStack
-from castle_chef_infra.runtime import RuntimeConfig, RuntimeStack
+from bite_planner_infra.repositories import RepositoriesStack
+from bite_planner_infra.runtime import RuntimeConfig, RuntimeStack
 
 API_DIGEST = "sha256:" + "a" * 64
 WORKER_DIGEST = "sha256:" + "b" * 64
 OIDC = "token.actions.githubusercontent.com"
-MAIN_BRANCH = "repo:owner@1/castle-chef@2:ref:refs/heads/main"
+MAIN_BRANCH = "repo:owner@1/bite-planner@2:ref:refs/heads/main"
 REPOSITORY = Path(__file__).parents[2]
 
 
@@ -31,8 +31,8 @@ def runtime() -> Template:
         "Runtime",
         config=RuntimeConfig(
             neon_auth_url="https://ep-x.neonauth.example/neondb/auth",
-            database_url_parameter="/castle-chef/test/database-url-pooled",
-            instacart_booking_parameter="/castle-chef/test/instacart-booking",
+            database_url_parameter="/bite-planner/test/database-url-pooled",
+            instacart_booking_parameter="/bite-planner/test/instacart-booking",
             cors_origins=["capacitor://localhost"],
             alarm_email="owner@example.com",
             release="2026.9.24.1",
@@ -50,7 +50,7 @@ def repositories() -> Template:
         app,
         "Repositories",
         env=cdk.Environment(account="123456789012", region="us-east-1"),
-        github_subject="repo:owner@1/castle-chef@2",
+        github_subject="repo:owner@1/bite-planner@2",
         budget_email="owner@example.com",
     )
     return Template.from_stack(stack)
@@ -81,9 +81,10 @@ def test_worker_is_locked_down_and_pinned(runtime: Template) -> None:
     assert "Add" not in capabilities
     secrets = [
         "DATABASE_URL",
-        "CASTLE_CHEF_APNS_KEY",
-        "CASTLE_CHEF_APNS_KEY_ID",
-        "CASTLE_CHEF_INSTACART_BOOKING",
+        "BITE_PLANNER_APNS_KEY",
+        "BITE_PLANNER_APNS_KEY_ID",
+        "BITE_PLANNER_APNS_TEAM_ID",
+        "BITE_PLANNER_INSTACART_BOOKING",
         "OPENAI_API_KEY",
     ]
     assert [s["Name"] for s in container["Secrets"]] == secrets
@@ -94,7 +95,7 @@ def test_worker_is_locked_down_and_pinned(runtime: Template) -> None:
 @pytest.mark.parametrize(
     ("volume", "path", "variables"),
     [
-        ("codex-login", "/codex", ["CASTLE_CHEF_CODEX_HOME", "CASTLE_CHEF_CODEX_LOCK_FILE"]),
+        ("codex-login", "/codex", ["BITE_PLANNER_CODEX_HOME", "BITE_PLANNER_CODEX_LOCK_FILE"]),
     ],
 )
 def test_worker_login_storage_belongs_to_the_agent_user(
@@ -150,8 +151,8 @@ def test_the_worker_reads_and_renews_the_instacart_session(runtime: Template) ->
     assert "WorkerTaskRole" in json.dumps(roles)
     assert statement["Action"] == ["ssm:GetParameter", "ssm:PutParameter"]
     environment = {e["Name"]: e["Value"] for e in worker_container(runtime)["Environment"]}
-    assert environment["CASTLE_CHEF_INSTACART_SESSION_PARAMETER"] == (
-        "/castle-chef/shared/instacart-session"
+    assert environment["BITE_PLANNER_INSTACART_SESSION_PARAMETER"] == (
+        "/bite-planner/shared/instacart-session"
     )
 
 
@@ -179,7 +180,7 @@ def test_each_jobs_record_is_kept_privately_as_long_as_the_logs(runtime: Templat
     assert statement["Action"] == "s3:PutObject"
     assert "/jobs/*" in json.dumps(statement["Resource"])
     environment = {e["Name"]: e["Value"] for e in worker_container(runtime)["Environment"]}
-    assert environment["CASTLE_CHEF_JOB_RECORDS_BUCKET"] == {"Ref": bucket_id}
+    assert environment["BITE_PLANNER_JOB_RECORDS_BUCKET"] == {"Ref": bucket_id}
 
 
 def test_each_queued_job_starts_one_worker_with_its_id(runtime: Template) -> None:
@@ -201,7 +202,7 @@ def test_each_queued_job_starts_one_worker_with_its_id(runtime: Template) -> Non
                                 {
                                     "Name": "worker",
                                     "Environment": [
-                                        {"Name": "CASTLE_CHEF_JOB_ID", "Value": "$.body.job_id"}
+                                        {"Name": "BITE_PLANNER_JOB_ID", "Value": "$.body.job_id"}
                                     ],
                                 }
                             ]
@@ -228,14 +229,14 @@ def test_api_runs_outside_any_vpc_within_limits(runtime: Template) -> None:
     [api] = [
         f
         for f in functions(runtime).values()
-        if "CASTLE_CHEF_NEON_AUTH_URL" in f["Environment"]["Variables"]
+        if "BITE_PLANNER_NEON_AUTH_URL" in f["Environment"]["Variables"]
     ]
     assert "VpcConfig" not in api
     assert api["Timeout"] == 30
     assert api["ReservedConcurrentExecutions"] == 5
     variables = api["Environment"]["Variables"]
-    assert variables["CASTLE_CHEF_SSM_PARAMETERS"] == (
-        '{"DATABASE_URL": "/castle-chef/test/database-url-pooled"}'
+    assert variables["BITE_PLANNER_SSM_PARAMETERS"] == (
+        '{"DATABASE_URL": "/bite-planner/test/database-url-pooled"}'
     )
     assert "DATABASE_URL" not in variables  # never in the function's configuration
     runtime.has_resource_properties("AWS::Lambda::Url", {"AuthType": "NONE"})
@@ -246,25 +247,25 @@ def test_only_the_api_has_a_url(runtime: Template) -> None:
     [handler] = [
         f
         for f in functions(runtime).values()
-        if f["Environment"]["Variables"].get("CASTLE_CHEF_FAILURE_HANDLER") == "true"
+        if f["Environment"]["Variables"].get("BITE_PLANNER_FAILURE_HANDLER") == "true"
     ]
-    assert "CASTLE_CHEF_JOBS_QUEUE_URL" not in handler["Environment"]["Variables"]
+    assert "BITE_PLANNER_JOBS_QUEUE_URL" not in handler["Environment"]["Variables"]
 
 
 def test_booking_presses_place_order_only_as_the_stages_switch_says(runtime: Template) -> None:
     [secret] = [
         s
         for s in worker_container(runtime)["Secrets"]
-        if s["Name"] == "CASTLE_CHEF_INSTACART_BOOKING"
+        if s["Name"] == "BITE_PLANNER_INSTACART_BOOKING"
     ]
     # Read by each task as it starts, from the parameter set by hand.
-    assert "/castle-chef/test/instacart-booking" in json.dumps(secret["ValueFrom"])
+    assert "/bite-planner/test/instacart-booking" in json.dumps(secret["ValueFrom"])
 
 
 def backend_literal(module: str, name: str) -> object:
-    """The literal assigned to `name` in backend/src/castle_chef/<module> (a constant, or
+    """The literal assigned to `name` in backend/src/bite_planner/<module> (a constant, or
     a setting's default), read from the source: infra doesn't install the backend."""
-    tree = ast.parse((REPOSITORY / "backend" / "src" / "castle_chef" / module).read_text())
+    tree = ast.parse((REPOSITORY / "backend" / "src" / "bite_planner" / module).read_text())
     [value] = [
         node.value
         for node in ast.walk(tree)
@@ -293,7 +294,7 @@ def test_booking_runs_hourly_through_the_day_once_orders_become_due(runtime: Tem
         {e["Name"] for e in worker_container(runtime)["Environment"]},
         *(f["Environment"]["Variables"] for f in functions(runtime).values()),
     ]
-    assert not any("CASTLE_CHEF_STORE_TIME_ZONE" in env for env in environments)
+    assert not any("BITE_PLANNER_STORE_TIME_ZONE" in env for env in environments)
     # In the members' group, which the Scheduler alarms watch: a run Scheduler
     # can't deliver emails the owner.
     assert schedule["GroupName"] == "Runtime-reminders"
@@ -317,8 +318,8 @@ def test_booking_runs_hourly_through_the_day_once_orders_become_due(runtime: Tem
     assert "function:Runtime-Reminders" in json.dumps(schedule["Target"]["Arn"])
     # The run queues the book jobs that are due.
     variables = reminders["Environment"]["Variables"]
-    assert variables["CASTLE_CHEF_JOB_DISPATCH"] == "sqs"
-    assert "CASTLE_CHEF_JOBS_QUEUE_URL" in variables
+    assert variables["BITE_PLANNER_JOB_DISPATCH"] == "sqs"
+    assert "BITE_PLANNER_JOBS_QUEUE_URL" in variables
     sends = [
         statement
         for policy in runtime.find_resources("AWS::IAM::Policy").values()
@@ -333,14 +334,15 @@ def test_a_stopped_booking_tells_whoever_approved_the_order(runtime: Template) -
     [handler] = [
         f
         for f in functions(runtime).values()
-        if f["Environment"]["Variables"].get("CASTLE_CHEF_FAILURE_HANDLER")
+        if f["Environment"]["Variables"].get("BITE_PLANNER_FAILURE_HANDLER")
     ]
     variables = handler["Environment"]["Variables"]
-    assert variables["CASTLE_CHEF_PUSH"] == "apns"
-    assert json.loads(variables["CASTLE_CHEF_SSM_PARAMETERS"]) == {
-        "DATABASE_URL": "/castle-chef/test/database-url-pooled",
-        "CASTLE_CHEF_APNS_KEY": "/castle-chef/shared/apns-key-base64",
-        "CASTLE_CHEF_APNS_KEY_ID": "/castle-chef/shared/apns-key-id",
+    assert variables["BITE_PLANNER_PUSH"] == "apns"
+    assert json.loads(variables["BITE_PLANNER_SSM_PARAMETERS"]) == {
+        "DATABASE_URL": "/bite-planner/test/database-url-pooled",
+        "BITE_PLANNER_APNS_KEY": "/bite-planner/shared/apns-key-base64",
+        "BITE_PLANNER_APNS_KEY_ID": "/bite-planner/shared/apns-key-id",
+        "BITE_PLANNER_APNS_TEAM_ID": "/bite-planner/shared/apple-team-id",
     }
 
 
@@ -366,7 +368,7 @@ def test_stopped_workers_reach_the_failure_handler(runtime: Template) -> None:
     [handler] = [
         name
         for name, f in runtime.find_resources("AWS::Lambda::Function").items()
-        if f["Properties"]["Environment"]["Variables"].get("CASTLE_CHEF_FAILURE_HANDLER")
+        if f["Properties"]["Environment"]["Variables"].get("BITE_PLANNER_FAILURE_HANDLER")
     ]
     assert target["Arn"] == {"Fn::GetAtt": [stops, "Arn"]}
     for queue in (stops, dead_letters):
@@ -410,7 +412,7 @@ def reminders_function(runtime: Template) -> tuple[str, dict[str, Any]]:
     [(name, reminders)] = [
         (name, f["Properties"])
         for name, f in runtime.find_resources("AWS::Lambda::Function").items()
-        if f["Properties"]["Environment"]["Variables"].get("CASTLE_CHEF_REMINDERS_HANDLER")
+        if f["Properties"]["Environment"]["Variables"].get("BITE_PLANNER_REMINDERS_HANDLER")
     ]
     return name, reminders
 
@@ -418,12 +420,13 @@ def reminders_function(runtime: Template) -> tuple[str, dict[str, Any]]:
 def test_each_members_schedule_invokes_the_reminders_function_only(runtime: Template) -> None:
     name, reminders = reminders_function(runtime)
     variables = reminders["Environment"]["Variables"]
-    assert json.loads(variables["CASTLE_CHEF_SSM_PARAMETERS"]) == {
-        "DATABASE_URL": "/castle-chef/test/database-url-pooled",
-        "CASTLE_CHEF_APNS_KEY": "/castle-chef/shared/apns-key-base64",
-        "CASTLE_CHEF_APNS_KEY_ID": "/castle-chef/shared/apns-key-id",
+    assert json.loads(variables["BITE_PLANNER_SSM_PARAMETERS"]) == {
+        "DATABASE_URL": "/bite-planner/test/database-url-pooled",
+        "BITE_PLANNER_APNS_KEY": "/bite-planner/shared/apns-key-base64",
+        "BITE_PLANNER_APNS_KEY_ID": "/bite-planner/shared/apns-key-id",
+        "BITE_PLANNER_APNS_TEAM_ID": "/bite-planner/shared/apple-team-id",
     }
-    assert variables["CASTLE_CHEF_PUSH"] == "apns"
+    assert variables["BITE_PLANNER_PUSH"] == "apns"
     assert variables["AWS_LWA_PASS_THROUGH_PATH"] == "/events"
     # An error response fails the invocation, so Lambda retries the firing.
     assert variables["AWS_LWA_ERROR_STATUS_CODES"] == "500-599"
@@ -453,12 +456,12 @@ def test_the_api_keeps_members_schedules_but_never_holds_the_push_key(runtime: T
     [api] = [
         f
         for f in functions(runtime).values()
-        if "CASTLE_CHEF_NEON_AUTH_URL" in f["Environment"]["Variables"]
+        if "BITE_PLANNER_NEON_AUTH_URL" in f["Environment"]["Variables"]
     ]
     variables = api["Environment"]["Variables"]
-    assert variables["CASTLE_CHEF_REMINDER_SCHEDULER"] == "aws"
-    assert variables["CASTLE_CHEF_REMINDER_SCHEDULE_GROUP"] == "Runtime-reminders"
-    assert "APNS" not in variables["CASTLE_CHEF_SSM_PARAMETERS"]
+    assert variables["BITE_PLANNER_REMINDER_SCHEDULER"] == "aws"
+    assert variables["BITE_PLANNER_REMINDER_SCHEDULE_GROUP"] == "Runtime-reminders"
+    assert "APNS" not in variables["BITE_PLANNER_SSM_PARAMETERS"]
 
 
 def test_alarms_email_the_owner(runtime: Template) -> None:
@@ -504,7 +507,7 @@ def test_release_can_authenticate_public_pulls_without_public_writes(
     [role] = [
         name
         for name, resource in repositories.find_resources("AWS::IAM::Role").items()
-        if resource["Properties"].get("RoleName") == "castle-chef-github-deploy"
+        if resource["Properties"].get("RoleName") == "bite-planner-github-deploy"
     ]
     actions: set[str] = {
         action
@@ -534,6 +537,12 @@ def test_each_stage_deploys_its_own_runtime_stack(tmp_path: Path) -> None:
             cwd=infra,
             env=os.environ
             | {
+                "AWS_ACCOUNT_ID": "123456789012",
+                "AWS_REGION": "us-east-1",
+                "BITE_PLANNER_GITHUB_SUBJECT": "repo:example-owner@1/example-repo@2",
+                "BITE_PLANNER_ALARM_EMAIL": "operator@example.com",
+                "NEON_AUTH_URL_DEV": "https://dev-auth.example.test/neondb/auth",
+                "NEON_AUTH_URL_PROD": "https://auth.example.test/neondb/auth",
                 "CDK_OUTDIR": str(outdir),
                 "CDK_CONTEXT_JSON": json.dumps(
                     context
@@ -551,26 +560,48 @@ def test_each_stage_deploys_its_own_runtime_stack(tmp_path: Path) -> None:
         [stack] = [
             name
             for name, artifact in manifest["artifacts"].items()
-            if artifact["type"] == "aws:cloudformation:stack" and name != "CastleChefRepositories"
+            if artifact["type"] == "aws:cloudformation:stack" and name != "BitePlannerRepositories"
         ]
         runtime_stacks.add(stack)
+        template = json.loads(
+            (outdir / manifest["artifacts"][stack]["properties"]["templateFile"]).read_text()
+        )
+        urls = {
+            resource["Properties"]["Environment"]["Variables"]["BITE_PLANNER_NEON_AUTH_URL"]
+            for resource in template["Resources"].values()
+            if resource["Type"] == "AWS::Lambda::Function"
+            and "BITE_PLANNER_NEON_AUTH_URL"
+            in resource["Properties"].get("Environment", {}).get("Variables", {})
+        }
+        assert urls == {f"https://{'dev-' if stage == 'dev' else ''}auth.example.test/neondb/auth"}
     assert len(runtime_stacks) == len(context["stages"])
 
 
-def test_each_stage_verifies_sign_ins_from_the_apps_neon_auth() -> None:
-    # The app built for each stage signs in with this Neon Auth; the API verifies
-    # tokens against the stage's. Different ones would refuse every request.
-    stages = json.loads((REPOSITORY / "infra" / "cdk.json").read_text())["context"]["stages"]
-    app_env_files = {"dev": ".env.development", "prod": ".env.production"}
-    assert set(stages) == set(app_env_files)
-    for stage, env_file in app_env_files.items():
-        lines = (REPOSITORY / "apps" / "mobile" / env_file).read_text().splitlines()
-        [app_url] = [
-            line.removeprefix("VITE_NEON_AUTH_URL=")
-            for line in lines
-            if line.startswith("VITE_NEON_AUTH_URL=")
-        ]
-        assert stages[stage]["neonAuthUrl"] == app_url
+def test_deploy_without_private_configuration_fails_before_synthesizing(tmp_path: Path) -> None:
+    infra = Path(__file__).parents[1]
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name
+        not in (
+            "AWS_ACCOUNT_ID",
+            "AWS_REGION",
+            "BITE_PLANNER_GITHUB_SUBJECT",
+            "BITE_PLANNER_ALARM_EMAIL",
+            "NEON_AUTH_URL_DEV",
+            "NEON_AUTH_URL_PROD",
+        )
+    }
+    result = subprocess.run(
+        [sys.executable, "app.py"],
+        cwd=infra,
+        env=env | {"CDK_OUTDIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "Missing AWS_ACCOUNT_ID" in result.stderr
+    assert not list(tmp_path.glob("*.template.json"))
 
 
 def test_development_images_never_expire_releases(repositories: Template) -> None:
@@ -593,7 +624,7 @@ def test_a_monthly_budget_emails_the_owner(repositories: Template) -> None:
             "Budget": Match.object_like(
                 {
                     "TimeUnit": "MONTHLY",
-                    "CostFilters": {"TagKeyValue": ["user:project$castle-chef"]},
+                    "CostFilters": {"TagKeyValue": ["user:project$bite-planner"]},
                 }
             ),
             "NotificationsWithSubscribers": Match.array_with(
@@ -617,14 +648,14 @@ def test_services_log_the_deployed_release(runtime: Template) -> None:
         *(f["Environment"]["Variables"] for f in functions(runtime).values()),
     ]
     assert len(environments) == 4  # the worker, the API, the failure handler, Reminders
-    assert all(env["CASTLE_CHEF_RELEASE"] == "2026.9.24.1" for env in environments)
+    assert all(env["BITE_PLANNER_RELEASE"] == "2026.9.24.1" for env in environments)
 
 
 def test_only_the_api_can_verify_addresses_with_the_default_provider(runtime: Template) -> None:
     [api] = [
         f
         for f in functions(runtime).values()
-        if "CASTLE_CHEF_NEON_AUTH_URL" in f["Environment"]["Variables"]
+        if "BITE_PLANNER_NEON_AUTH_URL" in f["Environment"]["Variables"]
     ]
     matches = [
         (policy["Properties"]["Roles"], statement)

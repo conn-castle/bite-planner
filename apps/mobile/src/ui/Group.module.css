@@ -5,16 +5,16 @@
   padding: 22px 4px 8px;
   font-size: 13px;
   font-weight: 650;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
   /* Headings default to Ionic's 1.2; the design's .gh takes the body's 1.35. */
   line-height: inherit;
 }
 
 .card {
   overflow: hidden;
-  border-radius: var(--cc-radius-md);
-  background: var(--cc-bg);
-  border: 0.5px solid var(--cc-hairline);
+  border-radius: var(--bp-radius-md);
+  background: var(--bp-bg);
+  border: 0.5px solid var(--bp-hairline);
   /* Its list rows are inset less (.group .list-row). */
   --list-row-padding: 11px 14px;
   --list-row-rule: 66px;
@@ -27,7 +27,7 @@
   margin: 0;
   padding: 8px 4px 0;
   font-size: 13px;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .footer svg {
@@ -47,7 +47,7 @@
   gap: 12px;
   background: transparent;
   font: inherit;
-  color: var(--cc-ink);
+  color: var(--bp-ink);
   text-align: left;
   position: relative;
 }
@@ -58,7 +58,7 @@
 }
 
 .row + .row {
-  border-top: 0.5px solid var(--cc-hairline);
+  border-top: 0.5px solid var(--bp-hairline);
 }
 
 /* On a card (.list-row). A group's, and History's order cards', are inset less
@@ -73,21 +73,21 @@
   top: 0;
   right: 0;
   left: var(--list-row-rule, 70px);
-  border-top: 0.5px solid var(--cc-hairline);
+  border-top: 0.5px solid var(--bp-hairline);
 }
 
 .pressable {
   cursor: pointer;
-  transition: background-color 160ms var(--cc-ease);
+  transition: background-color 160ms var(--bp-ease);
 }
 
 .pressable:focus-visible {
-  outline: 2px solid var(--cc-accent);
+  outline: 2px solid var(--bp-accent);
   outline-offset: -2px;
 }
 
 .pressable:active:not(:disabled) {
-  background: var(--cc-fill);
+  background: var(--bp-fill);
 }
 
 .pressable:disabled {
@@ -115,20 +115,20 @@
 .sub {
   margin-top: 1px;
   font-size: 13px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .detail {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
   font-size: 15px;
   white-space: nowrap;
 }
 
 .chevron {
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
   font-size: 16px;
 }
 
@@ -160,7 +160,7 @@
 }
 
 .danger {
-  color: var(--cc-danger);
+  color: var(--bp-danger);
 }
 
 .art {
@@ -172,7 +172,7 @@
   height: 40px;
   overflow: hidden;
   border-radius: 12px;
-  background: var(--cc-fill);
+  background: var(--bp-fill);
 }
 
 .art svg {
@@ -183,7 +183,7 @@
 .overline {
   font-size: 12px;
   font-weight: 650;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
@@ -206,6 +206,6 @@
   line-clamp: unset;
   overflow-wrap: anywhere;
 }
-.fullLabel .opens { min-height: var(--cc-hit-min); }
+.fullLabel .opens { min-height: var(--bp-hit-min); }
 .fullLabel .art { overflow: visible; }
 .fullLabel .art > :first-child { border-radius: inherit; overflow: hidden; }

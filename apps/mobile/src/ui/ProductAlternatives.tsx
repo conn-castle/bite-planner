@@ -41,7 +41,7 @@ export function ProductAlternatives({ title, products, emptyReason, query, brows
               <b>{productCost(product) ?? 'No price'}</b>
               <button
                 type="button"
-                className={`${styles.use} cc-hit`}
+                className={`${styles.use} bp-hit`}
                 aria-label={`Use ${product.name}`}
                 onClick={() => onUse(product.product_id)}
               >

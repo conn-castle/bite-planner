@@ -5,7 +5,7 @@
   gap: 5px;
   height: 24px;
   padding: 0 9px;
-  border-radius: var(--cc-radius-pill);
+  border-radius: var(--bp-radius-pill);
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0;
@@ -20,42 +20,42 @@
 }
 
 .default {
-  background: var(--cc-bg);
-  color: var(--cc-ink);
+  background: var(--bp-bg);
+  color: var(--bp-ink);
 }
 
 .accentText {
-  background: var(--cc-bg);
-  color: var(--cc-accent);
+  background: var(--bp-bg);
+  color: var(--bp-accent);
 }
 
 .accent {
-  background: var(--cc-accent);
-  color: var(--cc-on-ink);
+  background: var(--bp-accent);
+  color: var(--bp-on-ink);
 }
 
 .success {
-  background: var(--cc-success-soft);
-  color: var(--cc-success);
+  background: var(--bp-success-soft);
+  color: var(--bp-success);
 }
 
 .danger {
-  background: var(--cc-danger);
-  color: var(--cc-on-ink);
+  background: var(--bp-danger);
+  color: var(--bp-on-ink);
 }
 
 /* .chip.dark */
 .dark {
-  background: var(--cc-ink);
-  color: var(--cc-on-ink);
+  background: var(--bp-ink);
+  color: var(--bp-on-ink);
 }
 
 /* spec/mockup.html: .pill, .pill.ok */
 .pill {
   padding: 4px 9px;
-  border-radius: var(--cc-radius-pill);
-  background: var(--cc-fill);
-  color: var(--cc-ink-2);
+  border-radius: var(--bp-radius-pill);
+  background: var(--bp-fill);
+  color: var(--bp-ink-2);
   font-size: 12px;
   font-weight: 650;
   white-space: nowrap;

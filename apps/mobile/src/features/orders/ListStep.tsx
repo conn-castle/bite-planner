@@ -284,7 +284,7 @@ function ListReview({ order, onOpenProduct, onBack, onNext, onClose }: ListRevie
       />
       {onHand.length > 0 && (
         <>
-          <button type="button" className={`${styles.onHand} cc-hit`} onClick={() => setShowOnHand(true)}>
+          <button type="button" className={`${styles.onHand} bp-hit`} onClick={() => setShowOnHand(true)}>
             <Icon name="info" />
             {plural(onHand.length, 'item')} assumed on hand
           </button>

@@ -23,24 +23,24 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 if not TEST_DATABASE_URL:
     raise pytest.UsageError(
         "Set TEST_DATABASE_URL, e.g. start `docker compose up -d` in backend/ and use "
-        "postgresql://postgres:postgres@localhost:54329/castle_chef"
+        "postgresql://postgres:postgres@localhost:54329/bite_planner"
     )
 # Tests run in parallel (pytest-xdist, `-n auto` in pyproject.toml): each worker
 # has a database of its own, made from TEST_DATABASE_URL's name and the worker's
-# (castle_chef_gw0, …; castle_chef_main without workers).
+# (bite_planner_gw0, …; bite_planner_main without workers).
 _BASE_URL = make_url(TEST_DATABASE_URL).set(drivername="postgresql+psycopg")
 DATABASE_NAME = f"{_BASE_URL.database}_{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
 os.environ["DATABASE_URL"] = (
     make_url(TEST_DATABASE_URL).set(database=DATABASE_NAME).render_as_string(hide_password=False)
 )
 
-from castle_chef_agent.address import Address  # noqa: E402
-from castle_chef_agent.instacart import DeliveryAddress  # noqa: E402
+from bite_planner_agent.address import Address  # noqa: E402
+from bite_planner_agent.instacart import DeliveryAddress  # noqa: E402
 
-from castle_chef.db import get_engine  # noqa: E402
-from castle_chef.dispatch import get_dispatcher  # noqa: E402
-from castle_chef.models import GroceryOrder, Household, Job, JobKind  # noqa: E402
-from castle_chef.settings import get_settings  # noqa: E402
+from bite_planner.db import get_engine  # noqa: E402
+from bite_planner.dispatch import get_dispatcher  # noqa: E402
+from bite_planner.models import GroceryOrder, Household, Job, JobKind  # noqa: E402
+from bite_planner.settings import get_settings  # noqa: E402
 
 TEST_ADDRESSES: list[DeliveryAddress] = [
     DeliveryAddress.model_validate(address)
@@ -101,10 +101,10 @@ def migrated_database() -> None:
 
 @pytest.fixture(autouse=True)
 def clean_tables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("CASTLE_CHEF_JOBS_DIR", str(tmp_path / "jobs"))
-    monkeypatch.setenv("CASTLE_CHEF_LOGS_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("BITE_PLANNER_JOBS_DIR", str(tmp_path / "jobs"))
+    monkeypatch.setenv("BITE_PLANNER_LOGS_DIR", str(tmp_path / "logs"))
     # Small batches keep fake-agent runs fast; tests of the batch size set their own.
-    monkeypatch.setenv("CASTLE_CHEF_MEALS_PER_BATCH", "1")
+    monkeypatch.setenv("BITE_PLANNER_MEALS_PER_BATCH", "1")
     get_settings.cache_clear()
     get_dispatcher.cache_clear()
     yield
@@ -171,13 +171,13 @@ FAKE_CODEX = Path(__file__).parent / "fake_codex.py"
 def codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Instacart through a stand-in `codex app-server` (fake_codex.py) that replays
     recorded replies; configure it with `fake.json` in the returned directory."""
-    from castle_chef import instacart
+    from bite_planner import instacart
 
     home = tmp_path / "codex"
     home.mkdir()
-    monkeypatch.setenv("CASTLE_CHEF_CODEX_HOME", str(home))
-    monkeypatch.setenv("CASTLE_CHEF_CODEX_LOCK_FILE", str(home / "codex.lock"))
-    monkeypatch.setenv("CASTLE_CHEF_CODEX_COMMAND", f"{sys.executable} {FAKE_CODEX}")
+    monkeypatch.setenv("BITE_PLANNER_CODEX_HOME", str(home))
+    monkeypatch.setenv("BITE_PLANNER_CODEX_LOCK_FILE", str(home / "codex.lock"))
+    monkeypatch.setenv("BITE_PLANNER_CODEX_COMMAND", f"{sys.executable} {FAKE_CODEX}")
     monkeypatch.setattr(instacart, "POLL_SECONDS", 0)
     get_settings.cache_clear()
     return home
@@ -218,8 +218,8 @@ def instacart_site(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     site = f"http://127.0.0.1:{server.server_address[1]}"
-    monkeypatch.setenv("CASTLE_CHEF_INSTACART_SITE", site)
-    monkeypatch.setenv("CASTLE_CHEF_CHECKOUT_SETTLE_CHECK_MS", str(SETTLE_CHECK_MS))
+    monkeypatch.setenv("BITE_PLANNER_INSTACART_SITE", site)
+    monkeypatch.setenv("BITE_PLANNER_CHECKOUT_SETTLE_CHECK_MS", str(SETTLE_CHECK_MS))
     get_settings.cache_clear()
     yield site
     server.shutdown()

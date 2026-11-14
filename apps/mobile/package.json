@@ -1,11 +1,11 @@
 {
-  "name": "castle-chef-mobile",
+  "name": "bite-planner-mobile",
   "private": true,
   "version": "0.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && cp ../../LICENSE ../../THIRD_PARTY_NOTICES.md dist/",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run"

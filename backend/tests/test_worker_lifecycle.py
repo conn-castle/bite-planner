@@ -14,10 +14,10 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 from typer.testing import CliRunner
 
-from castle_chef import booking, worker
-from castle_chef.cli import app
-from castle_chef.db import get_engine
-from castle_chef.models import BookState, GroceryOrder, Job, JobStatus, utc_now
+from bite_planner import booking, worker
+from bite_planner.cli import app
+from bite_planner.db import get_engine
+from bite_planner.models import BookState, GroceryOrder, Job, JobStatus, utc_now
 from tests.conftest import BACKEND_DIR
 from tests.test_booking import approved
 from tests.test_worker import use_fake_agent
@@ -35,9 +35,9 @@ def git(*args: str) -> str:
 def log_events(logs_dir: Path) -> list[dict[str, Any]]:
     """The worker's own events (not those of libraries such as Alembic)."""
     entries = [
-        json.loads(line) for line in (logs_dir / "castle-chef.jsonl").read_text().splitlines()
+        json.loads(line) for line in (logs_dir / "bite-planner.jsonl").read_text().splitlines()
     ]
-    return [entry for entry in entries if entry["logger"].startswith("castle_chef")]
+    return [entry for entry in entries if entry["logger"].startswith("bite_planner")]
 
 
 def job_status(session: Session, job: Job) -> JobStatus:
@@ -122,8 +122,8 @@ def test_worker_in_an_image_logs_the_release_it_was_built_from(
     job: Job, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Images have no git checkout; the build sets these.
-    monkeypatch.setenv("CASTLE_CHEF_RELEASE", "r42")
-    monkeypatch.setenv("CASTLE_CHEF_COMMIT", "abc123")
+    monkeypatch.setenv("BITE_PLANNER_RELEASE", "r42")
+    monkeypatch.setenv("BITE_PLANNER_COMMIT", "abc123")
     use_fake_agent(monkeypatch, meals=1)
 
     runner.invoke(app, ["job", "run", "--job-id", str(job.id)])

@@ -4,7 +4,7 @@
   padding: 0 10px;
   border: 0;
   border-radius: 10px;
-  background: var(--cc-fill);
-  font: 600 15px var(--cc-font-text);
-  color: var(--cc-ink);
+  background: var(--bp-fill);
+  font: 600 15px var(--bp-font-text);
+  color: var(--bp-ink);
 }

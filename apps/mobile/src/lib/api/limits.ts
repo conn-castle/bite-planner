@@ -1,5 +1,5 @@
 /**
- * The API's ranges (backend/src/castle_chef/models.py), for the controls that
+ * The API's ranges (backend/src/bite_planner/models.py), for the controls that
  * stay inside them, and the other numbers of the backend's that the app says.
  */
 

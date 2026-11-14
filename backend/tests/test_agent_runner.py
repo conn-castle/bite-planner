@@ -9,13 +9,13 @@ from typing import Literal, Self
 
 import httpx2 as httpx
 import pytest
-from castle_chef_agent import runner
-from castle_chef_agent.checkout import BookTarget, CheckoutJob
-from castle_chef_agent.instacart import Instacart
-from castle_chef_agent.jobfiles import write_context
-from castle_chef_agent.meals import MealsJob, load_meals
-from castle_chef_agent.runner import ToolServerConfig
-from castle_chef_agent.server import (
+from bite_planner_agent import runner
+from bite_planner_agent.checkout import BookTarget, CheckoutJob
+from bite_planner_agent.instacart import Instacart
+from bite_planner_agent.jobfiles import write_context
+from bite_planner_agent.meals import MealsJob, load_meals
+from bite_planner_agent.runner import ToolServerConfig
+from bite_planner_agent.server import (
     checkout_server,
     meals_server,
     products_server,
@@ -126,7 +126,7 @@ class FakeOpenAI:
 def test_runner_gives_only_meal_tools_and_returns_their_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    launcher = shutil.which("castle-chef")
+    launcher = shutil.which("bite-planner")
     assert launcher is not None
     write_context(tmp_path, MealsJob(count=1))
     prompt = tmp_path / "prompt.md"
@@ -224,7 +224,7 @@ def test_api_errors_are_reported_after_mcp_cleanup(
     error: BaseException,
     message: str,
 ) -> None:
-    launcher = shutil.which("castle-chef")
+    launcher = shutil.which("bite-planner")
     assert launcher is not None
     write_context(tmp_path, MealsJob(count=1))
     prompt = tmp_path / "prompt.md"
@@ -257,7 +257,7 @@ def test_unsuccessful_response_fails_with_actionable_summary(
     status: Literal["incomplete", "failed"],
     diagnostics: list[str],
 ) -> None:
-    launcher = shutil.which("castle-chef")
+    launcher = shutil.which("bite-planner")
     assert launcher is not None
     write_context(tmp_path, MealsJob(count=1))
     prompt = tmp_path / "prompt.md"

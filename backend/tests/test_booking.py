@@ -1,4 +1,4 @@
-"""When approved orders book (castle_chef.booking): the run at 9:00 AM store time,
+"""When approved orders book (bite_planner.booking): the run at 9:00 AM store time,
 four days before delivery, repeated each hour; Place order claimed at most once;
 and bookings whose worker stopped, through the failure handler's events."""
 
@@ -8,15 +8,15 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
-from castle_chef_agent.checkout import ClickRequest
-from castle_chef_agent.windows import Window
+from bite_planner_agent.checkout import ClickRequest
+from bite_planner_agent.windows import Window
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from castle_chef import booking, jobs, push, reminders
-from castle_chef.checkout import BookIssue, CartLine, QuoteRequest
-from castle_chef.jobs import STALE_ERROR
-from castle_chef.models import (
+from bite_planner import booking, jobs, push, reminders
+from bite_planner.checkout import BookIssue, CartLine, QuoteRequest
+from bite_planner.jobs import STALE_ERROR
+from bite_planner.models import (
     AppUser,
     BookState,
     GroceryOrder,
@@ -28,7 +28,7 @@ from castle_chef.models import (
     PushDevice,
     utc_now,
 )
-from castle_chef.push import Notification, Outcome, Sent
+from bite_planner.push import Notification, Outcome, Sent
 from tests.test_checkout_tools import DOCKERFILE
 from tests.test_failures import TASK, task_stopped
 from tests.test_failures import events as events
@@ -225,14 +225,14 @@ def test_the_run_settles_a_booking_whose_worker_was_lost(
 
 def test_a_bookings_worker_counts_as_lost_by_the_worker_images_own_limit() -> None:
     entrypoint = re.search(
-        r'ENTRYPOINT \["timeout", "--kill-after=(\d+)s", "(\d+)s", "castle-chef"\]',
+        r'ENTRYPOINT \["timeout", "--kill-after=(\d+)s", "(\d+)s", "bite-planner"\]',
         DOCKERFILE.read_text(),
     )
     assert entrypoint, "docker/Dockerfile no longer says how long the worker may run."
     kill_after, limit = (int(seconds) for seconds in entrypoint.groups())
 
     assert timedelta(seconds=limit + kill_after) == jobs.WORKER_LIMIT, (
-        "Update castle_chef.jobs.WORKER_LIMIT to docker/Dockerfile's timeout."
+        "Update bite_planner.jobs.WORKER_LIMIT to docker/Dockerfile's timeout."
     )
 
 

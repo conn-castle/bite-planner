@@ -1,7 +1,7 @@
 /* Cooking a meal, full-screen (spec/mockup.html: .cook, .cook-top, .segs, .cook-body, .timer, .uses, .cook-foot). */
 
 .header {
-  background: var(--cc-bg);
+  background: var(--bp-bg);
 }
 
 .header ion-toolbar {
@@ -34,7 +34,7 @@
   white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 /* Keeps the title centered: as wide as Close. */
@@ -44,12 +44,12 @@
 }
 
 .progress {
-  padding: 14px calc(var(--cc-page-x) - 14px) 0;
+  padding: 14px calc(var(--bp-page-x) - 14px) 0;
 }
 
 .body {
-  padding: 34px var(--cc-page-x) 24px;
-  animation: fade 300ms var(--cc-ease) both;
+  padding: 34px var(--bp-page-x) 24px;
+  animation: fade 300ms var(--bp-ease) both;
 }
 
 @keyframes fade {
@@ -67,12 +67,12 @@
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--cc-accent);
+  color: var(--bp-accent);
 }
 
 .text {
   margin: 12px 0 0;
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   font-size: 27px;
   font-weight: 600;
   line-height: 1.3;
@@ -90,8 +90,8 @@
   height: 52px;
   padding: 0 20px 0 16px;
   border-radius: 999px;
-  background: var(--cc-accent-soft);
-  color: var(--cc-accent);
+  background: var(--bp-accent-soft);
+  color: var(--bp-accent);
   font: inherit;
   font-size: 17px;
   font-weight: 700;
@@ -103,13 +103,13 @@
 }
 
 .timer:focus-visible {
-  outline: 2px solid var(--cc-accent);
+  outline: 2px solid var(--bp-accent);
   outline-offset: 2px;
 }
 
 .running {
-  background: var(--cc-accent);
-  color: var(--cc-on-ink);
+  background: var(--bp-accent);
+  color: var(--bp-on-ink);
   font-variant-numeric: tabular-nums;
 }
 
@@ -121,7 +121,7 @@
   margin: 0 0 6px;
   font-size: 13px;
   font-weight: 650;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .uses ul {
@@ -133,7 +133,7 @@
 .uses li {
   padding: 3px 0;
   font-size: 15px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .footer {
@@ -143,8 +143,8 @@
 .footerBar {
   display: flex;
   gap: 10px;
-  padding: 12px var(--cc-page-x) max(34px, var(--ion-safe-area-bottom, 0px));
-  background: var(--cc-bg);
+  padding: 12px var(--bp-page-x) max(34px, var(--ion-safe-area-bottom, 0px));
+  background: var(--bp-bg);
 }
 
 .footerBar button {

@@ -92,7 +92,7 @@ export function CookView({ meal, status, isOpen, onClose }: CookViewProps) {
 
   return (
     <IonModal
-      className="cc-full-screen"
+      className="bp-full-screen"
       isOpen={isOpen}
       onWillPresent={opening}
       onDidPresent={() => keepScreenOn(true)}
@@ -177,7 +177,7 @@ export function CookView({ meal, status, isOpen, onClose }: CookViewProps) {
 /** Starts the step's timer, or shows the time left on it (tapping it then stops it). */
 function TimerButton({ minutes, running, onClick }: { minutes: number; running: StepTimer | null; onClick: () => void }) {
   return (
-    <button type="button" className={`${styles.timer} ${running ? styles.running : ''} cc-hit`} onClick={onClick}>
+    <button type="button" className={`${styles.timer} ${running ? styles.running : ''} bp-hit`} onClick={onClick}>
       <Icon name="timer" />
       {running ? <TimeLeft endsAt={running.endsAt} /> : <span>Start {minutes} min timer</span>}
     </button>

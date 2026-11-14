@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from castle_chef.db import get_engine
+from bite_planner.db import get_engine
 from tests.conftest import BACKEND_DIR
 
 
@@ -180,7 +180,7 @@ def test_prepared_recipe_backfill_is_literal_one_time_and_constraint_is_strict(
         alembic("upgrade", "head")
         from sqlmodel import Session
 
-        from castle_chef.models import Job
+        from bite_planner.models import Job
 
         with Session(engine) as session:
             build = session.get_one(Job, build_id)

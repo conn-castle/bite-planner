@@ -17,13 +17,13 @@
   display: grid;
   place-items: center;
   background: none;
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
   font-size: 19px;
   cursor: pointer;
   transition:
-    transform var(--cc-press) var(--cc-ease),
-    background-color 200ms var(--cc-ease),
-    color 200ms var(--cc-ease);
+    transform var(--bp-press) var(--bp-ease),
+    background-color 200ms var(--bp-ease),
+    color 200ms var(--bp-ease);
 }
 
 .choice:active,
@@ -33,23 +33,23 @@
 
 .choice:focus-visible,
 .current:focus-visible {
-  outline: 2px solid var(--cc-accent);
+  outline: 2px solid var(--bp-accent);
   outline-offset: 1px;
 }
 
 .up.on {
-  background: var(--cc-success-soft);
-  color: var(--cc-success);
+  background: var(--bp-success-soft);
+  color: var(--bp-success);
 }
 
 .down.on {
-  background: var(--cc-fill-strong);
-  color: var(--cc-ink);
+  background: var(--bp-fill-strong);
+  color: var(--bp-ink);
 }
 
 .favorite.on {
-  background: var(--cc-accent-soft);
-  color: var(--cc-accent);
+  background: var(--bp-accent-soft);
+  color: var(--bp-accent);
 }
 
 .favorite.on svg,
@@ -67,8 +67,8 @@
 .current {
   width: 32px;
   height: 32px;
-  background: var(--cc-fill);
-  color: var(--cc-ink-2);
+  background: var(--bp-fill);
+  color: var(--bp-ink-2);
   font-size: 17px;
 }
 
@@ -82,28 +82,28 @@
 .pill {
   height: 36px;
   padding: 0 1px;
-  border-radius: var(--cc-radius-pill);
-  background: var(--cc-fill);
+  border-radius: var(--bp-radius-pill);
+  background: var(--bp-fill);
   transform-origin: right center;
-  animation: grow 260ms var(--cc-ease);
+  animation: grow 260ms var(--bp-ease);
 }
 
 .pill .choice {
-  color: var(--cc-ink);
+  color: var(--bp-ink);
   font-size: 18px;
 }
 
 /* The chosen one stays in its color, on white against the pill. */
 .pill .on {
-  background: var(--cc-bg);
+  background: var(--bp-bg);
 }
 
 .pill .up.on {
-  color: var(--cc-success);
+  color: var(--bp-success);
 }
 
 .pill .favorite.on {
-  color: var(--cc-accent);
+  color: var(--bp-accent);
 }
 
 @keyframes grow {
@@ -121,7 +121,7 @@
   right: 0;
   margin-top: -18px;
   pointer-events: none;
-  animation: grow 260ms var(--cc-ease) reverse forwards;
+  animation: grow 260ms var(--bp-ease) reverse forwards;
 }
 
 .closing .choice {
@@ -142,13 +142,13 @@
 }
 
 .mark.up {
-  color: var(--cc-success);
+  color: var(--bp-success);
 }
 
 .mark.down {
-  color: var(--cc-ink-3);
+  color: var(--bp-ink-3);
 }
 
 .mark.favorite {
-  color: var(--cc-accent);
+  color: var(--bp-accent);
 }

@@ -10,8 +10,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlmodel import SQLModel
 
-import castle_chef.models  # noqa: F401  (registers the tables on SQLModel.metadata)
-from castle_chef.db import get_engine
+import bite_planner.models  # noqa: F401  (registers the tables on SQLModel.metadata)
+from bite_planner.db import get_engine
 
 # Every table, so a new one is covered too, with a column to try updating.
 COLUMN = {name: next(iter(table.columns)).name for name, table in SQLModel.metadata.tables.items()}

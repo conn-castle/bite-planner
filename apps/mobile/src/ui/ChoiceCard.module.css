@@ -3,13 +3,13 @@
   margin-top: 20px;
   padding: 18px;
   border-radius: 22px;
-  background: var(--cc-accent-soft);
-  border: 1.5px solid var(--cc-accent);
+  background: var(--bp-accent-soft);
+  border: 1.5px solid var(--bp-accent);
 }
 
 .own {
-  background: var(--cc-bg);
-  border-color: var(--cc-hairline);
+  background: var(--bp-bg);
+  border-color: var(--bp-hairline);
 }
 
 .label {
@@ -21,17 +21,17 @@
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--cc-accent);
+  color: var(--bp-accent);
 }
 
 .title {
   margin: 6px 0 0;
-  font: 700 26px/1.15 var(--cc-font-display);
-  color: var(--cc-ink);
+  font: 700 26px/1.15 var(--bp-font-display);
+  color: var(--bp-ink);
 }
 
 .detail {
   margin: 4px 0 0;
   font-size: 14px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }

@@ -3,9 +3,9 @@
   display: flex;
   padding: 2px;
   border-radius: 11px;
-  /* A tint of ink, not the mockup's --cc-fill-strong, which all but vanishes on the
+  /* A tint of ink, not the mockup's --bp-fill-strong, which all but vanishes on the
      warm page behind the tab screens (spec/README.md). */
-  background: color-mix(in srgb, var(--cc-ink) 8%, transparent);
+  background: color-mix(in srgb, var(--bp-ink) 8%, transparent);
 }
 
 .segment {
@@ -18,20 +18,20 @@
   font: inherit;
   font-size: 14px;
   font-weight: 600;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
   cursor: pointer;
   transition:
-    background-color 200ms var(--cc-ease),
-    color 200ms var(--cc-ease);
+    background-color 200ms var(--bp-ease),
+    color 200ms var(--bp-ease);
 }
 
 .segment.on {
-  background: var(--cc-bg);
-  color: var(--cc-ink);
+  background: var(--bp-bg);
+  color: var(--bp-ink);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .segment:focus-visible {
-  outline: 2px solid var(--cc-accent);
+  outline: 2px solid var(--bp-accent);
   outline-offset: -2px;
 }

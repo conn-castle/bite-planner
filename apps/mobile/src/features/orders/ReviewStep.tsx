@@ -185,7 +185,7 @@ function Reviewed({
         ) : null
       }
       title="Review"
-      lede={`Everything look right? Place it, and Castle Chef books it at ${store}.`}
+      lede={`Everything look right? Place it, and Bite Planner books it at ${store}.`}
       footer={
         <>
           <FooterSummary

@@ -41,7 +41,7 @@ export function RatingChoices({ value, onChange, label, className, onAnimationEn
         <button
           key={rating}
           type="button"
-          className={`${styles.choice} ${styles[rating]} ${chosen === rating ? styles.on : ''} cc-hit`}
+          className={`${styles.choice} ${styles[rating]} ${chosen === rating ? styles.on : ''} bp-hit`}
           aria-pressed={chosen === rating}
           aria-label={name}
           onClick={() => onChange(chosen === rating ? null : rating)}
@@ -89,7 +89,7 @@ export function RatingButton({ value, onChange, label }: RatingButtonProps) {
       {stage !== 'open' && (
         <button
           type="button"
-          className={`${styles.current} ${shown ? `${styles[shown.rating]} ${styles.on}` : ''} cc-hit`}
+          className={`${styles.current} ${shown ? `${styles[shown.rating]} ${styles.on}` : ''} bp-hit`}
           aria-label={shown ? `${shown.label}. Change rating` : `Rate ${label}`}
           aria-expanded={false}
           onClick={() => setStage('open')}

@@ -24,12 +24,12 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from castle_chef import push, reminders
-from castle_chef.api import create_app
-from castle_chef.models import AppUser, PushDevice
-from castle_chef.push import ApnsSender, Notification, NotificationKind, Outcome, Sent
-from castle_chef.reminders import AwsReminderScheduler, ReminderEvent, ScheduleError
-from castle_chef.settings import get_settings
+from bite_planner import push, reminders
+from bite_planner.api import create_app
+from bite_planner.models import AppUser, PushDevice
+from bite_planner.push import ApnsSender, Notification, NotificationKind, Outcome, Sent
+from bite_planner.reminders import AwsReminderScheduler, ReminderEvent, ScheduleError
+from bite_planner.settings import get_settings
 from tests.test_api import (  # noqa: F401  (fixtures)
     DAD,
     MOM,
@@ -465,7 +465,7 @@ def test_a_reminder_that_failed_before_sending_is_retried(
     client: TestClient, due_order: date, monkeypatch: pytest.MonkeyPatch, session: Session
 ) -> None:
     def unavailable() -> push.PushSender:
-        raise RuntimeError("Set CASTLE_CHEF_APNS_KEY and CASTLE_CHEF_APNS_KEY_ID.")
+        raise RuntimeError("Set BITE_PLANNER_APNS_KEY and BITE_PLANNER_APNS_KEY_ID.")
 
     monkeypatch.setattr(push, "get_sender", unavailable)
     day = due_order - timedelta(days=1)
@@ -515,7 +515,7 @@ def apns(apns_key: str, answer: httpx2.Response) -> tuple[ApnsSender, list[httpx
         requests.append(request)
         return answer
 
-    sender = ApnsSender(apns_key, "KEY1234567")
+    sender = ApnsSender(apns_key, "KEY1234567", "EXAMP12345")
     sender._client = httpx2.Client(base_url=push.APNS_URL, transport=httpx2.MockTransport(handle))
     return sender, requests
 
@@ -537,7 +537,7 @@ def test_apns_gets_a_signed_alert_for_the_app(apns_key: str) -> None:
 
     first, second = requests
     assert first.url.path == f"/3/device/{PHONE}"
-    assert first.headers["apns-topic"] == "com.conncastle.castlechef"
+    assert first.headers["apns-topic"] == "com.conncastle.biteplanner"
     assert first.headers["apns-push-type"] == "alert"
     assert "apns-collapse-id" not in first.headers
     bearer = first.headers["authorization"].removeprefix("bearer ")
@@ -578,13 +578,32 @@ def test_apns_answers_are_told_apart(apns_key: str, answer: httpx2.Response, sen
 def test_the_apns_sender_is_built_from_the_base64_key(
     apns_key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CASTLE_CHEF_PUSH", "apns")
-    monkeypatch.setenv("CASTLE_CHEF_APNS_KEY", base64.b64encode(apns_key.encode()).decode())
-    monkeypatch.setenv("CASTLE_CHEF_APNS_KEY_ID", "KEY1234567")
+    monkeypatch.setenv("BITE_PLANNER_PUSH", "apns")
+    monkeypatch.setenv("BITE_PLANNER_APNS_KEY", base64.b64encode(apns_key.encode()).decode())
+    monkeypatch.setenv("BITE_PLANNER_APNS_KEY_ID", "KEY1234567")
+    monkeypatch.setenv("BITE_PLANNER_APNS_TEAM_ID", "EXAMP12345")
     push.get_sender.cache_clear()
     try:
         sender = push.get_sender()
         assert isinstance(sender, ApnsSender)
+    finally:
+        push.get_sender.cache_clear()
+
+
+@pytest.mark.parametrize("missing", ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID"])
+def test_apns_requires_all_configured_signing_fields(
+    apns_key: str, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    monkeypatch.setenv("BITE_PLANNER_PUSH", "apns")
+    monkeypatch.setenv("BITE_PLANNER_APNS_KEY", base64.b64encode(apns_key.encode()).decode())
+    monkeypatch.setenv("BITE_PLANNER_APNS_KEY_ID", "KEY1234567")
+    monkeypatch.setenv("BITE_PLANNER_APNS_TEAM_ID", "EXAMP12345")
+    monkeypatch.delenv("BITE_PLANNER_" + missing)
+    get_settings.cache_clear()
+    push.get_sender.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="BITE_PLANNER_" + missing):
+            push.get_sender()
     finally:
         push.get_sender.cache_clear()
 
@@ -595,7 +614,7 @@ def aws_scheduler(
 ) -> Iterator[tuple[AwsReminderScheduler, Stubber]]:
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     scheduler = AwsReminderScheduler(
-        "castle-chef-reminders",
+        "bite-planner-reminders",
         "arn:aws:lambda:us-east-1:1:function:Reminders",
         "arn:aws:iam::1:role/SchedulerRole",
     )
@@ -611,7 +630,7 @@ def test_a_new_schedule_is_created_whole(
     user = UUID(int=1)
     schedule = {
         "Name": f"reminder-{user}",
-        "GroupName": "castle-chef-reminders",
+        "GroupName": "bite-planner-reminders",
         "ScheduleExpression": "cron(5 7 * * ? *)",
         "ScheduleExpressionTimezone": ZONE,
         "FlexibleTimeWindow": {"Mode": "OFF"},
@@ -643,11 +662,11 @@ def test_schedules_are_listed_and_deleted_by_member(
     aws_scheduler: tuple[AwsReminderScheduler, Stubber],
 ) -> None:
     scheduler, stub = aws_scheduler
-    group = {"GroupName": "castle-chef-reminders", "NamePrefix": "reminder-"}
+    group = {"GroupName": "bite-planner-reminders", "NamePrefix": "reminder-"}
     listed = {
         "Arn": "arn:x",
         "Name": f"reminder-{UUID(int=1)}",
-        "GroupName": "castle-chef-reminders",
+        "GroupName": "bite-planner-reminders",
         "State": "ENABLED",
         "Target": {"Arn": "arn:y"},
     }
@@ -659,7 +678,7 @@ def test_schedules_are_listed_and_deleted_by_member(
         {"Schedules": [listed | {"Name": f"reminder-{UUID(int=2)}"}]},
         expected_params=group | {"NextToken": "more"},
     )
-    name = {"Name": f"reminder-{UUID(int=1)}", "GroupName": "castle-chef-reminders"}
+    name = {"Name": f"reminder-{UUID(int=1)}", "GroupName": "bite-planner-reminders"}
     stub.add_client_error("delete_schedule", "ResourceNotFoundException", expected_params=name)
     stub.add_client_error("delete_schedule", "ThrottlingException", expected_params=name)
 
@@ -674,7 +693,7 @@ def test_schedules_are_listed_and_deleted_by_member(
 
 @pytest.fixture
 def reminder_events(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("CASTLE_CHEF_REMINDERS_HANDLER", "true")
+    monkeypatch.setenv("BITE_PLANNER_REMINDERS_HANDLER", "true")
     get_settings.cache_clear()
     return TestClient(create_app(), raise_server_exceptions=False)
 
@@ -710,8 +729,8 @@ def test_the_public_api_has_no_reminders_route(client: TestClient) -> None:
 def test_a_function_is_the_failure_handler_or_reminders_never_both(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CASTLE_CHEF_REMINDERS_HANDLER", "true")
-    monkeypatch.setenv("CASTLE_CHEF_FAILURE_HANDLER", "true")
+    monkeypatch.setenv("BITE_PLANNER_REMINDERS_HANDLER", "true")
+    monkeypatch.setenv("BITE_PLANNER_FAILURE_HANDLER", "true")
     get_settings.cache_clear()
 
     with pytest.raises(RuntimeError, match="not both"):

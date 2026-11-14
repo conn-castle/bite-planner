@@ -96,7 +96,7 @@ export function OrderFlowModal({ isOpen, onDismiss, orderId, startAt }: OrderFlo
   }
 
   return (
-    <IonModal ref={modal} className="cc-full-screen" isOpen={isOpen} onDidDismiss={dismissed}>
+    <IonModal ref={modal} className="bp-full-screen" isOpen={isOpen} onDidDismiss={dismissed}>
       <IonNav ref={nav} root={root} />
     </IonModal>
   )

@@ -1,6 +1,6 @@
 """Stands in for an agent whose MCP server starts a new process group and hangs.
 
-Usage (as CASTLE_CHEF_AGENT_COMMAND): fake_agent_spawner.py, followed by the
+Usage (as BITE_PLANNER_AGENT_COMMAND): fake_agent_spawner.py, followed by the
 runner arguments the worker appends. Writes the child's pid to `child.pid` in the
 job directory, then waits (the worker's timeout must end it).
 """

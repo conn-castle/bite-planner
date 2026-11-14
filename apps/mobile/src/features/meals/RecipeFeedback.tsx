@@ -93,7 +93,7 @@ export function RecipeFeedback({ order, meal, summary }: { order: GroceryOrder; 
         <Button onClick={() => void submit()} disabled={!online || !feedback.trim() || saving || send.isPending}>{send.isPending ? 'Sending…' : 'Send'}</Button>
       </div>
     }>
-      <p>Tell Chef what you'd like to change. You'll review the changes before using them.</p>
+      <p>Tell Bite Planner what you'd like to change. You'll review the changes before using them.</p>
       <TextField multiline label="What would you like to change?" value={feedback} maxLength={500} rows={5}
         disabled={send.isPending} onChange={(event) => setFeedback(event.target.value)} />
       <small>{feedback.length} / 500</small>

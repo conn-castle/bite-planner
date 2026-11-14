@@ -34,9 +34,9 @@ platform :ios do
     match(type: "appstore", readonly: true, api_key: api_key)
 
     # The release (YYYY.M.D.N) is the app's version (YYYY.M.D) and build (N).
-    release = ENV.fetch("CASTLE_CHEF_RELEASE")
+    release = ENV.fetch("BITE_PLANNER_RELEASE")
     version, build_number = release.match(/\A(\d{4}\.\d{1,2}\.\d{1,2})\.(\d+)\z/)&.captures
-    UI.user_error!("CASTLE_CHEF_RELEASE #{release.inspect} is not YYYY.M.D.N") if version.nil?
+    UI.user_error!("BITE_PLANNER_RELEASE #{release.inspect} is not YYYY.M.D.N") if version.nil?
 
     project = "ios/App/App.xcodeproj"
     update_code_signing_settings(
@@ -44,7 +44,7 @@ platform :ios do
       use_automatic_signing: false,
       team_id: CredentialsManager::AppfileConfig.try_fetch_value(:team_id),
       code_sign_identity: "Apple Distribution",
-      profile_name: ENV.fetch("sigh_com.conncastle.castlechef_appstore_profile-name")
+      profile_name: ENV.fetch("sigh_com.conncastle.biteplanner_appstore_profile-name")
     )
     build_app(
       project: project,
@@ -61,7 +61,7 @@ platform :ios do
   end
 
   # Needs write access to the match repo (MATCH_GIT_BASIC_AUTHORIZATION); the
-  # release only reads it. README "TestFlight".
+  # release only reads it. docs/operations/aws.md "Releases and recovery".
   desc "Create the App Store certificate and profile in the match repo (once, and when they expire)"
   lane :certificates do
     match(type: "appstore", readonly: false, api_key: connect_api_key)

@@ -268,7 +268,7 @@ function PersonalGroup({ settings }: { settings: PersonalSettings }) {
 }
 
 /**
- * Shown only while iOS doesn't let Castle Chef notify this phone (iOS keeps that
+ * Shown only while iOS doesn't let Bite Planner notify this phone (iOS keeps that
  * setting, not the app): a button to allow it the first time, and to iOS
  * Settings after that, where only the person can turn it on.
  */
@@ -324,7 +324,7 @@ function MembersGroup({ household, userId }: { household: Household; userId: str
   function inviteSomeone() {
     prompt({
       title: 'Invite someone',
-      message: 'They join when they first sign in to Castle Chef with this email.',
+      message: 'They join when they first sign in to Bite Planner with this email.',
       fields: [
         { placeholder: 'Name', maxLength: NAME_LENGTH },
         { placeholder: 'Email', maxLength: EMAIL_LENGTH, email: true },
@@ -454,7 +454,7 @@ function AccountGroup() {
         <Row label="Sign out" tone="danger" onClick={() => void onSignOut()} disabled={signingOut} />
       </Group>
       <p className={styles.version}>
-        Castle Chef {__APP_VERSION__} · {__APP_RELEASE__}
+        Bite Planner {__APP_VERSION__} · {__APP_RELEASE__}
       </p>
     </>
   )

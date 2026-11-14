@@ -13,7 +13,7 @@
 
 .title {
   margin: 0;
-  font-family: var(--cc-font-display);
+  font-family: var(--bp-font-display);
   font-size: 26px;
   font-weight: 700;
   line-height: 1.12;
@@ -24,7 +24,7 @@
 .lede {
   margin: 6px 0 0;
   font-size: 15px;
-  color: var(--cc-ink-2);
+  color: var(--bp-ink-2);
 }
 
 .step {

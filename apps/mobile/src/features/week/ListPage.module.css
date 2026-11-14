@@ -1,4 +1,4 @@
 /* spec/mockup.html: .slist (a placed order's list view) */
 .list {
-  padding: 0 var(--cc-page-x) 24px;
+  padding: 0 var(--bp-page-x) 24px;
 }

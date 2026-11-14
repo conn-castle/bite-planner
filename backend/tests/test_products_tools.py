@@ -1,4 +1,4 @@
-"""The agent's shopping tools (castle_chef_agent.server's products server): search
+"""The agent's shopping tools (bite_planner_agent.server's products server): search
 the store, choose each item's product with alternatives, or mark it not found,
 checked as each is made. Called as the agent calls them, over a real Instacart
 session with a stand-in `codex app-server` (recorded replies)."""
@@ -10,15 +10,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from castle_chef_agent.instacart import InstacartError, connect
-from castle_chef_agent.jobfiles import write_context
-from castle_chef_agent.products import ShopItem, ShopJob, prefetch_more_alternatives
-from castle_chef_agent.server import products_server
+from bite_planner_agent.instacart import InstacartError, connect
+from bite_planner_agent.jobfiles import write_context
+from bite_planner_agent.products import ShopItem, ShopJob, prefetch_more_alternatives
+from bite_planner_agent.server import products_server
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult
 
-from castle_chef.products import InvalidProducts, finished_choices
+from bite_planner.products import InvalidProducts, finished_choices
 from tests.conftest import FAKE_CODEX
 
 ITEMS = [
