@@ -57,11 +57,7 @@ INSTACART_SESSION_PARAMETER = "/bite-planner/shared/instacart-session"
 # when orders become due, and each hour after it to 9 PM, so a run that failed is
 # made up an hour later.
 BOOKING_SCHEDULE = "cron(0 9-21 * * ? *)"
-# Its name in the members' group: not `reminder-…`, so the reminder sync never
-# touches it. Name is create-only: setting it makes the move from the default
-# group (where its name was generated) a replacement, a new schedule in the
-# members' group, not an in-place update of the old one, which Scheduler (finding
-# schedules by group and name) wouldn't find there.
+# Name suffix, kept outside the reminder- prefix managed by reminder sync.
 BOOKING_SCHEDULE_NAME = "booking"
 STORE_TIME_ZONE = "America/New_York"
 
@@ -545,13 +541,13 @@ class RuntimeStack(Stack):
         for parameter in push_parameters:
             parameter.grant_read(reminders)
         jobs.grant_send_messages(reminders)
-        # The booking run, in the members' group so the Scheduler alarms (below)
-        # watch it too. The deploy's sync leaves it alone: it lists and deletes only
-        # the schedules named `reminder-<user id>` (AwsReminderScheduler.user_ids).
+        # CloudFormation identifies schedules by Name alone, even across groups:
+        # each runtime needs its own name. Reminder sync ignores this schedule
+        # because it manages only `reminder-<user id>` names.
         booking_schedule = scheduler.CfnSchedule(
             self,
             "BookingSchedule",
-            name=BOOKING_SCHEDULE_NAME,
+            name=f"{self.stack_name}-{BOOKING_SCHEDULE_NAME}",
             description="Books approved orders that are due (bite_planner.booking)",
             group_name=schedule_group_name,
             schedule_expression=BOOKING_SCHEDULE,

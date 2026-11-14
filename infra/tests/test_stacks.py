@@ -298,10 +298,9 @@ def test_booking_runs_hourly_through_the_day_once_orders_become_due(runtime: Tem
     # In the members' group, which the Scheduler alarms watch: a run Scheduler
     # can't deliver emails the owner.
     assert schedule["GroupName"] == "Runtime-reminders"
-    # Named (Name is create-only), so its move out of the default group, where its
-    # name was generated, replaces it rather than updating a schedule Scheduler
-    # can't find in the new group; and not a name the reminder sync would delete.
-    assert schedule["Name"] == "booking"
+    # CloudFormation owns the create-only Name across groups. Keep it specific
+    # to the stack and outside the names managed by reminder sync.
+    assert schedule["Name"] == "Runtime-booking"
     assert not schedule["Name"].startswith(backend_literal("reminders.py", "SCHEDULE_PREFIX"))
     [group] = runtime.find_resources("AWS::Scheduler::ScheduleGroup")
     assert [group] == next(iter(schedules.values()))["DependsOn"]
@@ -328,6 +327,31 @@ def test_booking_runs_hourly_through_the_day_once_orders_become_due(runtime: Tem
         and policy["Properties"]["Roles"][0]["Ref"].startswith("Reminders")
     ]
     assert len(sends) == 1
+
+
+def test_runtime_stacks_have_distinct_booking_schedule_names(runtime: Template) -> None:
+    other = Template.from_stack(
+        RuntimeStack(
+            cdk.App(),
+            "OtherRuntime",
+            config=RuntimeConfig(
+                neon_auth_url="https://ep-x.neonauth.example/neondb/auth",
+                database_url_parameter="/bite-planner/test/database-url-pooled",
+                instacart_booking_parameter="/bite-planner/test/instacart-booking",
+                cors_origins=["capacitor://localhost"],
+                alarm_email="owner@example.com",
+                release="2026.9.24.1",
+                api_image_digest=API_DIGEST,
+                worker_image_digest=WORKER_DIGEST,
+            ),
+        )
+    )
+    [first_schedule] = runtime.find_resources("AWS::Scheduler::Schedule").values()
+    [second_schedule] = other.find_resources("AWS::Scheduler::Schedule").values()
+    # Different groups do not prevent a CloudFormation ownership collision:
+    # AWS::Scheduler::Schedule's primary identifier contains only Name.
+    assert first_schedule["Properties"]["GroupName"] != second_schedule["Properties"]["GroupName"]
+    assert first_schedule["Properties"]["Name"] != second_schedule["Properties"]["Name"]
 
 
 def test_a_stopped_booking_tells_whoever_approved_the_order(runtime: Template) -> None:
