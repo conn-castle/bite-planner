@@ -17,4 +17,3 @@ export function OrderMealPage({ orderId, mealId, servings }: { orderId: string; 
     onToggle={() => void selection.toggle(summary)} /> : undefined
   return <MealPage selection={action} selectionProblem={selection.problem} mealId={mealId} servings={servings ?? null} picking={servings === undefined} order={order.shown} />
 }
-

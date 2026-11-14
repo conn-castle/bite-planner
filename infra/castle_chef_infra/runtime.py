@@ -48,6 +48,7 @@ RECORD_RETENTION = Duration.days(90)
 # The APNs auth key (Production, topic com.conncastle.castlechef) and its id.
 APNS_KEY_PARAMETER = "/castle-chef/shared/apns-key-base64"
 APNS_KEY_ID_PARAMETER = "/castle-chef/shared/apns-key-id"
+APNS_TEAM_ID_PARAMETER = "/castle-chef/shared/apple-team-id"
 OPENAI_API_KEY_PARAMETER = "/castle-chef/shared/openai-api-key"
 # The household's Instacart website session (browser cookies), which the worker
 # reads for checkout and writes back as Instacart renews it.
@@ -109,6 +110,9 @@ class RuntimeStack(Stack):
         )
         apns_key_id = ssm.StringParameter.from_string_parameter_name(
             self, "ApnsKeyId", string_parameter_name=APNS_KEY_ID_PARAMETER
+        )
+        apns_team_id = ssm.StringParameter.from_secure_string_parameter_attributes(
+            self, "ApnsTeamId", parameter_name=APNS_TEAM_ID_PARAMETER
         )
         openai_api_key = ssm.StringParameter.from_secure_string_parameter_attributes(
             self, "OpenAiApiKey", parameter_name=OPENAI_API_KEY_PARAMETER
@@ -231,6 +235,7 @@ class RuntimeStack(Stack):
                 "DATABASE_URL": ecs.Secret.from_ssm_parameter(database_url),
                 "CASTLE_CHEF_APNS_KEY": ecs.Secret.from_ssm_parameter(apns_key),
                 "CASTLE_CHEF_APNS_KEY_ID": ecs.Secret.from_ssm_parameter(apns_key_id),
+                "CASTLE_CHEF_APNS_TEAM_ID": ecs.Secret.from_ssm_parameter(apns_team_id),
                 "CASTLE_CHEF_INSTACART_BOOKING": ecs.Secret.from_ssm_parameter(instacart_booking),
                 "OPENAI_API_KEY": ecs.Secret.from_ssm_parameter(openai_api_key),
             },
@@ -373,13 +378,14 @@ class RuntimeStack(Stack):
         }
         # The failure handler and Reminders send push (a booking that stopped tells
         # whoever approved the order).
-        push_parameters = (database_url, apns_key, apns_key_id)
+        push_parameters = (database_url, apns_key, apns_key_id, apns_team_id)
         push_environment = {
             "CASTLE_CHEF_SSM_PARAMETERS": json.dumps(
                 {
                     "DATABASE_URL": config.database_url_parameter,
                     "CASTLE_CHEF_APNS_KEY": APNS_KEY_PARAMETER,
                     "CASTLE_CHEF_APNS_KEY_ID": APNS_KEY_ID_PARAMETER,
+                    "CASTLE_CHEF_APNS_TEAM_ID": APNS_TEAM_ID_PARAMETER,
                 }
             ),
             "CASTLE_CHEF_PUSH": "apns",

@@ -26,7 +26,6 @@ from castle_chef.settings import get_settings
 log = logging.getLogger(__name__)
 
 APNS_URL = "https://api.push.apple.com"  # production: TestFlight and App Store builds
-TEAM_ID = "EXAMP12345"
 TOPIC = "com.conncastle.castlechef"  # the app's bundle id
 # Apple wants the signed token refreshed no more than every 20 minutes and no less
 # than every 60.
@@ -109,9 +108,10 @@ class PushSender(Protocol):
 class ApnsSender:
     """HTTP/2 to APNs with token-based auth: a JWT signed with the auth key."""
 
-    def __init__(self, key_pem: str, key_id: str) -> None:
+    def __init__(self, key_pem: str, key_id: str, team_id: str) -> None:
         self._key = key_pem
         self._key_id = key_id
+        self._team_id: str = team_id
         self._client = httpx2.Client(
             base_url=APNS_URL, http1=False, http2=True, timeout=httpx2.Timeout(10.0)
         )
@@ -122,7 +122,7 @@ class ApnsSender:
         now = time()
         if self._jwt is None or now - self._jwt_at > TOKEN_REUSE_SECONDS:
             self._jwt = jwt.encode(
-                {"iss": TEAM_ID, "iat": int(now)},
+                {"iss": self._team_id, "iat": int(now)},
                 self._key,
                 algorithm="ES256",
                 headers={"kid": self._key_id},
@@ -191,9 +191,13 @@ def get_sender() -> PushSender:
     settings = get_settings()
     if settings.push == "local":
         return LocalSender()
-    if not settings.apns_key or not settings.apns_key_id:
-        raise RuntimeError("Set CASTLE_CHEF_APNS_KEY and CASTLE_CHEF_APNS_KEY_ID.")
-    return ApnsSender(base64.b64decode(settings.apns_key).decode(), settings.apns_key_id)
+    if not settings.apns_key or not settings.apns_key_id or not settings.apns_team_id:
+        raise RuntimeError(
+            "Set CASTLE_CHEF_APNS_KEY, CASTLE_CHEF_APNS_KEY_ID and CASTLE_CHEF_APNS_TEAM_ID."
+        )
+    return ApnsSender(
+        base64.b64decode(settings.apns_key).decode(), settings.apns_key_id, settings.apns_team_id
+    )
 
 
 def register_device(session: Session, user_id: UUID, token: str) -> None:

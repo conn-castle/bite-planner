@@ -38,6 +38,7 @@ runs:
       with:
         role-to-assume: ${{ inputs.role }}
         aws-region: ${{ inputs.region }}
+        mask-aws-account-id: true
     - name: cdk deploy
       shell: bash
       working-directory: infra

@@ -91,4 +91,3 @@ export function CheckoutWait({ order, step, store, failed, signedOut, startFaile
     </FlowFrame>
   )
 }
-

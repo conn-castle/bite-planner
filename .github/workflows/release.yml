@@ -33,14 +33,21 @@ permissions:
   contents: read
 
 env:
-  NEON_PROJECT_ID: example-project
+  NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
   NEONCTL_VERSION: 4.17.4
-  AWS_REGION: us-east-1
+  AWS_REGION: ${{ secrets.AWS_REGION }}
   # Created by infra/ (CastleChefRepositories); trusts only this repository's main branch.
-  DEPLOY_ROLE: arn:aws:iam::123456789012:role/castle-chef-github-deploy
-  REGISTRY: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+  DEPLOY_ROLE: ${{ secrets.DEPLOY_ROLE }}
+  REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
   # Release versions are dates here: YYYY.M.D.N, the Nth release that day.
   RELEASE_TIMEZONE: America/New_York
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  CASTLE_CHEF_GITHUB_SUBJECT: ${{ secrets.CASTLE_CHEF_GITHUB_SUBJECT }}
+  CASTLE_CHEF_ALARM_EMAIL: ${{ secrets.CASTLE_CHEF_ALARM_EMAIL }}
+  NEON_AUTH_URL_DEV: ${{ secrets.NEON_AUTH_URL_DEV }}
+  NEON_AUTH_URL_PROD: ${{ secrets.NEON_AUTH_URL_PROD }}
+  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+  MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
 
 jobs:
   ci:
@@ -132,12 +139,15 @@ jobs:
       # Images are tagged by commit, so a re-run (even on another day, under
       # another release version) reuses exactly this commit's images.
       TAG: commit-${{ github.sha }}
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+      DOCKER_BUILD_SUMMARY: "false"
     steps:
       - uses: actions/checkout@v7
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
         with:
           role-to-assume: ${{ env.DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd  # v2.1.7
       # The Lambda adapter comes from ECR Public. Private ECR login does not
       # authenticate that pull; anonymous shared-runner downloads can hit 429.
@@ -344,6 +354,9 @@ jobs:
       - run: pnpm build
         env:
           CASTLE_CHEF_RELEASE: ${{ needs.changes.outputs.release }}
+          VITE_NEON_AUTH_URL: ${{ secrets.NEON_AUTH_URL_PROD }}
+          VITE_NEON_AUTH_TRUSTED_ORIGIN: ${{ secrets.VITE_NEON_AUTH_TRUSTED_ORIGIN }}
+          VITE_API_URL: ${{ secrets.API_URL_PROD }}
       - run: pnpm exec cap sync ios
       # One-hour, read-only token for the match certificates repo (Castle Chef Bot app).
       - id: certs
@@ -351,8 +364,8 @@ jobs:
         with:
           client-id: ${{ secrets.CASTLE_CHEF_APP_CLIENT_ID }}
           private-key: ${{ secrets.CASTLE_CHEF_APP_PRIVATE_KEY }}
-          owner: nicholasjconn
-          repositories: conn-castle-apple-certs
+          owner: ${{ secrets.APPLE_SIGNING_OWNER }}
+          repositories: ${{ secrets.APPLE_SIGNING_REPOSITORY }}
           permission-contents: read
       - id: upload
         name: Build and upload to TestFlight

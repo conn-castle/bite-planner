@@ -3,7 +3,7 @@
 Tell the agent what happened or what you want in ordinary language. Approximate
 time, device, and screen help with bugs, but an idea does not need to be fully
 specified. The issue records live in this repository's
-[GitHub Issues](https://github.com/nicholasjconn/castle-chef/issues); this page
+[GitHub Issues](https://github.com/conn-castle/bite-planner/issues); this page
 only describes how the agent files them.
 
 The agent checks open and closed issues for duplicates, then files distinct
@@ -24,5 +24,5 @@ criteria**, and **Open questions** where useful. Include relevant existing code
 or product constraints. File the request with unresolved questions instead of
 guessing at missing requirements. Keep credentials, tokens, private log
 payloads, and unrelated personal data out of issue bodies. Use `gh issue create
---repo nicholasjconn/castle-chef --label bug` (or `--label enhancement`) with
+--repo conn-castle/bite-planner --label bug` (or `--label enhancement`) with
 `--body-file` for multiline content, then give the user the GitHub issue links.
