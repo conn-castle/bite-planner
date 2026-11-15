@@ -118,6 +118,17 @@ def with_addresses(reply: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if tool == "instacart.cart" and not arguments.get("retailer_name"):
+        return {
+            "isError": True,
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Parameters failed connector schema validation: "
+                    "retailer_name [required]: Missing required property",
+                }
+            ],
+        }
     if tool == "instacart.search_products":
         slug = re.sub(r"[^a-z0-9]+", "-", arguments["query"].lower()).strip("-")
         # The worker tests' made-up items ("item 0") get the onions'; any other query

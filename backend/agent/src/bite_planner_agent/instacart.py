@@ -473,7 +473,9 @@ class Instacart:
 
     def addresses(self) -> list[DeliveryAddress]:
         """Read saved addresses without selecting one or modifying a cart."""
-        result = self.server.call_tool(CART_TOOL, {"show_retailer_selector": True})
+        result = self.server.call_tool(
+            CART_TOOL, {"retailer_name": self.retailer, "show_retailer_selector": True}
+        )
         return [DeliveryAddress.model_validate(a.model_dump()) for a in _addresses_from(result)]
 
     def select_address(self, expected: Address) -> DeliveryAddress:
