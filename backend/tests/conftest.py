@@ -229,6 +229,7 @@ def instacart_site(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     server.shutdown()
 
 
+@pytest.hookimpl(tryfirst=True)  # before xdist reads the group into each node ID
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Keep real encoder/tool subprocess integrations on one xdist worker."""
     model_files: set[str] = {

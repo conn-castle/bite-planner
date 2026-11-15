@@ -267,7 +267,8 @@ def save_meal(job_dir: Path, meal_input: MealInput) -> Path:
             raise MealRefused(f'"{meal_input.name}" is already added.')
         if len(saved) >= job.count:
             raise MealRefused(f"All {job.count} meals are already added.")
-        if problem := title_problem(job, meal_input.name, [meal.name for meal in saved]):
+        added = [meal.name for meal in saved]
+        if problem := title_problem(job, restricted_recent(job), meal_input.name, added):
             raise MealRefused(problem)
         directory = meals_dir(job_dir)
         directory.mkdir(parents=True, exist_ok=True)
@@ -283,15 +284,25 @@ def load_meals(job_dir: Path) -> list[MealInput]:
     ]
 
 
-def title_problem(job: MealsJob, name: str, added: list[str]) -> str | None:
-    """Draft veto first; positives remove matching history titles, never candidates."""
+def restricted_recent(job: MealsJob) -> list[MealTitle]:
+    """Recent titles no current positive matches: positives exempt history, never candidates."""
+    model = encoder()
+    return [
+        meal
+        for meal in job.recent
+        if not any(model.matches(meal.name, liked.name) for liked in job.positive)
+    ]
+
+
+def title_problem(
+    job: MealsJob, recent: list[MealTitle], name: str, added: list[str]
+) -> str | None:
+    """Draft veto first, then `recent` (restricted_recent of the same job)."""
     model = encoder()
     for title in [*added, *(meal.name for meal in job.current_draft)]:
         if model.matches(name, title):
             return f'"{name}" repeats "{title}" in the current draft. Choose a different meal idea.'
-    for meal in job.recent:
-        if any(model.matches(meal.name, liked.name) for liked in job.positive):
-            continue
+    for meal in recent:
         if model.matches(name, meal.name):
             return (
                 f'"{name}" repeats recent suggestion "{meal.name}". Choose a different meal idea.'
@@ -304,9 +315,10 @@ def check_titles(job_dir: Path, names: list[str]) -> list[str]:
     job = read_context(job_dir, MealsJob)
     with locked(job_dir):
         added = [meal.name for meal in load_meals(job_dir)]
+        recent = restricted_recent(job)
         problems: list[str] = []
         for name in names:
-            if problem := title_problem(job, name, added):
+            if problem := title_problem(job, recent, name, added):
                 problems.append(problem)
             else:
                 added.append(name)
@@ -318,10 +330,11 @@ def batch_problems(job: MealsJob, meals: list[MealInput]) -> list[str]:
     problems: list[str] = []
     if len(meals) != job.count:
         problems.append(f"{len(meals)} of {job.count} meals are added.")
-    encoder()  # An unavailable model must fail even for an empty/incomplete batch.
+    # Fails for an unavailable model even when the batch is empty or incomplete.
+    recent = restricted_recent(job)
     added: list[str] = []
     for meal in meals:
-        if problem := title_problem(job, meal.name, added):
+        if problem := title_problem(job, recent, meal.name, added):
             problems.append(problem)
         added.append(meal.name)
     return problems
