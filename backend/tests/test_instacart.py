@@ -90,7 +90,7 @@ def test_reading_saved_addresses_does_not_change_the_default_or_cart(codex_home:
         for r in requests(codex_home)
         if r.get("method") == "mcpServer/tool/call"
     ]
-    assert calls == [{"show_retailer_selector": True}]
+    assert calls == [{"retailer_name": "Wegmans", "show_retailer_selector": True}]
     assert not (codex_home / "selected-address.txt").exists()
 
 
@@ -329,4 +329,6 @@ def test_duplicate_or_wrong_unit_saved_addresses_stop_before_selecting(
     with pytest.raises(InstacartError, match=message), instacart.store(expected):
         pytest.fail("An ambiguous or different unit must not yield a usable store.")
     calls = [r["params"] for r in requests(codex_home) if r.get("method") == "mcpServer/tool/call"]
-    assert [call["arguments"] for call in calls] == [{"show_retailer_selector": True}]
+    assert [call["arguments"] for call in calls] == [
+        {"retailer_name": "Wegmans", "show_retailer_selector": True}
+    ]
