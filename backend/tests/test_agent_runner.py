@@ -68,7 +68,7 @@ class FakeOpenAI:
             raise self.error
         assert model == "gpt-6.1-sol"
         assert reasoning["effort"] == "high"
-        assert {tool["name"] for tool in tools} == {"add_meal", "done"}
+        assert {tool["name"] for tool in tools} == {"add_meal", "check_meal_titles", "done"}
         if self.status is not None:
             return Response.model_validate(
                 {

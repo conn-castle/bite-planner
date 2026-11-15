@@ -246,7 +246,16 @@ def test_a_meal_with_fields_the_tool_doesnt_have_is_refused(tmp_path: Path) -> N
 
 def test_meals_added_at_once_are_each_saved(tmp_path: Path) -> None:
     # The agent can call several `add_meal`s at once; the server runs each on its own thread.
-    names = [f"Meal {index}" for index in range(8)]
+    names = [
+        "Beef tacos",
+        "Mushroom risotto",
+        "Lemon salmon",
+        "Chickpea curry",
+        "Pork dumplings",
+        "Spinach lasagna",
+        "Chicken noodle soup",
+        "Shrimp fried rice",
+    ]
     tools = batch(tmp_path)
 
     async def add_all() -> list[Any]:
@@ -258,7 +267,7 @@ def test_meals_added_at_once_are_each_saved(tmp_path: Path) -> None:
     results = asyncio.run(add_all())
 
     assert not [result for result in results if isinstance(result, BaseException)]
-    assert sorted(saved_names(tmp_path)) == names
+    assert sorted(saved_names(tmp_path)) == sorted(names)
     assert [path.name for path in sorted((tmp_path / "meals").glob("*.json"))] == [
         f"{number:03d}.json" for number in range(1, 9)
     ]
@@ -305,7 +314,7 @@ def test_no_tool_sends_the_agent_looking_for_the_job_directory(tmp_path: Path) -
     # The server is given the job directory; what the agent reads of its tools mustn't ask for it.
     tools = asyncio.run(batch(tmp_path).list_tools())
 
-    assert {tool.name for tool in tools} == {"add_meal", "done"}
+    assert {tool.name for tool in tools} == {"add_meal", "check_meal_titles", "done"}
     for tool in tools:
         assert "job" not in json.dumps(tool.model_dump(mode="json")).lower(), tool.name
 

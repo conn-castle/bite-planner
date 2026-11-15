@@ -35,6 +35,8 @@ make format
 
 `make test` starts Postgres 17 on local port 54329. Tests use `TEST_DATABASE_URL`, create isolated worker databases, and refuse a second simultaneous backend run on the same server. They never use the live `DATABASE_URL`. `make db-stop` stops the local database without deleting data.
 
+`make deps` and `make test` fetch and checksum-verify the pinned MiniLM assets with `make title-model` under `.agent-layer/tmp/meal-title-model`. For direct local worker runs, set `BITE_PLANNER_TITLE_MODEL_DIR` to that absolute path; it is propagated to the isolated runner and tools without database credentials. Inference is offline. Model-bearing integration tests share one xdist group to bound memory.
+
 ## Router security updates
 
 The stable Ionic 9.0.x integration requires React Router 6 (`>=6.4 <7`); this project locks 6.30.6, the latest 6.x release. Two moderate router advisories remain open while we await stable Ionic 9.1 with React Router 7 support:

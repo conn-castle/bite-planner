@@ -15,6 +15,10 @@ from sqlalchemy.pool import NullPool
 from sqlmodel import Session
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+os.environ.setdefault(
+    "BITE_PLANNER_TITLE_MODEL_DIR",
+    str(BACKEND_DIR.parent / ".agent-layer/tmp/meal-title-model"),
+)
 
 # Tests only ever run on TEST_DATABASE_URL's Postgres (the local compose one), never
 # the DATABASE_URL in backend/.env. Its database is only where the test databases
@@ -223,3 +227,19 @@ def instacart_site(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     get_settings.cache_clear()
     yield site
     server.shutdown()
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Keep real encoder/tool subprocess integrations on one xdist worker."""
+    model_files: set[str] = {
+        "test_meal_novelty.py",
+        "test_meals_tools.py",
+        "test_worker.py",
+        "test_agent_runner.py",
+        "test_recipe_edits.py",
+        "test_worker_lifecycle.py",
+        "test_logging.py",
+    }
+    for item in items:
+        if item.path.name in model_files:
+            item.add_marker(pytest.mark.xdist_group("title_model"))

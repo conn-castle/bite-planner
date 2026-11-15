@@ -45,7 +45,7 @@ def _agent_env(settings: Settings, **variables: str) -> dict[str, str]:
     """The agent's environment: the variables given, and those passed through
     from the worker's (settings.agent_env). The project-scoped OpenAI key is
     included; database credentials and other secrets are not."""
-    names = ["LANG", *settings.agent_env]
+    names = ["LANG", "BITE_PLANNER_TITLE_MODEL_DIR", *settings.agent_env]
     return variables | {name: os.environ[name] for name in names if name in os.environ}
 
 

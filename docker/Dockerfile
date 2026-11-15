@@ -46,8 +46,14 @@ RUN uv sync --frozen --no-default-groups --group worker
 FROM build AS agent-build
 COPY backend/agent ./agent
 RUN UV_PROJECT_ENVIRONMENT=/opt/bite-planner-agent/.venv \
-    uv sync --frozen --no-default-groups --package bite-planner-agent --no-editable
+    uv sync --frozen --no-default-groups --package bite-planner-agent --extra meal-similarity --no-editable
 COPY docker/bite-planner /opt/bite-planner-agent/bin/bite-planner
+
+# The same pinned/checksummed model setup as local tests. No inference-time fetch.
+FROM python AS title-model
+COPY backend/agent/src/bite_planner_agent/title_model.py /opt/fetch-title-model.py
+RUN python /opt/fetch-title-model.py /opt/bite-planner-models/minilm \
+ && chmod -R a+rX /opt/bite-planner-models
 
 # Codex (OpenAI's release package, pinned): its app-server calls Instacart's tools
 # in the ChatGPT apps (bite_planner_agent.instacart). The whole package: tool calls
@@ -108,6 +114,7 @@ COPY --from=chromium /opt/ms-playwright /opt/ms-playwright
 RUN groupadd --gid 65532 agent \
  && useradd --uid 65532 --gid 65532 --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin agent
 COPY --from=agent-build /opt/bite-planner-agent /opt/bite-planner-agent
+COPY --from=title-model /opt/bite-planner-models /opt/bite-planner-models
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=worker-build /app/backend /app/backend
 COPY LICENSE THIRD_PARTY_NOTICES.md /app/
@@ -122,7 +129,8 @@ ENV BITE_PLANNER_AGENT_COMMAND="bite-planner run-agent" \
     BITE_PLANNER_CODEX_COMMAND=/opt/codex/bin/codex \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     BITE_PLANNER_JOBS_DIR=/tmp/jobs \
-    BITE_PLANNER_LOGS_DIR=/tmp/logs
+    BITE_PLANNER_LOGS_DIR=/tmp/logs \
+    BITE_PLANNER_TITLE_MODEL_DIR=/opt/bite-planner-models/minilm
 # The commit is the image's; the release version is set by the deploy (infra/).
 ARG BITE_PLANNER_COMMIT=unknown
 ENV BITE_PLANNER_COMMIT=${BITE_PLANNER_COMMIT}

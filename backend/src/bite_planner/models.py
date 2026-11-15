@@ -167,6 +167,9 @@ class Meal(TimestampMixin, SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
 
+    # Retained even when the creating draft/job is discarded.
+    household_id: UUID = Field(foreign_key="household.id", index=True)
+
     # The run that created it: the suggestion batch it belongs to. Null once that
     # job is deleted with its discarded draft; the meal itself is kept.
     job_id: UUID | None = Field(default=None, foreign_key="job.id", ondelete="SET NULL", index=True)

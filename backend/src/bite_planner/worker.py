@@ -34,11 +34,13 @@ from bite_planner_agent.checkout import (
 from bite_planner_agent.checkout import load_state as load_checkout_state
 from bite_planner_agent.instacart import InstacartError
 from bite_planner_agent.jobfiles import replace_file
-from bite_planner_agent.meals import RECIPE_SERVINGS, MealInput, MealsJob, load_meals, meal_problems
+from bite_planner_agent.meals import RECIPE_SERVINGS, MealInput, batch_problems, load_meals
 from bite_planner_agent.products import ItemChoice
 from bite_planner_agent.products import load_state as load_products_state
 from bite_planner_agent.server import Tools
 from bite_planner_agent.shopping import PreparedRecipes
+from bite_planner_agent.title_model import TitleModelError
+from bite_planner_agent.title_similarity import encoder
 from pydantic import ValidationError
 from sqlalchemy import update
 from sqlmodel import Session, col, select
@@ -78,7 +80,7 @@ from bite_planner.jobs import (
     fail_stale_jobs,
     finish_job,
 )
-from bite_planner.meals import add_meals
+from bite_planner.meals import add_meals, novelty_snapshot
 from bite_planner.models import (
     BookState,
     GroceryOrder,
@@ -92,6 +94,7 @@ from bite_planner.models import (
     MealRating,
     ProductGone,
     ShoppingListItem,
+    utc_now,
 )
 from bite_planner.notifications import (
     ideas_ready,
@@ -221,6 +224,7 @@ def _process(job: Job, fields: dict[str, str]) -> JobResult | None:
         return None
     except (
         AgentRunError,
+        TitleModelError,
         meal_edit.EditRefused,
         ValidationError,
         InvalidList,
@@ -231,8 +235,13 @@ def _process(job: Job, fields: dict[str, str]) -> JobResult | None:
         CheckoutError,
     ) as error:
         log.error("job.failed", extra=fields | {"error": str(error)})
-        _finish(job.id, error=str(error))
-        _notify_failed(job, str(error))
+        household_error: str = (
+            "Meal suggestions are unavailable right now."
+            if isinstance(error, TitleModelError)
+            else str(error)
+        )
+        _finish(job.id, error=household_error)
+        _notify_failed(job, household_error)
         return None
     except Exception as error:
         log.exception("job.crashed", extra=fields)
@@ -609,11 +618,16 @@ def process_job(job: Job) -> JobResult:
         case JobKind.GENERATE_MEALS:
             count = settings.meals_per_batch
             with get_session() as session:
+                # Prompt feedback and novelty must observe the same current ratings/names.
+                session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
                 prompt = generate_meals_prompt(session, job, count)
-            run_agent(job_dir, prompt, Tools.MEALS, MealsJob(count=count))
-            if problems := meal_problems(job_dir, count):
+                snapshot = novelty_snapshot(session, job, count, utc_now())
+            encoder()  # Fail before generation if the pinned offline model is unavailable.
+            run_agent(job_dir, prompt, Tools.MEALS, snapshot)
+            meals = load_meals(job_dir)
+            if problems := batch_problems(snapshot, meals):
                 raise AgentRunError(f"The agent didn't finish: {' '.join(problems)}")
-            return Meals(meals=load_meals(job_dir))
+            return Meals(meals=meals)
         case _:
             assert_never(job.kind)
 
