@@ -144,13 +144,13 @@ function ListWait({ order, state, onRetry, retrying, startFailed, onBack, onClos
   const meals = pickedMeals(order).length
   const store = storeName(order)
 
-  // What went wrong is for the logs (the screen says it plainly): once per failed job.
+  // Showing a recorded failure is diagnostic; the backend alarms when the job fails.
   const failedJob = (state === 'failed' || state === 'shopFailed') && job?.status === 'failed' ? job : undefined
   const failedId = failedJob?.id
   const failedError = failedJob?.error ?? null
   useEffect(() => {
     if (failedId === undefined) return
-    logger.error(shopping ? 'orders.shopping_failed' : 'orders.list_failed', {
+    logger.info(shopping ? 'orders.shopping_failure_shown' : 'orders.list_failure_shown', {
       orderId: order.id,
       jobId: failedId,
       error: failedError,

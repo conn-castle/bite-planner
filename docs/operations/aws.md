@@ -232,6 +232,8 @@ Do not assume pre-migration tags or copied repository metadata provide a valid r
 
 CloudWatch receives structured API, worker, failure/reminder and uploaded client logs. Error/critical lines trigger configured alarms. Job directories are protected S3 archives for the configured retention (90 days in the runtime source). They contain job prompts/transcripts, not a public debugging feed.
 
+Services report actual job failures at error level. The app records an already-failed job being displayed as an informational `orders.*_failure_shown` event, including the order, job, and error. Reopening a failed screen does not create another failure alarm; client defects such as crashes remain error-level events.
+
 Find output names in the deployed stack, then query the relevant log group:
 
 ```sh

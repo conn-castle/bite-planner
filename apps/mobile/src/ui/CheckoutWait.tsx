@@ -39,11 +39,11 @@ export function CheckoutWait({ order, step, store, failed, signedOut, startFaile
   // One problem on screen: the flow's own (the order couldn't be refreshed) comes first.
   const flowProblem = useContext(FlowNotice)
 
-  // What went wrong is for the logs (the screen says it plainly): once per failed quote.
+  // Showing a recorded failure is diagnostic; the backend alarms when the job fails.
   const failedId = failed ? job?.id : undefined
   const failedError = failed ? (job?.error ?? null) : null
   useEffect(() => {
-    if (failedId !== undefined) logger.error('orders.quote_failed', { orderId: order.id, jobId: failedId, error: failedError })
+    if (failedId !== undefined) logger.info('orders.quote_failure_shown', { orderId: order.id, jobId: failedId, error: failedError })
   }, [failedId, failedError, order.id])
 
   return (

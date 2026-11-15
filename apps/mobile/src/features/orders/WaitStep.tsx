@@ -42,11 +42,11 @@ export function WaitStep({ order, onClose }: WaitStepProps) {
   const notified = useNotifiedOfJob(running ? startedBy : null)
   // One problem on screen: the flow's own (the order couldn't be refreshed) comes first.
   const flowProblem = useContext(FlowNotice)
-  // What went wrong is for the logs (the screen says it plainly): once per failed batch.
+  // Showing a recorded failure is diagnostic; the backend alarms when the job fails.
   const failedId = batch.status === 'failed' ? batch.job.id : undefined
   const failedError = batch.status === 'failed' ? batch.job.error : null
   useEffect(() => {
-    if (failedId !== undefined) logger.error('orders.batch_failed', { orderId: order.id, jobId: failedId, error: failedError })
+    if (failedId !== undefined) logger.info('orders.batch_failure_shown', { orderId: order.id, jobId: failedId, error: failedError })
   }, [failedId, failedError, order.id])
 
   return (
