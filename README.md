@@ -8,7 +8,7 @@ Plan meals, choose recipes, and turn them into a grocery order. Bite Planner com
 
 ## What it does
 
-- Suggests meals and records household ratings to guide later suggestions.
+- Checks suggested meal titles for repeats and records household ratings to guide later suggestions.
 - Lets you review recipes, adjust servings, and approve proposed recipe edits.
 - Builds a shopping list and finds products through an operator-connected Instacart account.
 - Shows a delivery quote for approval and books an approved order when its delivery window becomes available.
@@ -28,7 +28,7 @@ cd bite-planner
 make check
 ```
 
-This installs dependencies, starts a local test database, runs lint, type checks and tests, and builds the web client with synthetic configuration. It downloads Playwright's browser; a new Linux machine may also need its [system dependencies](CONTRIBUTING.md#checks). The test database is separate from a live deployment.
+This installs dependencies, starts a local test database, runs lint, type checks and tests, and builds the web client with synthetic configuration. It downloads Playwright's browser and the pinned local meal-title model; a new Linux machine may also need its [system dependencies](CONTRIBUTING.md#checks). The test database is separate from a live deployment.
 
 ## Run a live instance
 

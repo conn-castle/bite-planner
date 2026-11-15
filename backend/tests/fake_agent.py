@@ -60,6 +60,29 @@ MEAL = {
     ],
 }
 
+MEAL_NAMES: list[str] = [
+    "Sheet Pan Sausage and Peppers",
+    "Mushroom Risotto",
+    "Lemon Salmon",
+    "Chickpea Curry",
+    "Beef Tacos",
+    "Pork Dumplings",
+    "Spinach Lasagna",
+    "Chicken Noodle Soup",
+    "Shrimp Fried Rice",
+    "Eggplant Parmesan",
+    "Tuna Nicoise Salad",
+    "Black Bean Enchiladas",
+    "Turkey Meatloaf",
+    "Lamb Kofta",
+    "Butternut Squash Soup",
+    "Crab Cakes",
+    "Paneer Tikka",
+    "Falafel Wraps",
+    "Beef Stroganoff",
+    "Scallop Linguine",
+]
+
 meal_count, stop_reason, exit_code, seconds, *args = sys.argv[1:]
 cwd = args[args.index("--cwd") + 1]
 with open(args[args.index("--prompt-file") + 1]) as file:
@@ -285,8 +308,25 @@ async def use_tools() -> None:
             if salt:
                 await call("add_staple", {"staple": "salt", "lines": salt})
         else:
-            for index in range(int(meal_count)):
-                await call("add_meal", {"meal": MEAL | {"name": f"{MEAL['name']} {index}"}})
+            target: int = int(meal_count)
+            if target:
+                checked: CallToolResult = await session.call_tool(
+                    "check_meal_titles", {"names": MEAL_NAMES}
+                )
+                if checked.is_error:
+                    raise SystemExit(f"Title preflight failed: {checked}")
+                rejected: list[str] = text_of(checked).splitlines()
+                names: list[str] = [
+                    name
+                    for name in MEAL_NAMES
+                    if not any(line.startswith(f'"{name}" repeats ') for line in rejected)
+                ]
+                if len(names) < target:
+                    raise SystemExit(
+                        f"Only {len(names)} distinct fixture meals for {target} requested"
+                    )
+                for name in names[:target]:
+                    await call("add_meal", {"meal": MEAL | {"name": name}})
         if "at checkout on Instacart" not in prompt and not booking:
             await call("done", {}, check=False)
 

@@ -50,6 +50,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
       - run: uv sync --locked
+      - uses: actions/cache@v6
+        with:
+          path: .agent-layer/tmp/meal-title-model
+          key: meal-title-model-${{ hashFiles('backend/agent/src/bite_planner_agent/title_model.py') }}
+      - run: uv run python -m bite_planner_agent.title_model ../.agent-layer/tmp/meal-title-model
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy

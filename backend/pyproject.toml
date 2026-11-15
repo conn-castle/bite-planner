@@ -34,8 +34,9 @@ api = [
     "tzdata>=2026.4",
     "uvicorn>=0.53.0",
 ]
-# The worker's AWS calls (the Instacart session in SSM).
+# Worker-only inference and AWS calls (the Instacart session in SSM).
 worker = [
+    "bite-planner-agent[meal-similarity]",
     "boto3>=1.43.101",
 ]
 dev = [
@@ -67,16 +68,16 @@ allowed-confusables = ["–"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # In parallel, a database per worker (tests/conftest.py); `-n 0` runs them one by one.
-addopts = "-n auto"
+addopts = "-n auto --dist loadgroup"
 
 [tool.mypy]
 files = ["src", "agent/src", "tests"]
 strict = true
 plugins = ["pydantic.mypy"]
 
-# boto3 and botocore ship no type information.
+# These SDK/runtime bindings ship no type information.
 [[tool.mypy.overrides]]
-module = ["boto3", "botocore.*"]
+module = ["boto3", "botocore.*", "onnxruntime"]
 ignore_missing_imports = true
 
 # The tests read the API's answers as JSON (`Response.json()` is `Any`), not as its models.

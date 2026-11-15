@@ -119,7 +119,11 @@ def test_job_succeeds_when_agent_adds_a_batch_of_meals(
     assert job.status == JobStatus.SUCCEEDED
     assert job.error is None
     meals = job_meals(session, job)
-    assert [meal.name for meal in meals] == [f"Sheet Pan Sausage and Peppers {i}" for i in range(3)]
+    assert [meal.name for meal in meals] == [
+        "Lemon Salmon",
+        "Mushroom Risotto",
+        "Sheet Pan Sausage and Peppers",
+    ]
     assert [(i.position, i.name) for i in meals[0].ingredients] == [
         (0, "Italian sausage"),
         (1, "bell peppers"),
@@ -482,7 +486,7 @@ def new_job(session: Session, household_id: UUID) -> Job:
 
 def feedback_sections(prompt: str) -> dict[str, str]:
     """Feedback under each rating heading, before the recipe instructions."""
-    feedback, separator, _ = prompt.partition("Write every recipe")
+    feedback, separator, _ = prompt.partition("First check a compact batch")
     assert separator
     assert feedback.endswith("\n\n")
     assert "\n\n\n" not in prompt
@@ -542,7 +546,7 @@ def test_the_prompt_has_no_feedback_when_meals_are_unrated_or_cleared(
 
     assert prompt.startswith(
         "Create 5 distinct meals for a family. Every meal must be low effort to cook.\n\n"
-        "Write every recipe"
+        "First check a compact batch"
     )
     assert "Meatloaf" not in prompt
     assert feedback_sections(prompt) == {}

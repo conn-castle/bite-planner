@@ -46,6 +46,8 @@ Each household has one draft order. Its open flow holds an expiring `Order-Sessi
 
 Alembic manages schema changes. A worker refuses to start against an older schema; a database newer than the worker is allowed subject to the release/rollback policy.
 
+Before rolling out migration `f27a1b9c40de`, drain old jobs. Older workers insert meals without `household_id` and are incompatible with the required column. The migration's `# contract:` marker blocks code-only rollback to those workers.
+
 ## Agent boundary
 
 The backend starts one worker container for a job. It claims the database job, writes a bounded context, and starts an unprivileged agent runner with only that job's MCP functions. The runner uses the OpenAI Responses API and has no general shell, file tool, subagent, database credentials, or backend filesystem access. The MCP process does not receive the OpenAI key.
@@ -53,6 +55,16 @@ The backend starts one worker container for a job. It claims the database job, w
 `backend/agent/src/bite_planner_agent/` contains the runner, tool servers, typed job files, and external-service adapters. The worker validates tool output before saving it to the database. Prompts in `backend/src/bite_planner/prompts/` are executable templates; update them together with their tool schemas.
 
 Instacart search/cart access uses an operator-connected Codex/ChatGPT session. Browser checkout uses a protected Instacart website session from SSM. Neither connection is a public developer API key supplied by a contributor.
+
+## Meal suggestions
+
+The runner checks proposed names together with `check_meal_titles`, writes recipes with `add_meal`, then calls `done`. Preflight reserves nothing; adds and completion recheck under the job file lock. The worker validates the full batch against its original snapshot before storing any meals and marking the job succeeded in one transaction. A failed new batch leaves previous suggestions intact.
+
+Novelty uses canonical meal names and original suggestion times. At job start the worker snapshots the household's current draft titles, earlier suggestions in the inclusive rolling UTC calendar month (clamping at month end), and current UP/FAVORITE titles of any age. Current-draft collisions always veto a candidate, including liked dishes. Across drafts, historical titles matching a current positive are exempt; other recent titles remain restricted, including unrated, DOWN and NOT_FOR_US suggestions. Durable `meal.household_id` ownership retains history after draft discard. Ratings or recipe edits during a run inform the next snapshot. Full household ratings inform the prompt; history lists stay outside it, and refusal messages identify the collided title.
+
+One offline encoder supplies all comparisons: normalized-name equality or cosine >= 0.80 from the pinned Qdrant all-MiniLM-L6-v2 ONNX export. This conservative cutoff allows uncertain matches and misses some repeats; it is not comprehensive dish identity. Preflight, locked add, done and final worker validation share this rule. The full batch must finish within the existing 60-turn/15-minute bounds.
+
+The worker and isolated tools install the agent's `meal-similarity` extra. Pinned assets are checksum-verified during setup/build and readable by uid 65532 at `/opt/bite-planner-models/minilm`; the API installs neither inference dependencies nor assets. Missing or corrupt assets fail explicitly. Inference never downloads models or uses a fallback.
 
 ## Approval and booking
 
