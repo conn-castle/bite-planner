@@ -181,7 +181,11 @@ def test_whoever_asked_for_the_batch_hears_when_its_ideas_are_ready(
 
 
 def test_a_failed_batch_sends_nothing(
-    session: Session, job: Job, monkeypatch: pytest.MonkeyPatch, sender: RecordingSender
+    session: Session,
+    job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+    sender: RecordingSender,
+    tmp_path: Path,
 ) -> None:
     with_phone(session, job)
     use_fake_agent(monkeypatch, meals=0, exit_code=3)
@@ -189,6 +193,10 @@ def test_a_failed_batch_sends_nothing(
     run_job(job)
 
     assert sender.sent == []
+    [failure] = [entry for entry in log_events(tmp_path / "logs") if entry["event"] == "job.failed"]
+    assert failure["level"] == "error"
+    assert failure["job_id"] == str(job.id)
+    assert failure["error"]
 
 
 def test_a_batch_stays_succeeded_when_its_notification_cannot_be_sent(
