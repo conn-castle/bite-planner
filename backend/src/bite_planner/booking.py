@@ -18,9 +18,12 @@ unless a member says it wasn't placed after all.
 
 import logging
 from datetime import date, datetime, time, timedelta
+from typing import NoReturn
 from uuid import UUID, uuid4
 
 from bite_planner_agent.checkout import ClickRequest
+from bite_planner_agent.windows import Window
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import literal, or_, tuple_
 from sqlmodel import Session, col, func, select, update
 
@@ -30,6 +33,7 @@ from bite_planner.db import for_update
 from bite_planner.jobs import STALE_ERROR, fail_if_stale
 from bite_planner.models import (
     BookState,
+    DeliveryDecision,
     DeliveryDecisionKind,
     GroceryOrder,
     GroceryOrderStatus,
@@ -62,6 +66,23 @@ DRY_RUN = "Dry run"
 
 class NotChangeable(Exception):
     """The order can't be changed, cancelled, or booked again now; the message says why."""
+
+
+class HistoricalReceipt(BaseModel):
+    """An administrator's verified receipt for an existing purchase attempt.
+
+    Read these values from the original Instacart confirmation, not a new
+    checkout or its later estimated Total. Cart-fill alternatives require
+    shopping-list reconciliation and are outside this recovery command.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    attempt_job_id: UUID
+    delivery_date: date
+    order_number: str = Field(pattern=r"^[A-Za-z0-9-]*\d{5,}[A-Za-z0-9-]*$")
+    window: Window
+    authorized_total_cents: int = Field(gt=0)
 
 
 def book_on(delivery: date) -> date:
@@ -572,18 +593,8 @@ def settle(
     order = _locked_placed(session, household_id, order_id)
     _refuse_unless(session, order, BookState.CHECK_INSTACART)
     if placed:
-        delivery_decisions.record(
-            session,
-            order,
-            DeliveryDecisionKind.CONFIRMED_PRESENT,
-            user_id=member_id,
-            job_id=order.click_job_id,
-        )
-        _settle(
-            session,
-            order,
-            BookState.BOOKED,
-            booking=Booking(order_number=None, window=None, total_cents=None),
+        _confirm_present(
+            session, order, member_id, Booking(order_number=None, window=None, total_cents=None)
         )
     else:
         if not can_confirm_absent(session, order):
@@ -617,3 +628,101 @@ def settle(
         )
     session.refresh(order)
     return order
+
+
+def _confirm_present(
+    session: Session, order: GroceryOrder, member_id: UUID | None, confirmed: Booking
+) -> None:
+    delivery_decisions.record(
+        session,
+        order,
+        DeliveryDecisionKind.CONFIRMED_PRESENT,
+        user_id=member_id,
+        job_id=order.click_job_id,
+    )
+    _settle(session, order, BookState.BOOKED, booking=confirmed)
+
+
+def recover_receipt(
+    session: Session,
+    household_id: UUID,
+    order_id: UUID,
+    receipt: HistoricalReceipt,
+    *,
+    check: bool = False,
+) -> bool:
+    """Restore an admin-verified historical receipt, never purchase again.
+
+    The original purchase authorization must match every receipt field. The
+    purchase authority and job history stay intact. True means restored (or
+    ready, with `check`); False means the exact receipt was already restored.
+    The administrator must first check the original worker log for cart.swapped
+    and refuse this path if it made any cart-fill alternatives.
+    """
+    order = _locked_placed(session, household_id, order_id)
+
+    def refuse(message: str) -> NoReturn:
+        session.rollback()
+        raise NotChangeable(message)
+
+    if order.book_state not in (BookState.CHECK_INSTACART, BookState.BOOKED):
+        refuse("Only an unconfirmed purchase can have its receipt recovered.")
+    if order.clicked_at is None or order.click_job_id != receipt.attempt_job_id:
+        refuse("The receipt does not identify this order's authorized purchase attempt.")
+    attempt = session.get(Job, receipt.attempt_job_id)
+    if attempt is None or attempt.kind != JobKind.BOOK or attempt.grocery_order_id != order.id:
+        refuse("The receipt's attempt is not this order's booking job.")
+    if receipt.delivery_date != order.delivery_date:
+        refuse("The receipt's delivery date does not match the order.")
+    authorizations = session.exec(
+        select(DeliveryDecision).where(
+            DeliveryDecision.grocery_order_id == order.id,
+            DeliveryDecision.household_id == household_id,
+            DeliveryDecision.job_id == receipt.attempt_job_id,
+            DeliveryDecision.kind == DeliveryDecisionKind.AUTHORIZED,
+        )
+    ).all()
+    if len(authorizations) != 1:
+        refuse("Recovery requires exactly one recorded purchase authorization for this attempt.")
+    authorization = authorizations[0]
+    if (
+        authorization.delivery_date != order.delivery_date
+        or authorization.delivery_by != order.delivery_by
+        or authorization.window != receipt.window
+        or authorization.authorized_total_cents != receipt.authorized_total_cents
+    ):
+        refuse("The receipt's date, window or authorized amount differs from purchase authority.")
+    confirmed = Booking(
+        order_number=receipt.order_number,
+        window=receipt.window,
+        total_cents=receipt.authorized_total_cents,
+    )
+    if order.book_state == BookState.BOOKED:
+        if order.booking != confirmed:
+            refuse("This order is already booked with a different or incomplete receipt.")
+        session.rollback()
+        return False
+    if order.booking is not None:
+        refuse("The unconfirmed order already has receipt details; inspect it before recovery.")
+    duplicate = session.exec(
+        select(GroceryOrder.id).where(
+            GroceryOrder.id != order.id,
+            func.jsonb_extract_path_text(GroceryOrder.booking, "order_number")
+            == receipt.order_number,
+        )
+    ).first()
+    if duplicate is not None:
+        refuse("That Instacart order number is already associated with another order.")
+    if check:
+        session.rollback()
+        return True
+    _confirm_present(session, order, None, confirmed)
+    log.info(
+        "booking.receipt_recovered",
+        extra={
+            "grocery_order_id": str(order_id),
+            "job_id": str(receipt.attempt_job_id),
+            "instacart_order": receipt.order_number,
+        },
+    )
+    return True

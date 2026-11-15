@@ -4,15 +4,27 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import timedelta
+from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
 import typer
 from bite_planner_agent.cli import mcp_serve
 from bite_planner_agent.instacart import InstacartError, Product, describe
+from pydantic import ValidationError
 from sqlmodel import Session
 
-from bite_planner import checkout, harness, household, instacart, push, reminders, worker
+from bite_planner import (
+    booking,
+    checkout,
+    harness,
+    household,
+    instacart,
+    orders,
+    push,
+    reminders,
+    worker,
+)
 from bite_planner import log as logging_config
 from bite_planner.checkout import CheckoutError
 from bite_planner.db import get_session
@@ -83,6 +95,42 @@ def job_book_due() -> None:
     (in AWS, a schedule does this each hour from 9:00 AM to 9 PM store time)."""
     queued = reminders.book_due()
     typer.echo(f"Started booking {len(queued)} order(s).")
+
+
+@app.command("recover-booking")
+def recover_booking(
+    order_id: UUID,
+    household_name: HouseholdOption,
+    receipt: Annotated[Path, typer.Option(help="Private JSON receipt verified against Instacart.")],
+    check: Annotated[bool, typer.Option(help="Validate without changing any records.")] = False,
+) -> None:
+    """Recover an unconfirmed purchase's receipt; never place or retry an order.
+
+    Check the original worker log first: cart.swapped requires shopping-list
+    reconciliation and cannot be recovered with this command.
+    """
+    try:
+        confirmed = booking.HistoricalReceipt.model_validate_json(receipt.read_text())
+        with get_session() as session:
+            house = household.get(session, household_name)
+            restored = booking.recover_receipt(session, house.id, order_id, confirmed, check=check)
+    except (
+        OSError,
+        UnicodeError,
+        ValidationError,
+        household.HouseholdError,
+        booking.NotChangeable,
+        orders.OrderNotFound,
+        orders.OrderPlaced,
+    ) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from error
+    if not restored:
+        typer.echo("Already recovered; no records changed.")
+    elif check:
+        typer.echo("Receipt matches the original purchase authorization; no records changed.")
+    else:
+        typer.echo("Restored the complete booking receipt; no order was placed or retried.")
 
 
 @app.command("agent-login")

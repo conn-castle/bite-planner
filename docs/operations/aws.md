@@ -172,6 +172,50 @@ uv run --project backend bite-planner household members "Example Household"
 
 Members can manage invitations and membership in Settings. The API keeps an account's identity when membership ends, so past attribution and re-invitation continue working. Production administration uses its direct SSM database URL supplied only to that process; never overwrite development `.env` with production credentials.
 
+## Recover an unconfirmed receipt
+
+For an order still showing **Check Instacart**, an administrator can restore its
+complete original booking receipt without making another purchase. First inspect
+the original job record and worker logs (Diagnostics below): verify Instacart's
+confirmation, order number, delivery date/window and **authorized amount**. Its
+later estimated Total can differ and is not the authorization. Check that the
+worker made no `cart.swapped` changes; those require shopping-list reconciliation
+and are outside this command. Do not use the app's “It was placed” action first:
+that resolves only the status, without a receipt.
+
+Keep the verified receipt in a private JSON file outside tracked source:
+
+```json
+{
+  "attempt_job_id": "00000000-0000-4000-8000-000000000001",
+  "delivery_date": "2026-10-12",
+  "order_number": "EXAMPLE-1234567890",
+  "window": {"start": "14:00:00", "end": "16:00:00"},
+  "authorized_total_cents": 10000
+}
+```
+
+Use the configured target database (production's URL supplied directly from SSM
+to this process, as for other administration). Validate before applying:
+
+```sh
+uv run --project backend bite-planner recover-booking ORDER_UUID \
+  --household "Example Household" --receipt path/to/private-receipt.json --check
+uv run --project backend bite-planner recover-booking ORDER_UUID \
+  --household "Example Household" --receipt path/to/private-receipt.json
+```
+
+The command checks the exact booking attempt and its recorded purchase authority,
+refuses mismatched dates/windows/amounts and already-associated order numbers, and
+restores receipt details with confirmation and booking audit entries in one
+transaction. The administrator attests the receipt's external evidence; the
+command does not contact Instacart to verify a submitted order number. An exact
+repeat changes nothing; a different or incomplete receipt on an already booked
+order is refused. Administrative recoveries should be run one at a time. The
+command retains purchase authority, jobs, meal picks, list items and dates. It
+sends no notification and neither changes the cart nor retries checkout. Verify
+the receipt in the app and the two new audit entries after applying it.
+
 ## Releases and recovery
 
 The release workflow is restricted to `main`. When enabled, a qualifying push runs CI, builds/pushes images, snapshots and migrates Neon, deploys/smoke-tests the service, and publishes `release.json`. An iOS change also signs/uploads through fastlane and records the processed upload with an `ios-` tag. Date versions use `YYYY.M.D.N`; the app version and build number derive from that release.
