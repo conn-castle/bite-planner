@@ -50,4 +50,4 @@ Report bugs and feature requests in [GitHub Issues](https://github.com/conn-cast
 
 ## License
 
-Bite Planner is **source-available** under the [PolyForm Perimeter License 1.0.1](LICENSE), the same license used by [Agent Outbox](https://github.com/conn-castle/agent-outbox). See [Third-party notices](THIRD_PARTY_NOTICES.md) for included icon artwork. Dependencies retain their own licenses.
+Bite Planner is **source-available** under the [PolyForm Perimeter License 1.0.1](LICENSE). See [Third-party notices](THIRD_PARTY_NOTICES.md) for included icon artwork. Dependencies retain their own licenses.
