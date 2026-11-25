@@ -89,6 +89,6 @@ The first command generates an Alembic revision against local Postgres. Inspect 
 
 Use shared components in `apps/mobile/src/ui/`, with the tokens in `src/theme/tokens.css`. The [interface specification](spec/README.md) records accepted behavior that overrides the original mockup.
 
-The optional `make review` command starts the live development app behind a private Tailscale annotation session. It requires Tailscale and an installed [request-html-comments tool](https://github.com/nicholasjconn/skills); set `BITE_PLANNER_REVIEW_TOOL` to its `scripts/html_review.mjs` path. Personal Agent Layer configuration is not part of this public repository. The command writes review results under `.agent-layer/tmp/reviews/`.
+The optional `make review` command starts the live development app behind a private Tailscale annotation session. It requires Tailscale and an installed [request-html-comments tool](https://github.com/nicholasjconn/skills); set `BITE_PLANNER_REVIEW_TOOL` to its `scripts/html_review.mjs` path. The command writes review results under the Git-ignored `.agent-layer/tmp/reviews/` directory.
 
 Keep functional changes and documentation aligned. Add tests for meaningful observable behavior, and avoid tests that merely repeat the implementation.

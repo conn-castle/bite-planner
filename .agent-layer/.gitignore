@@ -1,0 +1,30 @@
+# Agent Layer repo-local ignores (non-user configuration).
+# Keep this file if you commit .agent-layer/; edit as needed.
+
+.env
+config.toml.bak
+.env.bak
+/templates/
+state/
+sync.lock
+# BEGIN GENERATED PATHS
+/working/
+/cache/
+/worktrees/
+/state/runs/
+# END GENERATED PATHS
+tmp/
+upgrade-keep-list
+
+# Imported skills and skills.lock.json are committed: a clone or CI run then
+# has the exact skill content without a network `al skills pull`. Only the
+# import transaction's scratch space is machine-local.
+skills-imported/.staging/
+
+open-vscode.app/
+open-vscode.command
+open-vscode.desktop
+open-vscode.sh
+
+# Imported instructions and their lock are tracked together; journal staging is private.
+instructions-imported/.staging/

@@ -1,0 +1,125 @@
+{
+  "version": 2,
+  "skills": [
+    {
+      "name": "audit-documentation",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/development/audit-documentation",
+      "selected_path": "skills/development/audit-documentation",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:1380a150963b7e2857ca7764e565a3ef0c0506c41fb6319d5c2f626a1c5d6f08"
+    },
+    {
+      "name": "audit-memory",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/development/audit-memory",
+      "selected_path": "skills/development/audit-memory",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:f22048e77ac4000e031402eabf8d5ae2b991cea29e669c6f18f35f2a59822657"
+    },
+    {
+      "name": "audit-tests",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/development/audit-tests",
+      "selected_path": "skills/development/audit-tests",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:1b270aa4409f1b07d0c4f1526a9a7777868c4d4258fe4bc50e9ce8845122badf"
+    },
+    {
+      "name": "auto-skill-loop",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/development/auto-skill-loop",
+      "selected_path": "skills/development/auto-skill-loop",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:177ee58222d591d7ad4875a019c297fe96301d57d648d8a5403a32380eea1bd4"
+    },
+    {
+      "name": "find-docs",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/tools/find-docs",
+      "selected_path": "skills/tools/find-docs",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:508845528c74b42332b47e6986d4f2235d38e635f96ce9d381d327129c9b702a"
+    },
+    {
+      "name": "implement",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/development/implement",
+      "selected_path": "skills/development/implement",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:e489ec71f783d1d63363b860c710e5e21240c450411ec414f2cb2977924e4305"
+    },
+    {
+      "name": "interface-audit",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/development/interface-audit",
+      "selected_path": "skills/development/interface-audit",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:44f279806a10d9bddba58d1746c67554282b21759c3451017100c1dc674f04ad"
+    },
+    {
+      "name": "playwright",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/tools/playwright",
+      "selected_path": "skills/tools/playwright",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:245b096f5ecd5e9e124a4e085e2562f848e5dc7d5227cd0e849eae070cd82abd"
+    },
+    {
+      "name": "ship-pr",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/development/ship-pr",
+      "selected_path": "skills/development/ship-pr",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:c7345be50f3b126a6debb48bd422563b577a9b7535b0e7229378045ab8fb5bb4"
+    },
+    {
+      "name": "tavily-web",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "skills/tools/tavily-web",
+      "selected_path": "skills/tools/tavily-web",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "5e4e6a568b06db21a82f5b4abb0f0f7f90d57809",
+      "tree_hash": "sha256:a5baf8246bf3fcdca14d80a883334aec4d49730ca03bf2ed4340c881a276a9a3"
+    }
+  ]
+}
