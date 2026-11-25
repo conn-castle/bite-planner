@@ -54,6 +54,7 @@ statusline = true
 agent_specific.env.CLAUDE_CODE_AUTO_CONNECT_IDE = "false" # stop reading files open in the IDE
 agent_specific.env.ENABLE_CLAUDEAI_MCP_SERVERS = "false" # disable claude.ai app connectors
 agent_specific.autoMemoryEnabled = false # disable auto-memory (does not affect CLAUDE.md)
+agent_specific.cleanupPeriodDays = 3650 # Claude Code deletes transcripts after 30 days by default; keep them
 # [agents.claude.agent_specific]
 
 [agents.claude_vscode]
