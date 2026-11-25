@@ -44,8 +44,5 @@
 /grove/
 # <<< agent-layer
 
-# Grok CLI state created in the working directory
-/grove/
-
 # Generated private deployment configuration
 /.env.deployment.local
