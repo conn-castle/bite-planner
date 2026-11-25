@@ -1,0 +1,235 @@
+# Everyday setup:
+# - Use `al wizard` for most changes.
+# - Usually you only need to toggle agent/server `enabled` values.
+# - Leave advanced fields as-is unless you have a specific need.
+
+[approvals]
+# one of: "all", "mcp", "commands", "none", "yolo"
+# yolo skips ALL permission prompts; use only in sandboxed/ephemeral environments
+mode = "yolo"
+
+[agents.antigravity]
+enabled = true
+# Antigravity model selection is projected into .agy/antigravity-cli/settings.json.
+# Run `agy models` for the current CLI surface; some agy model names include
+# effort in the display string.
+# model = "..."
+# Use agent_specific to inject unmanaged JSON keys into settings.json
+# (deep-merged with Agent Layer-managed permissions). Do not put model here;
+# use agents.antigravity.model above.
+# [agents.antigravity.agent_specific]
+
+[agents.claude]
+enabled = true
+# model is optional; when omitted, Agent Layer does not pass a model flag and the client uses its default.
+model = "opus"
+# reasoning_effort is optional; Claude Code applies it where the active model supports it.
+reasoning_effort = "high" # low | medium | high | xhigh | max (custom values pass through with a warning)
+# Note: "max" is session-only (passed via --effort CLI flag) and is not written to .claude/settings.json.
+# local_config_dir isolates Claude Code settings, caches, and /login credentials per repo.
+# When true, al claude sets CLAUDE_CONFIG_DIR=<repo>/.claude-config.
+# For al vscode, CLAUDE_CONFIG_DIR is set when both this and agents.claude_vscode
+# are enabled. Otherwise, al vscode clears only stale repo-local values and
+# preserves user-defined non-repo values.
+# Claude Code keys its macOS Keychain entry to CLAUDE_CONFIG_DIR and falls back
+# to .credentials.json there if the Keychain write fails. Linux and Windows use
+# .credentials.json under CLAUDE_CONFIG_DIR. Other auth modes can use external sources.
+local_config_dir = true
+# disable_question_tool blocks Claude Code's structured clarification-question (AskUserQuestion) tool.
+# When true, al sync injects permissions.deny + a PreToolUse hook into .claude/settings.json (merged
+# with any agent_specific entries). The hook also enforces the block under YOLO/bypassPermissions,
+# where permissions.deny is skipped. Run `al wizard` to set it.
+disable_question_tool = true
+# statusline writes a Claude Code status line. Run `al wizard` to enable it and
+# seed .agent-layer/claude-statusline.sh once; on sync that source is copied to
+# .claude/claude-statusline.sh and statusLine is wired into .claude/settings.json.
+# Absent means disabled. Requires jq on PATH at runtime.
+statusline = true
+# Optional `agent_specific` passthrough for Claude (arbitrary JSON keys).
+# Object values are deep-merged into .claude/settings.json; arrays and scalar values are replaced at their key.
+# Overlapping managed keys, such as permissions.allow, override Agent Layer-managed
+# values and trigger a sync warning. permissions.deny is additive and does not warn.
+# Optional "disable" toggles (run `al wizard` to set these). Each keeps Claude
+# Code's native default until enabled; uncomment to opt in.
+agent_specific.env.CLAUDE_CODE_AUTO_CONNECT_IDE = "false" # stop reading files open in the IDE
+agent_specific.env.ENABLE_CLAUDEAI_MCP_SERVERS = "false" # disable claude.ai app connectors
+agent_specific.autoMemoryEnabled = false # disable auto-memory (does not affect CLAUDE.md)
+# [agents.claude.agent_specific]
+
+[agents.claude_vscode]
+enabled = false
+
+[agents.codex]
+enabled = true
+# model is optional; when omitted, Agent Layer does not pass a model setting and the client uses its default.
+model = "gpt-6.2-sol"
+# reasoning_effort is optional; when omitted, the client uses its default.
+reasoning_effort = "high" # codex only
+# local_config_dir sets CODEX_HOME=<repo>/.codex for per-repo auth, sessions,
+# logs, and other Codex runtime state. When absent or false, Agent Layer does
+# not set CODEX_HOME, so Codex uses its normal global/project config layering
+# and any inherited CODEX_HOME remains user-owned.
+local_config_dir = true
+# statusline writes Codex's native status line from the editable
+# .agent-layer/codex-statusline.toml fragment. Run `al wizard` to enable it and
+# seed the source once. Absent means disabled. For provider-native overrides, define
+# agents.codex.agent_specific.tui.status_line directly.
+statusline = true
+# Optional `agent_specific` passthrough for Codex (arbitrary TOML tables/keys).
+# These are appended to .codex/config.toml and can override top-level managed keys.
+# Agent Layer already writes [projects."<repo root>"] trust_level = "trusted".
+# Overlapping keys override Agent Layer-managed values and trigger a sync warning.
+# [agents.codex.agent_specific]
+# [agents.codex.agent_specific.features]
+# apps = false              # disable built-in Codex apps (GitHub, Gmail, etc.) to reduce tool surface
+# plugins = false           # disable Codex plugins and plugin-provided skills/tools
+# browser_use = false       # disable Codex browser/computer-use tools
+# in_app_browser = false    # disable the in-app browser
+# computer_use = false      # disable screen/computer control
+# multi_agent = true
+# prevent_idle_sleep = true
+
+[agents.codex.agent_specific.features]
+computer_use = false
+in_app_browser = false
+browser_use = false
+plugins = false
+apps = false
+
+[agents.vscode]
+enabled = false
+
+[agents.copilot_cli]
+enabled = false
+# model is optional; when omitted, Agent Layer does not pass a model flag and the client uses its default.
+# model = "..."
+# reasoning_effort is not currently supported for Copilot CLI in Agent Layer.
+
+[agents.grok]
+enabled = true
+# model is optional; when omitted, Agent Layer does not pass a model flag and the client uses its default.
+# model = "..."
+# reasoning_effort is optional; Grok applies it where the active model supports it.
+reasoning_effort = "xhigh" # none | minimal | low | medium | high | xhigh | max
+# GROK_HOME is always set to <repo>/.grok-config for al grok, dispatch, and al vscode.
+disable_memory = true # force --no-memory / GROK_MEMORY=0
+# Optional project-scoped Grok plugin settings. Grok only loads plugins,
+# permission, and mcp_servers from .grok/config.toml; Agent Layer owns the last
+# two. Put user-level UI, memory, model, and terminal settings in Grok itself.
+# [agents.grok.agent_specific]
+# [agents.grok.agent_specific.plugins]
+
+[agents.muse]
+# Optional: missing or false leaves Muse disabled for existing installations.
+enabled = true
+# model and reasoning_effort are optional; Muse uses its native defaults when omitted.
+model = "muse-wonder-1.0"
+reasoning_effort = "high" # none | minimal | low | medium | high | xhigh | max | ultra
+# Muse uses native user storage; Agent Layer does not provide storage isolation.
+# HOME and XDG variables are unchanged. Project MCP shares private .mcp.json.
+
+[mcp]
+# To add an MCP server, run `al wizard` or see https://agent-layer.dev/docs/reference#mcp-servers
+
+[warnings]
+# Optional warning defaults.
+# Wizard now uses these defaults directly when warnings are enabled.
+version_update_on_sync = true
+# warning noise mode: default | reduce | quiet
+# quiet suppresses agent-layer informational output (warnings, update checks, dispatch banners),
+# but configured quiet does not affect `al doctor`; use `al --quiet doctor`
+# to suppress warning-only doctor output.
+noise_mode = "default"
+instruction_token_threshold = 10000
+mcp_server_threshold = 15
+mcp_tools_total_threshold = 60
+mcp_server_tools_threshold = 25
+mcp_schema_tokens_total_threshold = 30000
+mcp_schema_tokens_server_threshold = 20000
+
+# Instructions use one exact Markdown file and required numeric order per block.
+# Order is globally unique across imports/local files; zero and gaps are valid.
+# `al instructions add <repository> <path.md> --order N --yes` manages imports.
+# Same optional ref/tracking/write_policy/push_repository/push_branch as skills.
+# [[instructions.imports]]
+# repository = "https://github.com/nicholasjconn/skills.git"
+# selectors = ["instructions/rules.md"]
+# order = 0
+# [[instructions.imports]]
+# repository = "https://github.com/nicholasjconn/skills.git"
+# selectors = ["instructions/memory.md"]
+# order = 10
+# [[instructions.local]]
+# selectors = ["conventions.md"]
+# order = 40
+
+[dispatch]
+# Maximum dispatch depth, including the initial `al dispatch start` call.
+# 3 allows two nested `al dispatch start` calls.
+max_depth = 3
+# How long inactive conversation mappings and confirmed terminal run evidence
+# are kept. Unconfirmed execution evidence never expires. Optional; defaults to 30.
+session_retention_days = 30
+# How long an `al dispatch reserve` reservation stays startable before it is
+# retired without launching. Optional; defaults to 7.
+reservation_expiry_days = 7
+# How long one `dispatch_wait` MCP tool call blocks before reporting that the
+# conversation is still running. The dispatch itself keeps running either way.
+mcp_wait_timeout_minutes = 30
+# Hard bound on every Agent Dispatch MCP tool call, and the per-server tool
+# timeout projected into clients that support one. Must exceed
+# mcp_wait_timeout_minutes so a healthy wait always returns first.
+mcp_tool_timeout_minutes = 40
+
+[notifications]
+# chime plays a best-effort system sound for filtered top-level completion events.
+# Claude suppresses continuation/background/wakeup stops; Antigravity requires an
+# idle normal stop; Codex suppresses repeated continuation stops but its concurrent
+# hooks cannot prove final semantic completion; Grok chimes only on a main-session
+# end_turn with no continuation, background task, or scheduled wakeup. macOS uses
+# afplay; Linux requires canberra-gtk-play on PATH. Absent or false disables it.
+chime = false
+
+[skills]
+# Git-backed Agent Skill imports. Each [[skills.imports]] block declares one
+# source repository plus the selectors that share its ref, tracking mode, write
+# policy, and push destination. Manage these blocks with `al skills add` and
+# `al skills remove`, then run `al skills pull` to fetch and reconcile them.
+# Imported skills live in .agent-layer/skills-imported/<skill-name>/ and are
+# editable; `al skills pull` merges upstream changes without discarding local
+# edits. See https://agent-layer.dev/docs/skills#importing-skills-from-git
+#
+# [[skills.imports]]
+# repository = "https://github.com/example/skills.git"
+# selectors = ["skills/*", "!skills/internal-only"]
+# ref = "main"               # branch, tag, or commit; omit for the default branch
+# tracking = "tracked"       # tracked or pinned; branches track, tags and commits pin
+# write_policy = "none"      # none | branch | direct
+# push_repository = "..."    # optional fork destination for contributions
+# push_branch = "..."        # required when write_policy = "branch"
+
+[[instructions.imports]]
+repository = 'https://github.com/nicholasjconn/skills.git'
+selectors = [
+  'instructions/rules.md',
+]
+order = 0
+
+[[instructions.local]]
+selectors = ['conventions.md']
+order = 40
+
+[[skills.imports]]
+repository = 'https://github.com/nicholasjconn/skills.git'
+selectors = [
+  'skills/tools/tavily-web',
+  'skills/tools/playwright',
+  'skills/tools/find-docs',
+  'skills/development/implement',
+  'skills/development/ship-pr',
+  'skills/development/auto-skill-loop',
+  'skills/development/audit-documentation',
+  'skills/development/audit-memory',
+  'skills/development/audit-tests',
+  'skills/development/interface-audit',
+]

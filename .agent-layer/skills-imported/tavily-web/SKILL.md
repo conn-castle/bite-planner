@@ -1,0 +1,85 @@
+---
+name: tavily-web
+description: |
+  Use Tavily CLI for web search, URL extraction, site mapping, and cited research. Trigger when the user needs current web info, asks to search/read a page, provides URLs, or wants a sourced report. Do not use for browser automation, local docs, or Tavily setup.
+compatibility: Requires the Tavily CLI (`tvly`), authentication, and network access.
+allowed-tools: Bash(tvly:*)
+---
+
+# Tavily Web
+
+Use the Tavily CLI as Agent Layer's web retrieval path. Route the request to the smallest useful Tavily command, then summarize the sourced result.
+
+## Global constraints
+
+- Run `tvly --help` before the first Tavily command in a session, then run
+  `tvly --status` to verify readiness.
+- Treat installed CLI help as the source of truth for commands, arguments,
+  flags, output modes, and defaults.
+- On failure, stop and report the error. Recommend installation or login only when `tvly` is missing or unauthenticated.
+- Do not install Tavily from this skill. Do not run `curl | bash`, package managers, or login commands unless the user explicitly asks for setup help.
+- Do not use Tavily MCP or Fetch MCP as a fallback.
+- Do not use `tvly crawl` in the default Agent Layer workflow.
+- Run command-specific help if flags matter: `tvly <command> --help` or `tvly research <subcommand> --help`.
+
+## Required artifacts
+
+- No artifact is required for quick lookups.
+- If saving intermediate retrieval output, name it `tavily-web.<run-id>.<type>.json` or `tavily-web.<run-id>.<type>.md`.
+- Final answers that depend on web retrieval must name or cite the source URLs used.
+
+## Human checkpoints
+
+- Ask before installing the Tavily CLI, running login/authentication commands, or changing Tavily configuration.
+- Do not ask for permission merely to run read-only `tvly search`, `tvly extract`, `tvly map`, or `tvly research` commands.
+
+## Command routing
+
+Use `tvly search` when:
+
+- The user does not provide a specific URL or known site.
+- The task is source discovery, current facts, recent news, or finding relevant pages.
+- You need domain filters, time filters, or a small set of result snippets.
+
+Use `tvly extract` when:
+
+- The user provides one or more URLs.
+- A search or map result identifies pages that need full content.
+- You need clean page content, JavaScript-heavy page extraction, or query-focused chunks.
+
+Use `tvly map` when:
+
+- The user knows the site/domain but not the exact page.
+- You need URL discovery or site structure without extracting page contents.
+- The efficient path is map first, then extract only selected URLs.
+
+Use `tvly research` when:
+
+- The user asks for a report, comparison, market scan, literature-style review, or multi-source cited synthesis.
+- A simple search would only discover sources, but the desired output is analysis grounded in citations.
+
+## Workflow
+
+1. Select the smallest command that matches the request.
+2. Prefer `--json` for agent workflows so results can be parsed and summarized deliberately.
+3. Keep queries short and search-like. Break complex prompts into focused searches instead of sending one long prompt to search.
+4. For long-running research, use `tvly research run --no-wait`, then status/poll when it prevents blocking or losing the request ID.
+
+## Guardrails
+
+- Do not dump large raw outputs into the conversation when a narrower query, domain filter, time filter, or selected URL list would answer the question.
+- Do not ask Tavily to synthesize when the user only needs source discovery; use search and summarize the results yourself.
+- Do not use map for general web search; use map only for known sites/domains.
+- Do not use research for quick factual lookups unless the user explicitly wants a cited report.
+- Do not treat Tavily output as authoritative by itself. Report source URLs and distinguish sourced facts from your synthesis.
+
+## Definition of done
+
+- The selected Tavily command path matches the user's retrieval intent.
+- The answer names or cites source URLs when it depends on web retrieval.
+- Any saved retrieval artifacts use the `tavily-web.<run-id>.<type>` naming pattern.
+- Missing CLI, authentication, inaccessible pages, timeouts, or incomplete coverage are reported explicitly.
+
+## Final handoff
+
+State which Tavily command path was used, summarize the result, include source URLs when relevant, and mention any retrieval limits.

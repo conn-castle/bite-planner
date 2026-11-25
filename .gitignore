@@ -1,5 +1,5 @@
 # >>> agent-layer
-# Template hash: 822f17ad8d3c5c75464d7c8b10f908d5295504b2cf9c22d9fae3e9416bc01c94
+# Template hash: 4746c214bc636cdb9e6949dd3b7273aeb7ddb11b252a94ce3c3818d2637fb729
 # Managed by Agent Layer. To customize, edit .agent-layer/gitignore.block
 # and re-run `al sync` to apply changes.
 
@@ -7,7 +7,7 @@
 # /.agent-layer/
 # Optional: uncomment to ignore docs/agent-layer/ project memory.
 # Edit .agent-layer/gitignore.block (not .gitignore) to change this entry.
-# /docs/agent-layer/
+/docs/agent-layer/
 
 # Agent Layer-generated instruction shims
 /AGENTS.md
@@ -39,13 +39,10 @@
 /.vscode/mcp.json
 # Optional: keep uncommented to ignore VS Code settings.
 /.vscode/settings.json
-# <<< agent-layer
 
-# Grok CLI state created in the working directory
+# Grove local state
 /grove/
+# <<< agent-layer
 
 # Generated private deployment configuration
 /.env.deployment.local
-
-# Personal agent configuration and scratch files
-/.agent-layer/
