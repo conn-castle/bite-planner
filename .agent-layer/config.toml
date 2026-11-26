@@ -3,7 +3,7 @@ mode = "yolo"
 
 [agents.antigravity]
 enabled = true
-model = "gemini-4-neon-high"
+model = "Gemini 4 Neon (High)"
 
 [agents.claude]
 enabled = true
